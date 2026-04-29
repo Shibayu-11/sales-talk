@@ -3,6 +3,7 @@ import { createControlWindow } from './windows/control';
 import { createOverlayWindow } from './windows/overlay';
 import { registerIpcHandlers } from './ipc';
 import { logger } from './logger';
+import { errorHandler } from './services/error-handler';
 
 const isDev = !app.isPackaged;
 
@@ -31,11 +32,29 @@ app.on('window-all-closed', () => {
 });
 
 process.on('unhandledRejection', (reason) => {
-  logger.error({ reason }, 'unhandled rejection');
+  errorHandler.handle({
+    severity: 'high',
+    category: 'unknown',
+    code: 'unhandled_rejection',
+    message: '予期しない非同期エラーが発生しました',
+    technicalMessage: reason instanceof Error ? reason.message : String(reason),
+    recoverable: true,
+    recoveryAction: 'retry',
+    context: { reason },
+  });
 });
 
 process.on('uncaughtException', (error) => {
-  logger.fatal({ err: error }, 'uncaught exception');
+  errorHandler.handle({
+    severity: 'critical',
+    category: 'unknown',
+    code: 'uncaught_exception',
+    message: 'アプリの再起動が必要なエラーが発生しました',
+    technicalMessage: error.message,
+    recoverable: false,
+    recoveryAction: 'restart',
+    context: { error },
+  });
 });
 
 export function getControlWindow(): BrowserWindow | null {

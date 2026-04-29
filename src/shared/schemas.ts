@@ -128,7 +128,19 @@ export const KnowledgeEntrySchema = z.object({
 
 export const ObjectionDismissInputSchema = z.string().uuid();
 
+export const AppErrorSchema = z.object({
+  severity: z.enum(['critical', 'high', 'medium', 'low']),
+  category: z.enum(['network', 'api', 'permission', 'audio', 'database', 'llm', 'storage', 'unknown']),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  technicalMessage: z.string().optional(),
+  recoverable: z.boolean(),
+  recoveryAction: z.enum(['retry', 'fallback', 'user_action', 'restart']).optional(),
+  context: z.record(z.unknown()).optional(),
+});
+
 export type ProductIdInput = z.infer<typeof ProductIdSchema>;
 export type OverlayLayerInput = z.infer<typeof OverlayLayerSchema>;
 export type SecretKeyInput = z.infer<typeof SecretKeySchema>;
 export type AppSettingsPatchInput = z.infer<typeof AppSettingsPatchSchema>;
+export type AppErrorInput = z.infer<typeof AppErrorSchema>;

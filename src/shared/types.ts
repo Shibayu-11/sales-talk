@@ -157,10 +157,10 @@ export interface AppError {
   category: ErrorCategory;
   code: string;
   message: string;
-  technicalMessage?: string;
+  technicalMessage?: string | undefined;
   recoverable: boolean;
-  recoveryAction?: 'retry' | 'fallback' | 'user_action' | 'restart';
-  context?: Record<string, unknown>;
+  recoveryAction?: 'retry' | 'fallback' | 'user_action' | 'restart' | undefined;
+  context?: Record<string, unknown> | undefined;
 }
 
 /**

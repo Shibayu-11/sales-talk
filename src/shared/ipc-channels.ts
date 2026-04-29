@@ -108,6 +108,13 @@ export const IPC = {
     submit: 'feedback:submit',
   },
 
+  // System state and cross-cutting errors
+  system: {
+    error: 'system:error',
+    degraded: 'system:degraded',
+    costAlert: 'system:cost-alert',
+  },
+
   // Logging (Renderer → Main)
   log: {
     write: 'log:write',
