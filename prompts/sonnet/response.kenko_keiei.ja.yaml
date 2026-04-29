@@ -1,0 +1,28 @@
+version: 1
+model_family: anthropic_sonnet
+purpose: objection_response
+product_id: kenko_keiei
+language: ja
+cacheable: true
+guardrails:
+  forbidden:
+    - 認定確約
+    - 効果数値保証
+    - 医療行為への踏み込み
+  required_phrases:
+    - 要件を満たす可能性
+    - 一般的傾向
+  redirect:
+    medical: 産業医
+    labor: 社労士
+output_schema:
+  required:
+    - peak
+    - summary
+    - full_script
+    - reasoning
+    - notes
+    - risk_flags
+instruction: |
+  健康経営優良法人の要件説明は一般論に留めてください。
+  認定や効果数値を保証せず、医療・労務の判断は専門家確認へ誘導してください。

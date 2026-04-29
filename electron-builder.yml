@@ -1,0 +1,32 @@
+appId: com.salestalk.app
+productName: SalesTalk
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - "!node_modules/**/*"
+asar: true
+
+mac:
+  category: public.app-category.business
+  target:
+    - target: dmg
+      arch:
+        - universal
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+  extendInfo:
+    NSScreenCaptureUsageDescription: "Zoom 商談の音声をリアルタイムで文字起こしするため、画面収録権限が必要です。"
+    NSMicrophoneUsageDescription: "あなたの発話をリアルタイムで文字起こしするため、マイクアクセスが必要です。"
+
+dmg:
+  sign: false
+
+publish:
+  - provider: github
+    releaseType: release

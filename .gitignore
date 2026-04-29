@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Build output
+dist/
+out/
+*.tsbuildinfo
+release/
+# (build/ holds electron-builder resources like entitlements.mac.plist — tracked)
+
+# Native module build artifacts
+src/native/**/build/
+src/native/**/.build/
+src/native/**/Pods/
+src/native/**/*.xcodeproj/xcuserdata/
+src/native/**/.swiftpm/
+*.node
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.mobileprovision
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# OS
+Thumbs.db
+
+# Recordings / private data (must never be committed)
+recordings/
+audio/
+transcripts/
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+
+# Reference repos (cloned for skills/examples, not part of this project)
+skills/
+mizchi-skills/
+
+# Auto-generated claude-mem stubs in subdirectories (root CLAUDE.md is tracked)
+src/**/CLAUDE.md
+build/CLAUDE.md
+prompts/**/CLAUDE.md
+scripts/**/CLAUDE.md
+supabase/**/CLAUDE.md
+tests/**/CLAUDE.md
+
+# Electron builder
+*.dmg
+*.pkg
+*.zip
+*.app
+
+# Sentry
+.sentryclirc
+
+# Temporary
+tmp/
+temp/
+.cache/

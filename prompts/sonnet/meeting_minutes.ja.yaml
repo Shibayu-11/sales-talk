@@ -1,0 +1,27 @@
+version: 1
+model_family: anthropic_sonnet
+purpose: meeting_minutes
+language: ja
+cacheable: true
+output_schema:
+  required:
+    - summary
+    - agreed
+    - pending
+    - decisions
+    - numbers
+    - tasks
+    - risk_flags
+task_rules:
+  owners:
+    own: 自社が実行するタスク
+    customer: 顧客が実行するタスク
+    joint: 両者が関与するタスク
+  due:
+    explicit: 発話内に明確な期限がある
+    inferred: 次回商談まで等、文脈から期限推定が必要
+    none: 期限なし
+instruction: |
+  商談後に営業担当が確認する議事録を生成してください。
+  PIIは入力時点でマスク済み前提ですが、出力に新たな個人情報を推測して補完しないでください。
+  タスクはown/customer/jointに分類し、送付可能なPDFへ載せられる表現に整えてください。

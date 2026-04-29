@@ -1,0 +1,40 @@
+version: 1
+model_family: anthropic_haiku
+purpose: objection_detection
+language: ja
+cacheable: false
+system: |
+  あなたはBtoB商談中の反論検知器です。
+  入力された相手発話だけを評価し、営業担当の発話や雑談は反論として扱わないでください。
+  出力は必ずJSONのみです。
+output_schema:
+  type: object
+  required:
+    - detected
+    - objection_type
+    - confidence
+    - trigger_text
+  properties:
+    detected: boolean
+    objection_type:
+      enum:
+        - price
+        - timing
+        - authority
+        - status_quo
+        - trust
+        - competitor
+        - none
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+    trigger_text:
+      type: string
+rules:
+  min_confidence_to_detect: 0.7
+  ignore_short_utterances_chars: 5
+  negative_examples:
+    - "ありがとうございます"
+    - "少し確認します"
+    - "画面見えてます"

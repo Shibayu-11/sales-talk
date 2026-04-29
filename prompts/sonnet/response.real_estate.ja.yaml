@@ -1,0 +1,30 @@
+version: 1
+model_family: anthropic_sonnet
+purpose: objection_response
+product_id: real_estate
+language: ja
+cacheable: true
+guardrails:
+  forbidden:
+    - 重要事項説明への踏み込み
+    - 利回り保証
+    - 節税効果断定
+  required_phrases:
+    - 一般論として
+    - 立地・築年数次第で変動
+  redirect:
+    important_disclosure: 宅建士
+    tax: 税理士
+    finance: 金融機関
+output_schema:
+  required:
+    - peak
+    - summary
+    - full_script
+    - reasoning
+    - notes
+    - risk_flags
+instruction: |
+  反論に対して、商談中に即読める短い切り返しを作ってください。
+  peakは15文字以内、summaryは3行以内、full_scriptは営業担当がそのまま話せる自然な日本語にしてください。
+  法務リスクが少しでもある場合はrisk_flagsへ必ず追加してください。
