@@ -42,6 +42,30 @@ export const DetectedObjectionSchema = z.object({
   detectedAt: z.number(),
 });
 
+export const HaikuDetectionOutputSchema = z.object({
+  isObjection: z.boolean(),
+  type: z.string(),
+  confidence: z.number().min(0).max(1),
+  triggerText: z.string(),
+  reasoning: z.string(),
+});
+
+export const SonnetResponseOutputSchema = z.object({
+  layer1Peek: z.string().max(15),
+  layer2Summary: z.object({
+    mainResponse: z.string(),
+    keyPoints: z.array(z.string()).max(3),
+  }),
+  layer3Detail: z.object({
+    fullScript: z.string(),
+    rationale: z.string(),
+    cautions: z.array(z.string()),
+    similarCases: z.array(z.string()),
+  }),
+  confidence: z.number().min(0).max(1),
+  riskFlags: z.array(z.string()),
+});
+
 export const ObjectionResponseSchema = z.object({
   id: z.string().uuid(),
   objectionId: z.string().uuid(),
@@ -144,3 +168,5 @@ export type OverlayLayerInput = z.infer<typeof OverlayLayerSchema>;
 export type SecretKeyInput = z.infer<typeof SecretKeySchema>;
 export type AppSettingsPatchInput = z.infer<typeof AppSettingsPatchSchema>;
 export type AppErrorInput = z.infer<typeof AppErrorSchema>;
+export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchema>;
+export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
