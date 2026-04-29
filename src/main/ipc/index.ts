@@ -20,6 +20,7 @@ import {
 import { secretStore } from '../services/secrets';
 import { settingsStore } from '../services/settings';
 import { setCallModeLogging } from '../logger';
+import { knowledgeSearchService } from '../services/knowledge';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -106,7 +107,11 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.knowledge.search, (_event, payload: unknown) => {
     const input = KnowledgeSearchInputSchema.parse(payload);
     logger.debug({ productId: input.productId, limit: input.limit }, 'knowledge search requested');
-    return [];
+    return knowledgeSearchService.search({
+      query: input.query,
+      productId: input.productId,
+      limit: input.limit ?? 5,
+    });
   });
 
   ipcMain.handle(IPC.objection.feedback, (_event, payload: unknown) => {
