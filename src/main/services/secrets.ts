@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { SecretKeyInput } from '@shared/schemas';
 
 export class SecretStore {
-  constructor(private readonly directory = join(app.getPath('userData'), 'secrets')) {}
+  constructor(private readonly directory = defaultSecretDirectory()) {}
 
   async set(key: SecretKeyInput, value: string): Promise<void> {
     if (!safeStorage.isEncryptionAvailable()) {
@@ -24,6 +24,18 @@ export class SecretStore {
     }
   }
 
+  async get(key: SecretKeyInput): Promise<string | null> {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('safeStorage encryption is not available');
+    }
+    try {
+      const encrypted = await readFile(this.pathFor(key));
+      return safeStorage.decryptString(encrypted);
+    } catch {
+      return null;
+    }
+  }
+
   async delete(key: SecretKeyInput): Promise<void> {
     await rm(this.pathFor(key), { force: true });
   }
@@ -31,6 +43,11 @@ export class SecretStore {
   private pathFor(key: SecretKeyInput): string {
     return join(this.directory, `${key}.bin`);
   }
+}
+
+function defaultSecretDirectory(): string {
+  const userDataPath = app?.getPath?.('userData');
+  return join(userDataPath ?? process.cwd(), 'secrets');
 }
 
 export const secretStore = new SecretStore();
