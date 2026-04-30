@@ -88,6 +88,7 @@ export interface AudioCaptureStatus {
     modulePath: string;
     error?: string | undefined;
   };
+  permissions: PermissionState;
   sttState: ConnectionState;
   nativeCaptureActive: boolean;
 }

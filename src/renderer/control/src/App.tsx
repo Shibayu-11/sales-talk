@@ -91,6 +91,7 @@ export function App(): JSX.Element {
   const refreshAudioStatus = async (): Promise<void> => {
     const status = await window.api.audio.getStatus();
     setAudioStatus(status);
+    setPermissions(status.permissions);
     setSttState(status.sttState);
   };
 
@@ -249,7 +250,17 @@ function DashboardPanel(props: {
             更新
           </button>
         </div>
-        <div className="grid gap-3 text-sm md:grid-cols-3">
+        <div className="grid gap-3 text-sm md:grid-cols-5">
+          <StatusTile
+            label="Screen Recording"
+            value={props.audioStatus?.permissions.screen ? 'granted' : 'missing'}
+            ok={Boolean(props.audioStatus?.permissions.screen)}
+          />
+          <StatusTile
+            label="Microphone"
+            value={props.audioStatus?.permissions.microphone ? 'granted' : 'missing'}
+            ok={Boolean(props.audioStatus?.permissions.microphone)}
+          />
           <StatusTile
             label="Native module"
             value={props.audioStatus?.nativeModule.available ? 'available' : 'missing'}

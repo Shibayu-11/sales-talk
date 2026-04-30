@@ -23,6 +23,7 @@ import type {
 import { logger } from '../logger';
 import {
   checkPermissions,
+  formatMissingAudioCapturePermissions,
   requestMicrophonePermission,
   requestScreenPermission,
 } from '../services/permissions';
@@ -96,6 +97,9 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
 
   ipcMain.handle(IPC.audio.start, async () => {
+    if (!preflightAudioCapturePermissions(windows)) {
+      return;
+    }
     await startSTT(windows);
     await tryStartNativeAudioCapture(windows);
   });
@@ -117,6 +121,9 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
+    if (!preflightAudioCapturePermissions(windows)) {
+      return;
+    }
     callState = { status: 'in_call', productId, startedAt: Date.now() };
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
@@ -197,9 +204,23 @@ export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
 function getAudioCaptureStatus(): AudioCaptureStatus {
   return {
     nativeModule: getNativeAudioCaptureModuleStatus(),
+    permissions: checkPermissions(),
     sttState: activeSttClient?.getState() ?? 'disconnected',
     nativeCaptureActive: activeNativeAudioCaptureService !== null,
   };
+}
+
+function preflightAudioCapturePermissions(windows: IpcWindowAccessors): boolean {
+  const permissions = checkPermissions();
+  notifyPermissions(windows, permissions);
+  const message = formatMissingAudioCapturePermissions(permissions);
+  if (!message) {
+    return true;
+  }
+
+  windows.getControlWindow()?.webContents.send(IPC.audio.onError, message);
+  logger.warn({ permissions }, 'audio capture permission preflight failed');
+  return false;
 }
 
 async function startSTT(windows: IpcWindowAccessors): Promise<void> {
