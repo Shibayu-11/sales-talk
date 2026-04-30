@@ -100,7 +100,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
-    await startSTT(windows);
+    await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
   });
 

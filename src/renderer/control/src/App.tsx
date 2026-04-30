@@ -79,7 +79,21 @@ export function App(): JSX.Element {
   }, []);
 
   const startCall = async (): Promise<void> => {
+    setAudioError(null);
+    setSttError(null);
     await window.api.call.start(productId);
+    await refreshAudioStatus();
+  };
+
+  const startAudioDiagnostic = async (): Promise<void> => {
+    setAudioError(null);
+    setSttError(null);
+    await window.api.audio.start();
+    await refreshAudioStatus();
+  };
+
+  const stopAudioDiagnostic = async (): Promise<void> => {
+    await window.api.audio.stop();
     await refreshAudioStatus();
   };
 
@@ -160,7 +174,9 @@ export function App(): JSX.Element {
               onRequestMicrophonePermission={requestMicrophonePermission}
               onRequestScreenPermission={requestScreenPermission}
               onRefreshAudioStatus={refreshAudioStatus}
+              onStartAudioDiagnostic={startAudioDiagnostic}
               onStartCall={startCall}
+              onStopAudioDiagnostic={stopAudioDiagnostic}
               onSelectProduct={selectProduct}
               audioError={audioError}
               audioStatus={audioStatus}
@@ -200,12 +216,23 @@ function DashboardPanel(props: {
   onRequestMicrophonePermission: () => Promise<void>;
   onRequestScreenPermission: () => Promise<void>;
   onRefreshAudioStatus: () => Promise<void>;
+  onStartAudioDiagnostic: () => Promise<void>;
   onStartCall: () => Promise<void>;
+  onStopAudioDiagnostic: () => Promise<void>;
   onSelectProduct: (productId: ProductId) => Promise<void>;
   recentTranscripts: Transcript[];
   sttError: string | null;
   sttState: ConnectionState;
 }): JSX.Element {
+  const audioDiagnosticActive =
+    Boolean(props.audioStatus?.nativeCaptureActive) ||
+    props.sttState === 'connecting' ||
+    props.sttState === 'connected' ||
+    props.sttState === 'reconnecting';
+  const canStartAudioDiagnostic = Boolean(
+    props.permissions?.screen && props.permissions?.microphone && !audioDiagnosticActive,
+  );
+
   return (
     <>
       <div className="rounded-lg border border-zinc-800 p-5">
@@ -284,13 +311,33 @@ function DashboardPanel(props: {
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-zinc-400">音声 / STT 診断</h2>
-          <button
-            type="button"
-            onClick={() => void props.onRefreshAudioStatus()}
-            className="rounded bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700"
-          >
-            更新
-          </button>
+          <div className="flex gap-2">
+            {audioDiagnosticActive ? (
+              <button
+                type="button"
+                onClick={() => void props.onStopAudioDiagnostic()}
+                className="rounded bg-overlay-objection px-3 py-1 text-xs font-medium text-white"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void props.onStartAudioDiagnostic()}
+                className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!canStartAudioDiagnostic}
+              >
+                診断開始
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void props.onRefreshAudioStatus()}
+              className="rounded bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700"
+            >
+              更新
+            </button>
+          </div>
         </div>
         <div className="grid gap-3 text-sm md:grid-cols-5">
           <StatusTile
