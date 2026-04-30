@@ -57,9 +57,9 @@ test-results/
 Thumbs.db
 
 # Recordings / private data (must never be committed)
-recordings/
-audio/
-transcripts/
+/recordings/
+/audio/
+/transcripts/
 *.wav
 *.mp3
 *.m4a

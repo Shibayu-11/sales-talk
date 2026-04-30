@@ -33,6 +33,8 @@ import { createRuntimeObjectionPipelineService } from '../services/objection-run
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
 import { createRuntimeDeepgramSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
+import { NativeAudioCaptureService } from '../audio/native-audio-capture';
+import { loadNativeAudioCaptureModule } from '../audio/native-module-loader';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -47,6 +49,7 @@ const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
+let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   activeObjectionPipelineService = createRuntimeObjectionPipelineService(
@@ -88,9 +91,11 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.audio.start, async () => {
     await startSTT(windows);
+    await tryStartNativeAudioCapture(windows);
   });
 
   ipcMain.handle(IPC.audio.stop, async () => {
+    await stopNativeAudioCapture();
     await stopSTT();
   });
 
@@ -108,6 +113,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const productId = ProductIdSchema.parse(payload);
     callState = { status: 'in_call', productId, startedAt: Date.now() };
     await tryStartSTT(windows);
+    await tryStartNativeAudioCapture(windows);
     setCallModeLogging(true);
     notifyCallState(windows);
     windows.getOverlayWindow()?.showInactive();
@@ -117,6 +123,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.call.end, () => {
     callState = { status: 'idle' };
     activeObjectionPipelineService?.cancelActive();
+    void stopNativeAudioCapture();
     void stopSTT();
     setCallModeLogging(false);
     notifyCallState(windows);
@@ -203,6 +210,41 @@ async function tryStartSTT(windows: IpcWindowAccessors): Promise<void> {
 async function stopSTT(): Promise<void> {
   await activeSttClient?.stop();
   activeSttClient = null;
+}
+
+async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<void> {
+  try {
+    await startNativeAudioCapture();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    windows.getControlWindow()?.webContents.send(IPC.audio.onError, message);
+    logger.warn({ error }, 'native audio capture start failed');
+  }
+}
+
+async function startNativeAudioCapture(): Promise<void> {
+  if (!activeNativeAudioCaptureService) {
+    const nativeModule = loadNativeAudioCaptureModule();
+    if (!nativeModule) {
+      logger.warn('native audio capture module not found');
+      return;
+    }
+
+    activeNativeAudioCaptureService = new NativeAudioCaptureService({
+      module: nativeModule,
+      sendAudioChunk: sendAudioChunkToSTT,
+      onError: (error) => {
+        logger.warn({ error }, 'native audio capture error');
+      },
+    });
+  }
+
+  await activeNativeAudioCaptureService.start();
+}
+
+async function stopNativeAudioCapture(): Promise<void> {
+  await activeNativeAudioCaptureService?.stop();
+  activeNativeAudioCaptureService = null;
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {
