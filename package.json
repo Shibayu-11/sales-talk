@@ -19,6 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "native:audio:build": "cd src/native/audio-capture && node-gyp rebuild",
+    "native:audio:clean": "cd src/native/audio-capture && node-gyp clean",
     "package:mac": "electron-vite build && electron-builder --mac --universal",
     "license:audit": "tsx scripts/license-audit.ts"
   },
