@@ -24,7 +24,24 @@ npm run dev
 | `npm run lint` | ESLint |
 | `npm run test` | Vitest(単体) |
 | `npm run test:e2e` | Playwright(E2E) |
+| `npm run native:audio:build` | macOS native audio capture addon をビルド |
+| `npm run native:audio:smoke -- --duration-ms 5000` | 実機で microphone/system audio chunk 到達を診断 |
 | `npm run package:mac` | macOS DMG ビルド(universal) |
+
+### Native audio smoke test
+
+実機で Screen Recording / Microphone 権限と `.node` addon の chunk 到達を確認する。
+
+```bash
+npm run native:audio:build
+npm run native:audio:smoke -- --duration-ms 5000 --require-microphone
+```
+
+Zoom system audio まで必須確認する場合は Zoom を起動してから実行する。
+
+```bash
+npm run native:audio:smoke -- --duration-ms 8000 --require-microphone --require-system
+```
 
 ## 構成
 
