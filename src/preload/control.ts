@@ -7,6 +7,8 @@ import type {
   AppSettings,
   ProductId,
   KnowledgeEntry,
+  Transcript,
+  ConnectionState,
 } from '@shared/types';
 
 /**
@@ -35,6 +37,38 @@ const api: RendererApi = {
       const listener = (_: unknown, s: CallState) => cb(s);
       ipcRenderer.on(IPC.call.onState, listener);
       return () => ipcRenderer.off(IPC.call.onState, listener);
+    },
+  },
+  audio: {
+    getStatus: () => ipcRenderer.invoke(IPC.audio.status),
+    start: () => ipcRenderer.invoke(IPC.audio.start),
+    stop: () => ipcRenderer.invoke(IPC.audio.stop),
+    onError: (cb) => {
+      const listener = (_: unknown, message: string) => cb(message);
+      ipcRenderer.on(IPC.audio.onError, listener);
+      return () => ipcRenderer.off(IPC.audio.onError, listener);
+    },
+  },
+  stt: {
+    onInterim: (cb) => {
+      const listener = (_: unknown, transcript: Transcript) => cb(transcript);
+      ipcRenderer.on(IPC.stt.onInterim, listener);
+      return () => ipcRenderer.off(IPC.stt.onInterim, listener);
+    },
+    onFinal: (cb) => {
+      const listener = (_: unknown, transcript: Transcript) => cb(transcript);
+      ipcRenderer.on(IPC.stt.onFinal, listener);
+      return () => ipcRenderer.off(IPC.stt.onFinal, listener);
+    },
+    onError: (cb) => {
+      const listener = (_: unknown, message: string) => cb(message);
+      ipcRenderer.on(IPC.stt.onError, listener);
+      return () => ipcRenderer.off(IPC.stt.onError, listener);
+    },
+    onConnectionState: (cb) => {
+      const listener = (_: unknown, state: ConnectionState) => cb(state);
+      ipcRenderer.on(IPC.stt.onConnectionState, listener);
+      return () => ipcRenderer.off(IPC.stt.onConnectionState, listener);
     },
   },
   objection: {

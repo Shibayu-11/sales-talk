@@ -24,6 +24,7 @@ export const IPC = {
   // Audio capture (Swift NAPI bridge)
   audio: {
     listShareableApps: 'audio:list-shareable-apps',
+    status: 'audio:status',
     start: 'audio:start',
     stop: 'audio:stop',
     pause: 'audio:pause',

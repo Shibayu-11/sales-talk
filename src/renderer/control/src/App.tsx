@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, CallState, PermissionState, ProductId } from '@shared/types';
+import type {
+  AppSettings,
+  AudioCaptureStatus,
+  CallState,
+  ConnectionState,
+  PermissionState,
+  ProductId,
+  Transcript,
+} from '@shared/types';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'real_estate', label: '不動産' },
@@ -26,10 +34,16 @@ export function App(): JSX.Element {
   const [activeNav, setActiveNav] = useState<NavItem>('ダッシュボード');
   const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
+  const [audioStatus, setAudioStatus] = useState<AudioCaptureStatus | null>(null);
+  const [sttState, setSttState] = useState<ConnectionState>('disconnected');
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [sttError, setSttError] = useState<string | null>(null);
+  const [recentTranscripts, setRecentTranscripts] = useState<Transcript[]>([]);
 
   useEffect(() => {
     void window.api.app.getVersion().then(setVersion);
     void window.api.permissions.check().then(setPermissions);
+    void refreshAudioStatus();
     void window.api.settings.get().then((loadedSettings) => {
       setSettings(loadedSettings);
       if (loadedSettings.selectedProductId) setProductId(loadedSettings.selectedProductId);
@@ -41,19 +55,43 @@ export function App(): JSX.Element {
       setSettings(nextSettings);
       if (nextSettings.selectedProductId) setProductId(nextSettings.selectedProductId);
     });
+    const offAudioError = window.api.audio.onError(setAudioError);
+    const offSttError = window.api.stt.onError(setSttError);
+    const offSttState = window.api.stt.onConnectionState((state) => {
+      setSttState(state);
+      setAudioStatus((current) => (current ? { ...current, sttState: state } : current));
+    });
+    const rememberTranscript = (transcript: Transcript): void => {
+      setRecentTranscripts((current) => [transcript, ...current].slice(0, 5));
+    };
+    const offInterim = window.api.stt.onInterim(rememberTranscript);
+    const offFinal = window.api.stt.onFinal(rememberTranscript);
     return () => {
       offPerm();
       offCall();
       offSettings();
+      offAudioError();
+      offSttError();
+      offSttState();
+      offInterim();
+      offFinal();
     };
   }, []);
 
   const startCall = async (): Promise<void> => {
     await window.api.call.start(productId);
+    await refreshAudioStatus();
   };
 
   const endCall = async (): Promise<void> => {
     await window.api.call.end();
+    await refreshAudioStatus();
+  };
+
+  const refreshAudioStatus = async (): Promise<void> => {
+    const status = await window.api.audio.getStatus();
+    setAudioStatus(status);
+    setSttState(status.sttState);
   };
 
   const refreshSecretStatus = async (): Promise<void> => {
@@ -108,8 +146,14 @@ export function App(): JSX.Element {
               permissions={permissions}
               productId={productId}
               onEndCall={endCall}
+              onRefreshAudioStatus={refreshAudioStatus}
               onStartCall={startCall}
               onSelectProduct={selectProduct}
+              audioError={audioError}
+              audioStatus={audioStatus}
+              recentTranscripts={recentTranscripts}
+              sttError={sttError}
+              sttState={sttState}
             />
           )}
           {activeNav === '商談履歴' && <EmptyPanel title="商談履歴" body="議事録生成後の履歴一覧をここに表示します。" />}
@@ -134,12 +178,18 @@ export function App(): JSX.Element {
 }
 
 function DashboardPanel(props: {
+  audioError: string | null;
+  audioStatus: AudioCaptureStatus | null;
   call: CallState;
   permissions: PermissionState | null;
   productId: ProductId;
   onEndCall: () => Promise<void>;
+  onRefreshAudioStatus: () => Promise<void>;
   onStartCall: () => Promise<void>;
   onSelectProduct: (productId: ProductId) => Promise<void>;
+  recentTranscripts: Transcript[];
+  sttError: string | null;
+  sttState: ConnectionState;
 }): JSX.Element {
   return (
     <>
@@ -187,7 +237,71 @@ function DashboardPanel(props: {
           <span className="text-xs text-zinc-500">状態: {props.call.status}</span>
         </div>
       </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-medium text-zinc-400">音声 / STT 診断</h2>
+          <button
+            type="button"
+            onClick={() => void props.onRefreshAudioStatus()}
+            className="rounded bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700"
+          >
+            更新
+          </button>
+        </div>
+        <div className="grid gap-3 text-sm md:grid-cols-3">
+          <StatusTile
+            label="Native module"
+            value={props.audioStatus?.nativeModule.available ? 'available' : 'missing'}
+            ok={Boolean(props.audioStatus?.nativeModule.contractValid)}
+          />
+          <StatusTile
+            label="Native capture"
+            value={props.audioStatus?.nativeCaptureActive ? 'active' : 'stopped'}
+            ok={Boolean(props.audioStatus?.nativeCaptureActive)}
+          />
+          <StatusTile
+            label="STT"
+            value={props.sttState}
+            ok={props.sttState === 'connected'}
+          />
+        </div>
+        <div className="mt-3 space-y-1 text-xs text-zinc-500">
+          <div>module: {props.audioStatus?.nativeModule.modulePath ?? '-'}</div>
+          {props.audioStatus?.nativeModule.error && (
+            <div className="text-overlay-objection">{props.audioStatus.nativeModule.error}</div>
+          )}
+          {props.audioError && <div className="text-overlay-objection">Audio: {props.audioError}</div>}
+          {props.sttError && <div className="text-overlay-objection">STT: {props.sttError}</div>}
+        </div>
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Recent transcripts</div>
+          {props.recentTranscripts.length === 0 ? (
+            <div className="rounded border border-zinc-800 p-3 text-xs text-zinc-600">未受信</div>
+          ) : (
+            <ul className="space-y-2">
+              {props.recentTranscripts.map((transcript, index) => (
+                <li key={`${transcript.startMs}-${index}`} className="rounded border border-zinc-800 p-3 text-xs">
+                  <span className="mr-2 text-zinc-500">
+                    {transcript.isFinal ? 'final' : 'interim'} / {transcript.speaker}
+                  </span>
+                  {transcript.text}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </>
+  );
+}
+
+function StatusTile(props: { label: string; value: string; ok: boolean }): JSX.Element {
+  return (
+    <div className="rounded border border-zinc-800 p-3">
+      <div className="text-xs text-zinc-500">{props.label}</div>
+      <div className={props.ok ? 'text-overlay-success' : 'text-zinc-400'}>{props.value}</div>
+    </div>
   );
 }
 

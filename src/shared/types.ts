@@ -81,6 +81,17 @@ export type SharingState =
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
+export interface AudioCaptureStatus {
+  nativeModule: {
+    available: boolean;
+    contractValid: boolean;
+    modulePath: string;
+    error?: string | undefined;
+  };
+  sttState: ConnectionState;
+  nativeCaptureActive: boolean;
+}
+
 export interface AppInfo {
   bundleId: string;
   name: string;
@@ -182,6 +193,18 @@ export interface RendererApi {
     end(): Promise<void>;
     setProduct(productId: ProductId): Promise<void>;
     onState(cb: (state: CallState) => void): () => void;
+  };
+  audio: {
+    getStatus(): Promise<AudioCaptureStatus>;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    onError(cb: (message: string) => void): () => void;
+  };
+  stt: {
+    onInterim(cb: (transcript: Transcript) => void): () => void;
+    onFinal(cb: (transcript: Transcript) => void): () => void;
+    onError(cb: (message: string) => void): () => void;
+    onConnectionState(cb: (state: ConnectionState) => void): () => void;
   };
   objection: {
     onDetected(cb: (obj: DetectedObjection) => void): () => void;

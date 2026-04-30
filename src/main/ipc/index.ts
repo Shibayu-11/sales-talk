@@ -14,6 +14,7 @@ import {
 import type {
   AppSettings,
   AudioChunk,
+  AudioCaptureStatus,
   CallState,
   PermissionState,
   SharingState,
@@ -34,7 +35,10 @@ import type { ObjectionPipelineService } from '../services/objection-pipeline';
 import { createRuntimeDeepgramSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
 import { NativeAudioCaptureService } from '../audio/native-audio-capture';
-import { loadNativeAudioCaptureModule } from '../audio/native-module-loader';
+import {
+  getNativeAudioCaptureModuleStatus,
+  loadNativeAudioCaptureModule,
+} from '../audio/native-module-loader';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -88,6 +92,8 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const key = SecretKeySchema.parse(payload);
     await secretStore.delete(key);
   });
+
+  ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
 
   ipcMain.handle(IPC.audio.start, async () => {
     await startSTT(windows);
@@ -186,6 +192,14 @@ export async function handlePipelineTranscript(transcript: Transcript): Promise<
 
 export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
   await activeSttClient?.sendAudio(chunk);
+}
+
+function getAudioCaptureStatus(): AudioCaptureStatus {
+  return {
+    nativeModule: getNativeAudioCaptureModuleStatus(),
+    sttState: activeSttClient?.getState() ?? 'disconnected',
+    nativeCaptureActive: activeNativeAudioCaptureService !== null,
+  };
 }
 
 async function startSTT(windows: IpcWindowAccessors): Promise<void> {
