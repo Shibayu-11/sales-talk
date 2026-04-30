@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
+  AudioChunkSchema,
   FeedbackSchema,
   KnowledgeSearchInputSchema,
   ObjectionDismissInputSchema,
@@ -86,22 +87,27 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.audio.start, async () => {
-    activeSttClient ??= await createRuntimeDeepgramSTTClient({
-      windows,
-      isInCall: () => callState.status === 'in_call',
-      onPipelineTranscript: handlePipelineTranscript,
-    });
-    await activeSttClient.start();
+    await startSTT(windows);
   });
 
   ipcMain.handle(IPC.audio.stop, async () => {
-    await activeSttClient?.stop();
-    activeSttClient = null;
+    await stopSTT();
+  });
+
+  ipcMain.handle(IPC.audio.onSystemChunk, async (_event, payload: unknown) => {
+    const chunk = AudioChunkSchema.parse(payload);
+    await sendAudioChunkToSTT({ ...chunk, speaker: 'counterpart' });
+  });
+
+  ipcMain.handle(IPC.audio.onMicrophoneChunk, async (_event, payload: unknown) => {
+    const chunk = AudioChunkSchema.parse(payload);
+    await sendAudioChunkToSTT({ ...chunk, speaker: 'self' });
   });
 
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
     callState = { status: 'in_call', productId, startedAt: Date.now() };
+    await tryStartSTT(windows);
     setCallModeLogging(true);
     notifyCallState(windows);
     windows.getOverlayWindow()?.showInactive();
@@ -111,6 +117,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.call.end, () => {
     callState = { status: 'idle' };
     activeObjectionPipelineService?.cancelActive();
+    void stopSTT();
     setCallModeLogging(false);
     notifyCallState(windows);
     windows.getOverlayWindow()?.hide();
@@ -172,6 +179,30 @@ export async function handlePipelineTranscript(transcript: Transcript): Promise<
 
 export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
   await activeSttClient?.sendAudio(chunk);
+}
+
+async function startSTT(windows: IpcWindowAccessors): Promise<void> {
+  activeSttClient ??= await createRuntimeDeepgramSTTClient({
+    windows,
+    isInCall: () => callState.status === 'in_call',
+    onPipelineTranscript: handlePipelineTranscript,
+  });
+  await activeSttClient.start();
+}
+
+async function tryStartSTT(windows: IpcWindowAccessors): Promise<void> {
+  try {
+    await startSTT(windows);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    windows.getControlWindow()?.webContents.send(IPC.stt.onError, message);
+    logger.warn({ error }, 'stt start failed');
+  }
+}
+
+async function stopSTT(): Promise<void> {
+  await activeSttClient?.stop();
+  activeSttClient = null;
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {

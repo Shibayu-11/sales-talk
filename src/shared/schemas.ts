@@ -9,6 +9,13 @@ export const ProductIdSchema = z.enum(['real_estate', 'kenko_keiei', 'hojokin'])
 export const SpeakerSchema = z.enum(['self', 'counterpart']);
 export const OverlayLayerSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 
+export const AudioChunkSchema = z.object({
+  speaker: SpeakerSchema,
+  data: z.string().min(1),
+  startMs: z.number().nonnegative(),
+  durationMs: z.number().positive(),
+});
+
 export const PermissionStateSchema = z.object({
   screen: z.boolean(),
   microphone: z.boolean(),
@@ -164,6 +171,7 @@ export const AppErrorSchema = z.object({
 });
 
 export type ProductIdInput = z.infer<typeof ProductIdSchema>;
+export type AudioChunkInput = z.infer<typeof AudioChunkSchema>;
 export type OverlayLayerInput = z.infer<typeof OverlayLayerSchema>;
 export type SecretKeyInput = z.infer<typeof SecretKeySchema>;
 export type AppSettingsPatchInput = z.infer<typeof AppSettingsPatchSchema>;
