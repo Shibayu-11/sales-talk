@@ -1,10 +1,12 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  getNativeAudioCaptureModuleCandidatePaths,
   getNativeAudioCaptureModuleStatus,
   loadNativeAudioCaptureModule,
+  resolveNativeAudioCaptureModulePath,
 } from '../../src/main/audio/native-module-loader';
 
 async function writeTempModule(source: string): Promise<string> {
@@ -14,7 +16,30 @@ async function writeTempModule(source: string): Promise<string> {
   return modulePath;
 }
 
+const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+
+function setElectronResourcesPath(resourcesPath: string): void {
+  Object.defineProperty(process, 'resourcesPath', {
+    configurable: true,
+    value: resourcesPath,
+  });
+}
+
+function restoreElectronResourcesPath(): void {
+  if (originalResourcesPathDescriptor) {
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPathDescriptor);
+    return;
+  }
+
+  Reflect.deleteProperty(process, 'resourcesPath');
+}
+
 describe('native audio module loader', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    restoreElectronResourcesPath();
+  });
+
   it('reports missing modules without throwing', () => {
     const modulePath = join(tmpdir(), 'missing-audio-capture.node');
 
@@ -24,6 +49,27 @@ describe('native audio module loader', () => {
       contractValid: false,
       modulePath,
     });
+  });
+
+  it('uses an explicit module override before packaged and dev paths', () => {
+    const modulePath = join(tmpdir(), 'overridden-audio-capture.node');
+
+    vi.stubEnv('SALES_TALK_AUDIO_CAPTURE_MODULE', modulePath);
+
+    expect(getNativeAudioCaptureModuleCandidatePaths()).toEqual([modulePath]);
+    expect(resolveNativeAudioCaptureModulePath()).toBe(modulePath);
+  });
+
+  it('prefers the packaged extraResources path when it exists', async () => {
+    const resourcesPath = await mkdtemp(join(tmpdir(), 'sales-talk-resources-'));
+    const nativeModuleDirectory = join(resourcesPath, 'native', 'audio-capture');
+    const modulePath = join(nativeModuleDirectory, 'audio_capture.node');
+    await mkdir(nativeModuleDirectory, { recursive: true });
+    await writeFile(modulePath, '', 'utf8');
+    setElectronResourcesPath(resourcesPath);
+
+    expect(getNativeAudioCaptureModuleCandidatePaths()[0]).toBe(modulePath);
+    expect(resolveNativeAudioCaptureModulePath()).toBe(modulePath);
   });
 
   it('validates the expected NAPI contract', async () => {

@@ -4,6 +4,17 @@ import { join } from 'node:path';
 import type { NativeAudioCaptureModule } from './native-audio-capture';
 
 const requireNative = createRequire(import.meta.url);
+const AUDIO_CAPTURE_RESOURCE_PATH = join('native', 'audio-capture', 'audio_capture.node');
+const AUDIO_CAPTURE_DEV_PATH = join(
+  'src',
+  'native',
+  'audio-capture',
+  'build',
+  'Release',
+  'audio_capture.node',
+);
+
+type ProcessWithElectronResources = NodeJS.Process & { resourcesPath?: string };
 
 export interface NativeAudioCaptureModuleStatus {
   available: boolean;
@@ -12,17 +23,34 @@ export interface NativeAudioCaptureModuleStatus {
   error?: string | undefined;
 }
 
+function getElectronResourcesPath(): string | null {
+  const resourcesPath = (process as ProcessWithElectronResources).resourcesPath;
+  return typeof resourcesPath === 'string' && resourcesPath.length > 0 ? resourcesPath : null;
+}
+
+export function getNativeAudioCaptureModuleCandidatePaths(): string[] {
+  if (process.env.SALES_TALK_AUDIO_CAPTURE_MODULE) {
+    return [process.env.SALES_TALK_AUDIO_CAPTURE_MODULE];
+  }
+
+  const resourcesPath = getElectronResourcesPath();
+  const candidatePaths = resourcesPath ? [join(resourcesPath, AUDIO_CAPTURE_RESOURCE_PATH)] : [];
+  candidatePaths.push(join(process.cwd(), AUDIO_CAPTURE_DEV_PATH));
+  return candidatePaths;
+}
+
 export function resolveNativeAudioCaptureModulePath(): string {
+  const candidatePaths = getNativeAudioCaptureModuleCandidatePaths();
   return (
-    process.env.SALES_TALK_AUDIO_CAPTURE_MODULE ??
-    join(process.cwd(), 'src/native/audio-capture/build/Release/audio_capture.node')
+    candidatePaths.find((candidatePath) => existsSync(candidatePath)) ??
+    candidatePaths[0] ??
+    join(process.cwd(), AUDIO_CAPTURE_DEV_PATH)
   );
 }
 
 export function loadNativeAudioCaptureModule(
   modulePath = resolveNativeAudioCaptureModulePath(),
 ): NativeAudioCaptureModule | null {
-
   if (!existsSync(modulePath)) {
     return null;
   }

@@ -8,6 +8,11 @@ files:
   - package.json
   - "!node_modules/**/*"
 asar: true
+extraResources:
+  - from: src/native/audio-capture/build/Release
+    to: native/audio-capture
+    filter:
+      - audio_capture.node
 
 mac:
   category: public.app-category.business
