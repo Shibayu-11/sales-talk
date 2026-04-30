@@ -10,7 +10,7 @@ import {
   SecretKeySchema,
   SecretSetInputSchema,
 } from '@shared/schemas';
-import type { AppSettings, CallState, PermissionState, SharingState } from '@shared/types';
+import type { AppSettings, CallState, PermissionState, SharingState, Transcript } from '@shared/types';
 import { logger } from '../logger';
 import {
   checkPermissions,
@@ -21,6 +21,8 @@ import { secretStore } from '../services/secrets';
 import { settingsStore } from '../services/settings';
 import { setCallModeLogging } from '../logger';
 import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
+import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
+import type { ObjectionPipelineService } from '../services/objection-pipeline';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -33,8 +35,14 @@ interface IpcWindowAccessors {
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
+let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
+  activeObjectionPipelineService = createRuntimeObjectionPipelineService(
+    windows,
+    () => (callState.status === 'in_call' ? callState.productId : null),
+  );
+
   ipcMain.handle(IPC.app.version, () => app.getVersion());
 
   ipcMain.handle(IPC.permissions.check, () => checkPermissions());
@@ -78,6 +86,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.call.end, () => {
     callState = { status: 'idle' };
+    activeObjectionPipelineService?.cancelActive();
     setCallModeLogging(false);
     notifyCallState(windows);
     windows.getOverlayWindow()?.hide();
@@ -122,6 +131,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.objection.dismiss, (_event, payload: unknown) => {
     const id = ObjectionDismissInputSchema.parse(payload);
+    activeObjectionPipelineService?.cancelActive();
     logger.info({ id }, 'objection dismissed');
   });
 
@@ -130,6 +140,10 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   notifyPermissions(windows, checkPermissions());
 
   logger.debug('ipc handlers registered');
+}
+
+export async function handlePipelineTranscript(transcript: Transcript): Promise<void> {
+  await activeObjectionPipelineService?.handleTranscript(transcript);
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {
