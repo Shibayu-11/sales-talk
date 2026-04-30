@@ -83,6 +83,16 @@ export function App(): JSX.Element {
     await refreshAudioStatus();
   };
 
+  const requestScreenPermission = async (): Promise<void> => {
+    await window.api.permissions.requestScreen();
+    await refreshAudioStatus();
+  };
+
+  const requestMicrophonePermission = async (): Promise<void> => {
+    await window.api.permissions.requestMicrophone();
+    await refreshAudioStatus();
+  };
+
   const endCall = async (): Promise<void> => {
     await window.api.call.end();
     await refreshAudioStatus();
@@ -147,6 +157,8 @@ export function App(): JSX.Element {
               permissions={permissions}
               productId={productId}
               onEndCall={endCall}
+              onRequestMicrophonePermission={requestMicrophonePermission}
+              onRequestScreenPermission={requestScreenPermission}
               onRefreshAudioStatus={refreshAudioStatus}
               onStartCall={startCall}
               onSelectProduct={selectProduct}
@@ -185,6 +197,8 @@ function DashboardPanel(props: {
   permissions: PermissionState | null;
   productId: ProductId;
   onEndCall: () => Promise<void>;
+  onRequestMicrophonePermission: () => Promise<void>;
+  onRequestScreenPermission: () => Promise<void>;
   onRefreshAudioStatus: () => Promise<void>;
   onStartCall: () => Promise<void>;
   onSelectProduct: (productId: ProductId) => Promise<void>;
@@ -237,6 +251,34 @@ function DashboardPanel(props: {
           )}
           <span className="text-xs text-zinc-500">状態: {props.call.status}</span>
         </div>
+        {(!props.permissions?.screen || !props.permissions?.microphone) && (
+          <div className="mt-4 rounded border border-overlay-objection/40 bg-overlay-objection/10 p-4">
+            <div className="text-sm font-medium text-overlay-objection">通話開始前に権限が必要です</div>
+            <div className="mt-1 text-xs text-zinc-400">
+              Zoom 音声の取得には Screen Recording、あなたの発話取得には Microphone を許可してください。
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!props.permissions?.screen && (
+                <button
+                  type="button"
+                  onClick={() => void props.onRequestScreenPermission()}
+                  className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-300"
+                >
+                  Screen Recording を開く
+                </button>
+              )}
+              {!props.permissions?.microphone && (
+                <button
+                  type="button"
+                  onClick={() => void props.onRequestMicrophonePermission()}
+                  className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-300"
+                >
+                  Microphone を許可
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5">

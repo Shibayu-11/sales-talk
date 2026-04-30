@@ -22,6 +22,7 @@
     "native:audio:build": "cd src/native/audio-capture && node-gyp rebuild",
     "native:audio:clean": "cd src/native/audio-capture && node-gyp clean",
     "native:audio:smoke": "tsx scripts/audio-capture-smoke.ts",
+    "native:audio:stt-smoke": "tsx scripts/audio-stt-smoke.ts",
     "package:mac": "npm run native:audio:build && electron-vite build && electron-builder --mac --universal",
     "license:audit": "tsx scripts/license-audit.ts"
   },
