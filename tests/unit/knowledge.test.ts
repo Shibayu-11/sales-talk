@@ -79,4 +79,26 @@ describe('KnowledgeSearchService', () => {
       expect.objectContaining({ query: '[redacted-email] から価格が高いと言われた' }),
     );
   });
+
+  it('degrades to remaining results when one search path fails', async () => {
+    const b = entry('00000000-0000-4000-8000-000000000002', '2026-04-02T00:00:00Z');
+    const onSearchError = vi.fn();
+    const repository: KnowledgeRepository = {
+      searchByEmbedding: vi.fn(async () => {
+        throw new Error('cohere unavailable');
+      }),
+      searchByText: vi.fn(async () => [{ entry: b, rank: 1 }]),
+    };
+    const service = new KnowledgeSearchService({ repository, onSearchError });
+
+    const results = await service.search({
+      query: '価格',
+      productId: 'real_estate',
+      limit: 5,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe(b.id);
+    expect(onSearchError).toHaveBeenCalledWith('embedding', expect.any(Error));
+  });
 });

@@ -20,7 +20,7 @@ import {
 import { secretStore } from '../services/secrets';
 import { settingsStore } from '../services/settings';
 import { setCallModeLogging } from '../logger';
-import { knowledgeSearchService } from '../services/knowledge';
+import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -32,6 +32,7 @@ interface IpcWindowAccessors {
 
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
+const knowledgeSearchService = createRuntimeKnowledgeSearchService();
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.app.version, () => app.getVersion());

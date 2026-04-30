@@ -25,7 +25,7 @@ export interface KnowledgeRepository {
 
 const RRF_K = 60;
 
-class EmptyKnowledgeRepository implements KnowledgeRepository {
+export class EmptyKnowledgeRepository implements KnowledgeRepository {
   async searchByEmbedding(): Promise<RankedKnowledgeCandidate[]> {
     return [];
   }
@@ -35,8 +35,26 @@ class EmptyKnowledgeRepository implements KnowledgeRepository {
   }
 }
 
+export type KnowledgeSearchSource = 'embedding' | 'text';
+
+export interface KnowledgeSearchServiceOptions {
+  repository?: KnowledgeRepository | undefined;
+  onSearchError?: ((source: KnowledgeSearchSource, error: unknown) => void) | undefined;
+}
+
 export class KnowledgeSearchService {
-  constructor(private readonly repository: KnowledgeRepository = new EmptyKnowledgeRepository()) {}
+  private readonly repository: KnowledgeRepository;
+  private readonly onSearchError: ((source: KnowledgeSearchSource, error: unknown) => void) | undefined;
+
+  constructor(repositoryOrOptions: KnowledgeRepository | KnowledgeSearchServiceOptions = {}) {
+    if (isKnowledgeRepository(repositoryOrOptions)) {
+      this.repository = repositoryOrOptions;
+      return;
+    }
+
+    this.repository = repositoryOrOptions.repository ?? new EmptyKnowledgeRepository();
+    this.onSearchError = repositoryOrOptions.onSearchError;
+  }
 
   async search(input: KnowledgeSearchInput): Promise<KnowledgeSearchResult[]> {
     const sanitizedInput = {
@@ -44,8 +62,8 @@ export class KnowledgeSearchService {
       query: maskPiiInText(input.query.trim()),
     };
     const [vectorResults, textResults] = await Promise.all([
-      this.repository.searchByEmbedding(sanitizedInput),
-      this.repository.searchByText(sanitizedInput),
+      this.safeSearch('embedding', () => this.repository.searchByEmbedding(sanitizedInput)),
+      this.safeSearch('text', () => this.repository.searchByText(sanitizedInput)),
     ]);
 
     return rankHybridKnowledgeResults({
@@ -53,6 +71,18 @@ export class KnowledgeSearchService {
       textResults,
       limit: input.limit,
     });
+  }
+
+  private async safeSearch(
+    source: KnowledgeSearchSource,
+    search: () => Promise<RankedKnowledgeCandidate[]>,
+  ): Promise<RankedKnowledgeCandidate[]> {
+    try {
+      return await search();
+    } catch (error) {
+      this.onSearchError?.(source, error);
+      return [];
+    }
   }
 }
 
@@ -90,6 +120,12 @@ export function rankHybridKnowledgeResults(input: {
 
 function reciprocalRank(rank: number): number {
   return 1 / (RRF_K + rank);
+}
+
+function isKnowledgeRepository(
+  value: KnowledgeRepository | KnowledgeSearchServiceOptions,
+): value is KnowledgeRepository {
+  return 'searchByEmbedding' in value && 'searchByText' in value;
 }
 
 export const knowledgeSearchService = new KnowledgeSearchService();
