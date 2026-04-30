@@ -10,7 +10,14 @@ import {
   SecretKeySchema,
   SecretSetInputSchema,
 } from '@shared/schemas';
-import type { AppSettings, CallState, PermissionState, SharingState, Transcript } from '@shared/types';
+import type {
+  AppSettings,
+  AudioChunk,
+  CallState,
+  PermissionState,
+  SharingState,
+  Transcript,
+} from '@shared/types';
 import { logger } from '../logger';
 import {
   checkPermissions,
@@ -23,6 +30,8 @@ import { setCallModeLogging } from '../logger';
 import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
 import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
+import { createRuntimeDeepgramSTTClient } from '../services/stt-runtime';
+import type { ResilientSTTClient } from '../services/stt';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -36,6 +45,7 @@ let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
+let activeSttClient: ResilientSTTClient | null = null;
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   activeObjectionPipelineService = createRuntimeObjectionPipelineService(
@@ -73,6 +83,20 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.secrets.delete, async (_event, payload: unknown) => {
     const key = SecretKeySchema.parse(payload);
     await secretStore.delete(key);
+  });
+
+  ipcMain.handle(IPC.audio.start, async () => {
+    activeSttClient ??= await createRuntimeDeepgramSTTClient({
+      windows,
+      isInCall: () => callState.status === 'in_call',
+      onPipelineTranscript: handlePipelineTranscript,
+    });
+    await activeSttClient.start();
+  });
+
+  ipcMain.handle(IPC.audio.stop, async () => {
+    await activeSttClient?.stop();
+    activeSttClient = null;
   });
 
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
@@ -144,6 +168,10 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
 export async function handlePipelineTranscript(transcript: Transcript): Promise<void> {
   await activeObjectionPipelineService?.handleTranscript(transcript);
+}
+
+export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
+  await activeSttClient?.sendAudio(chunk);
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {

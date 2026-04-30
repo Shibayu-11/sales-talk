@@ -13,6 +13,10 @@ class FakeProvider implements STTProvider {
   connect = vi.fn(async () => {});
   disconnect = vi.fn(async () => {});
   sendAudio = vi.fn(async () => {});
+  transcriptHandler: ((transcript: import('../../src/shared/types').Transcript) => void) | null = null;
+  setTranscriptHandler(handler: (transcript: import('../../src/shared/types').Transcript) => void): void {
+    this.transcriptHandler = handler;
+  }
 }
 
 describe('ResilientSTTClient', () => {
@@ -58,5 +62,23 @@ describe('ResilientSTTClient', () => {
     await client.sendAudio({ ...chunk, startMs: 100 });
 
     expect(client.getBufferedDurationMs()).toBe(100);
+  });
+
+  it('forwards provider transcripts to the configured callback', () => {
+    const provider = new FakeProvider();
+    const onTranscript = vi.fn();
+    new ResilientSTTClient(provider, { onTranscript });
+
+    provider.transcriptHandler?.({
+      speaker: 'counterpart',
+      text: '価格が高いですね',
+      isFinal: true,
+      startMs: 0,
+      endMs: 1_000,
+    });
+
+    expect(onTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '価格が高いですね', isFinal: true }),
+    );
   });
 });

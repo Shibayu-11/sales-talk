@@ -5,6 +5,7 @@ export interface STTProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   sendAudio(chunk: AudioChunk): Promise<void>;
+  setTranscriptHandler?(handler: (transcript: Transcript) => void): void;
 }
 
 export interface ResilientSTTClientOptions {
@@ -24,7 +25,11 @@ export class ResilientSTTClient {
   constructor(
     private readonly provider: STTProvider,
     private readonly options: ResilientSTTClientOptions = {},
-  ) {}
+  ) {
+    this.provider.setTranscriptHandler?.((transcript) => {
+      this.handleTranscript(transcript);
+    });
+  }
 
   getState(): ConnectionState {
     return this.state;
@@ -65,6 +70,10 @@ export class ResilientSTTClient {
       this.bufferChunk(chunk);
       await this.reconnect(toError(error));
     }
+  }
+
+  handleTranscript(transcript: Transcript): void {
+    this.options.onTranscript?.(transcript);
   }
 
   private async reconnect(cause: Error): Promise<void> {
