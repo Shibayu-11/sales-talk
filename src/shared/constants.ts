@@ -20,6 +20,11 @@ export const STT_KEEPALIVE_MS = 5_000;
 export const DEEPGRAM_ENDPOINTING_MS = 500;
 export const DEEPGRAM_UTTERANCE_END_MS = 2_000;
 
+/** Per PRD §17.3 */
+export const COHERE_EMBED_MODEL = 'embed-v4.0';
+export const COHERE_EMBED_DIMENSIONS = 1_024;
+export const COHERE_MAX_TEXTS_PER_REQUEST = 96;
+
 /** Per PRD §22.4 */
 export const MEETING_AUTO_DELETE_DAYS = 30;
 
