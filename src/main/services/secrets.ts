@@ -46,7 +46,7 @@ export class SecretStore {
 }
 
 function defaultSecretDirectory(): string {
-  const userDataPath = app?.getPath?.('userData');
+  const userDataPath = process.env.SALES_TALK_USER_DATA_PATH ?? app?.getPath?.('userData');
   return join(userDataPath ?? process.cwd(), 'secrets');
 }
 

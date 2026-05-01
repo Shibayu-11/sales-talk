@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export class SettingsStore {
   private cache: AppSettings | null = null;
 
-  constructor(private readonly filePath = join(app.getPath('userData'), 'settings.json')) {}
+  constructor(private readonly filePath = join(defaultUserDataPath(), 'settings.json')) {}
 
   async get(): Promise<AppSettings> {
     if (this.cache) return this.cache;
@@ -54,3 +54,7 @@ export class SettingsStore {
 }
 
 export const settingsStore = new SettingsStore();
+
+function defaultUserDataPath(): string {
+  return process.env.SALES_TALK_USER_DATA_PATH ?? app.getPath('userData');
+}

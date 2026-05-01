@@ -608,6 +608,7 @@ function SettingsPanel(props: {
             <div key={key} className="grid grid-cols-[160px_1fr_auto_auto] items-center gap-3">
               <span className="text-sm">{label}</span>
               <input
+                aria-label={`${label} API key`}
                 type="password"
                 value={props.secretInputs[key] ?? ''}
                 onChange={(event) => props.onSecretInputChange(key, event.currentTarget.value)}
@@ -618,6 +619,7 @@ function SettingsPanel(props: {
                 {props.secretStatus[key] ? '保存済み' : '未設定'}
               </span>
               <button
+                aria-label={`${label} API key を保存`}
                 type="button"
                 onClick={() => void props.onSaveSecret(key)}
                 className="rounded bg-zinc-100 px-3 py-2 text-sm text-zinc-900 disabled:opacity-40"
