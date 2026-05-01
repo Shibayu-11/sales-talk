@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type {
   AppSettings,
   AudioCaptureStatus,
@@ -198,9 +199,11 @@ export function App(): JSX.Element {
               onStartCall={startCall}
               onStopAudioDiagnostic={stopAudioDiagnostic}
               onSelectProduct={selectProduct}
+              onOpenSettings={() => setActiveNav('設定')}
               audioError={audioError}
               audioStatus={audioStatus}
               audioStatusPolling={shouldPollAudioStatus}
+              deepgramConfigured={Boolean(secretStatus.deepgram_api_key)}
               recentTranscripts={recentTranscripts}
               sttError={sttError}
               sttState={sttState}
@@ -242,10 +245,17 @@ function DashboardPanel(props: {
   onStartCall: () => Promise<void>;
   onStopAudioDiagnostic: () => Promise<void>;
   onSelectProduct: (productId: ProductId) => Promise<void>;
+  onOpenSettings: () => void;
   recentTranscripts: Transcript[];
+  deepgramConfigured: boolean;
   sttError: string | null;
   sttState: ConnectionState;
 }): JSX.Element {
+  const deepgramErrorVisible = Boolean(
+    props.sttError &&
+      props.deepgramConfigured &&
+      !props.sttError.includes('Deepgram API key is not configured'),
+  );
   const audioDiagnosticActive =
     Boolean(props.audioStatus?.nativeCaptureActive) ||
     props.sttState === 'connecting' ||
@@ -279,6 +289,16 @@ function DashboardPanel(props: {
 
       <div className="rounded-lg border border-zinc-800 p-5">
         <h2 className="mb-3 text-sm font-medium text-zinc-400">通話</h2>
+        <ActionableDiagnostics
+          audioError={props.audioError}
+          audioStatus={props.audioStatus}
+          deepgramConfigured={props.deepgramConfigured}
+          permissions={props.permissions}
+          sttError={props.sttError}
+          onOpenSettings={props.onOpenSettings}
+          onRequestMicrophonePermission={props.onRequestMicrophonePermission}
+          onRequestScreenPermission={props.onRequestScreenPermission}
+        />
         <div className="flex items-center gap-3">
           {props.call.status === 'in_call' ? (
             <button
@@ -300,34 +320,6 @@ function DashboardPanel(props: {
           )}
           <span className="text-xs text-zinc-500">状態: {props.call.status}</span>
         </div>
-        {(!props.permissions?.screen || !props.permissions?.microphone) && (
-          <div className="mt-4 rounded border border-overlay-objection/40 bg-overlay-objection/10 p-4">
-            <div className="text-sm font-medium text-overlay-objection">通話開始前に権限が必要です</div>
-            <div className="mt-1 text-xs text-zinc-400">
-              Zoom 音声の取得には Screen Recording、あなたの発話取得には Microphone を許可してください。
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {!props.permissions?.screen && (
-                <button
-                  type="button"
-                  onClick={() => void props.onRequestScreenPermission()}
-                  className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-300"
-                >
-                  Screen Recording を開く
-                </button>
-              )}
-              {!props.permissions?.microphone && (
-                <button
-                  type="button"
-                  onClick={() => void props.onRequestMicrophonePermission()}
-                  className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-300"
-                >
-                  Microphone を許可
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5">
@@ -406,7 +398,7 @@ function DashboardPanel(props: {
             <div className="text-overlay-objection">{props.audioStatus.nativeModule.error}</div>
           )}
           {props.audioError && <div className="text-overlay-objection">Audio: {props.audioError}</div>}
-          {props.sttError && <div className="text-overlay-objection">STT: {props.sttError}</div>}
+          {deepgramErrorVisible && <div className="text-overlay-objection">STT: {props.sttError}</div>}
         </div>
         <div className="mt-4">
           <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Recent transcripts</div>
@@ -442,6 +434,104 @@ function AudioStatsTile(props: {
         <Metric label="bytes" value={formatBytes(props.stats?.bytes ?? 0)} />
         <Metric label="last" value={formatLastReceivedAt(props.stats?.lastReceivedAtMs ?? null)} />
       </div>
+    </div>
+  );
+}
+
+function ActionableDiagnostics(props: {
+  audioError: string | null;
+  audioStatus: AudioCaptureStatus | null;
+  deepgramConfigured: boolean;
+  permissions: PermissionState | null;
+  sttError: string | null;
+  onOpenSettings: () => void;
+  onRequestMicrophonePermission: () => Promise<void>;
+  onRequestScreenPermission: () => Promise<void>;
+}): JSX.Element | null {
+  const permissionMissing = !props.permissions?.screen || !props.permissions?.microphone;
+  const nativeMissing =
+    props.audioStatus !== null && !props.audioStatus.nativeModule.contractValid;
+  const deepgramMissing =
+    !props.deepgramConfigured ||
+    props.sttError?.includes('Deepgram API key is not configured') === true;
+
+  if (!permissionMissing && !nativeMissing && !deepgramMissing && !props.audioError && !props.sttError) {
+    return null;
+  }
+
+  return (
+    <div className="mb-4 space-y-3">
+      {permissionMissing && (
+        <ActionCard
+          title="通話開始前に権限が必要です"
+          body="Zoom 音声の取得には Screen Recording、あなたの発話取得には Microphone を許可してください。"
+        >
+          {!props.permissions?.screen && (
+            <ActionButton onClick={() => void props.onRequestScreenPermission()}>
+              Screen Recording を開く
+            </ActionButton>
+          )}
+          {!props.permissions?.microphone && (
+            <ActionButton onClick={() => void props.onRequestMicrophonePermission()}>
+              Microphone を許可
+            </ActionButton>
+          )}
+        </ActionCard>
+      )}
+      {deepgramMissing && (
+        <ActionCard
+          title="Deepgram API key が未設定です"
+          body="音声 chunk の取得診断は可能です。STT まで確認するには Settings で Deepgram key を保存してください。"
+        >
+          <ActionButton onClick={props.onOpenSettings}>Settings を開く</ActionButton>
+        </ActionCard>
+      )}
+      {nativeMissing && (
+        <ActionCard
+          title="Native audio module が利用できません"
+          body="`.node` addon が見つからない、または期待する NAPI contract と一致していません。"
+        >
+          <span className="font-mono text-[11px] text-zinc-500">
+            {props.audioStatus?.nativeModule.modulePath}
+          </span>
+        </ActionCard>
+      )}
+      {props.audioError && <InlineError label="Audio" message={props.audioError} />}
+      {props.sttError && !deepgramMissing && <InlineError label="STT" message={props.sttError} />}
+    </div>
+  );
+}
+
+function ActionCard(props: {
+  title: string;
+  body: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div className="rounded border border-overlay-objection/40 bg-overlay-objection/10 p-4">
+      <div className="text-sm font-medium text-overlay-objection">{props.title}</div>
+      <div className="mt-1 text-xs text-zinc-400">{props.body}</div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">{props.children}</div>
+    </div>
+  );
+}
+
+function ActionButton(props: { children: ReactNode; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-300"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function InlineError(props: { label: string; message: string }): JSX.Element {
+  return (
+    <div className="rounded border border-overlay-objection/30 bg-zinc-950 p-3 text-xs text-overlay-objection">
+      {props.label}: {props.message}
     </div>
   );
 }

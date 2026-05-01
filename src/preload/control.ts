@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC } from '@shared/ipc-channels';
 import type {
   RendererApi,
   PermissionState,
@@ -10,6 +9,54 @@ import type {
   Transcript,
   ConnectionState,
 } from '@shared/types';
+
+// Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
+const IPC = {
+  app: { version: 'app:version' },
+  permissions: {
+    check: 'permissions:check',
+    requestScreen: 'permissions:request-screen',
+    requestMicrophone: 'permissions:request-microphone',
+    onChange: 'permissions:on-change',
+  },
+  call: {
+    start: 'call:start',
+    end: 'call:end',
+    setProduct: 'call:set-product',
+    onState: 'call:on-state',
+  },
+  audio: {
+    status: 'audio:status',
+    start: 'audio:start',
+    stop: 'audio:stop',
+    onError: 'audio:on-error',
+  },
+  stt: {
+    onInterim: 'stt:on-interim',
+    onFinal: 'stt:on-final',
+    onError: 'stt:on-error',
+    onConnectionState: 'stt:on-connection-state',
+  },
+  objection: {
+    feedback: 'objection:feedback',
+    dismiss: 'objection:dismiss',
+  },
+  overlay: {
+    setHover: 'overlay:set-hover',
+    setLayer: 'overlay:set-layer',
+  },
+  knowledge: { search: 'knowledge:search' },
+  settings: {
+    get: 'settings:get',
+    set: 'settings:set',
+    onChange: 'settings:on-change',
+  },
+  secrets: {
+    set: 'secrets:set',
+    has: 'secrets:has',
+    delete: 'secrets:delete',
+  },
+} as const;
 
 /**
  * Control preload — exposes the full RendererApi.

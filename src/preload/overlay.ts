@@ -1,6 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC } from '@shared/ipc-channels';
 import type { RendererApi, SharingState, DetectedObjection, ObjectionResponse } from '@shared/types';
+
+// Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
+const IPC = {
+  app: { version: 'app:version' },
+  overlay: {
+    setHover: 'overlay:set-hover',
+    setLayer: 'overlay:set-layer',
+    onSharingState: 'overlay:on-sharing-state',
+  },
+  objection: {
+    onDetected: 'objection:on-detected',
+    onResponseReady: 'objection:on-response-ready',
+    onCancelled: 'objection:on-cancelled',
+    feedback: 'objection:feedback',
+    dismiss: 'objection:dismiss',
+  },
+} as const;
 
 /**
  * Overlay preload — exposes a minimal slice of RendererApi.
