@@ -366,6 +366,11 @@ function DashboardPanel(props: {
             ok={props.sttState === 'connected'}
           />
         </div>
+        <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
+          <AudioStatsTile label="Self audio" stats={props.audioStatus?.stats.self} />
+          <AudioStatsTile label="Counterpart audio" stats={props.audioStatus?.stats.counterpart} />
+          <AudioStatsTile label="Total audio" stats={props.audioStatus?.stats.total} />
+        </div>
         <div className="mt-3 space-y-1 text-xs text-zinc-500">
           <div>module: {props.audioStatus?.nativeModule.modulePath ?? '-'}</div>
           {props.audioStatus?.nativeModule.error && (
@@ -396,6 +401,31 @@ function DashboardPanel(props: {
   );
 }
 
+function AudioStatsTile(props: {
+  label: string;
+  stats: AudioCaptureStatus['stats']['self'] | undefined;
+}): JSX.Element {
+  return (
+    <div className="rounded border border-zinc-800 p-3">
+      <div className="text-xs text-zinc-500">{props.label}</div>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+        <Metric label="chunks" value={String(props.stats?.chunks ?? 0)} />
+        <Metric label="bytes" value={formatBytes(props.stats?.bytes ?? 0)} />
+        <Metric label="last" value={formatLastReceivedAt(props.stats?.lastReceivedAtMs ?? null)} />
+      </div>
+    </div>
+  );
+}
+
+function Metric(props: { label: string; value: string }): JSX.Element {
+  return (
+    <div>
+      <div className="text-zinc-600">{props.label}</div>
+      <div className="font-mono text-zinc-300">{props.value}</div>
+    </div>
+  );
+}
+
 function StatusTile(props: { label: string; value: string; ok: boolean }): JSX.Element {
   return (
     <div className="rounded border border-zinc-800 p-3">
@@ -403,6 +433,27 @@ function StatusTile(props: { label: string; value: string; ok: boolean }): JSX.E
       <div className={props.ok ? 'text-overlay-success' : 'text-zinc-400'}>{props.value}</div>
     </div>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatLastReceivedAt(timestampMs: number | null): string {
+  if (timestampMs === null) {
+    return '-';
+  }
+  return new Date(timestampMs).toLocaleTimeString('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 function SettingsPanel(props: {

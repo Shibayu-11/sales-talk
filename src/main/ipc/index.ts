@@ -37,6 +37,10 @@ import { createRuntimeDeepgramSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
 import { NativeAudioCaptureService } from '../audio/native-audio-capture';
 import {
+  createInitialAudioCaptureStats,
+  updateAudioCaptureStats,
+} from '../audio/audio-capture-stats';
+import {
   getNativeAudioCaptureModuleStatus,
   loadNativeAudioCaptureModule,
 } from '../audio/native-module-loader';
@@ -55,6 +59,7 @@ const knowledgeSearchService = createRuntimeKnowledgeSearchService();
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
+let audioCaptureStats = createInitialAudioCaptureStats();
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   activeObjectionPipelineService = createRuntimeObjectionPipelineService(
@@ -100,6 +105,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
+    audioCaptureStats = createInitialAudioCaptureStats();
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
   });
@@ -124,6 +130,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
+    audioCaptureStats = createInitialAudioCaptureStats();
     callState = { status: 'in_call', productId, startedAt: Date.now() };
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
@@ -198,6 +205,7 @@ export async function handlePipelineTranscript(transcript: Transcript): Promise<
 }
 
 export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
+  audioCaptureStats = updateAudioCaptureStats(audioCaptureStats, chunk);
   await activeSttClient?.sendAudio(chunk);
 }
 
@@ -205,6 +213,7 @@ function getAudioCaptureStatus(): AudioCaptureStatus {
   return {
     nativeModule: getNativeAudioCaptureModuleStatus(),
     permissions: checkPermissions(),
+    stats: audioCaptureStats,
     sttState: activeSttClient?.getState() ?? 'disconnected',
     nativeCaptureActive: activeNativeAudioCaptureService !== null,
   };

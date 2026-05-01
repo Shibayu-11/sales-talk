@@ -81,6 +81,18 @@ export type SharingState =
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
+export interface AudioCaptureSourceStats {
+  chunks: number;
+  bytes: number;
+  lastReceivedAtMs: number | null;
+}
+
+export interface AudioCaptureStats {
+  self: AudioCaptureSourceStats;
+  counterpart: AudioCaptureSourceStats;
+  total: AudioCaptureSourceStats;
+}
+
 export interface AudioCaptureStatus {
   nativeModule: {
     available: boolean;
@@ -89,6 +101,7 @@ export interface AudioCaptureStatus {
     error?: string | undefined;
   };
   permissions: PermissionState;
+  stats: AudioCaptureStats;
   sttState: ConnectionState;
   nativeCaptureActive: boolean;
 }
