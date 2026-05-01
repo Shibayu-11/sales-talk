@@ -24,6 +24,7 @@ const SECRET_KEYS = [
   { key: 'cohere_api_key', label: 'Cohere' },
   { key: 'supabase_anon_key', label: 'Supabase anon' },
 ] as const;
+const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
 
 export function App(): JSX.Element {
   const [version, setVersion] = useState<string>('');
@@ -39,6 +40,13 @@ export function App(): JSX.Element {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [sttError, setSttError] = useState<string | null>(null);
   const [recentTranscripts, setRecentTranscripts] = useState<Transcript[]>([]);
+  const shouldPollAudioStatus =
+    activeNav === 'ダッシュボード' &&
+    (call.status === 'in_call' ||
+      Boolean(audioStatus?.nativeCaptureActive) ||
+      sttState === 'connecting' ||
+      sttState === 'connected' ||
+      sttState === 'reconnecting');
 
   useEffect(() => {
     void window.api.app.getVersion().then(setVersion);
@@ -77,6 +85,18 @@ export function App(): JSX.Element {
       offFinal();
     };
   }, []);
+
+  useEffect(() => {
+    if (!shouldPollAudioStatus) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshAudioStatus();
+    }, AUDIO_STATUS_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [shouldPollAudioStatus]);
 
   const startCall = async (): Promise<void> => {
     setAudioError(null);
@@ -180,6 +200,7 @@ export function App(): JSX.Element {
               onSelectProduct={selectProduct}
               audioError={audioError}
               audioStatus={audioStatus}
+              audioStatusPolling={shouldPollAudioStatus}
               recentTranscripts={recentTranscripts}
               sttError={sttError}
               sttState={sttState}
@@ -209,6 +230,7 @@ export function App(): JSX.Element {
 function DashboardPanel(props: {
   audioError: string | null;
   audioStatus: AudioCaptureStatus | null;
+  audioStatusPolling: boolean;
   call: CallState;
   permissions: PermissionState | null;
   productId: ProductId;
@@ -310,7 +332,14 @@ function DashboardPanel(props: {
 
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium text-zinc-400">音声 / STT 診断</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium text-zinc-400">音声 / STT 診断</h2>
+            {props.audioStatusPolling && (
+              <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-overlay-success">
+                auto refresh
+              </span>
+            )}
+          </div>
           <div className="flex gap-2">
             {audioDiagnosticActive ? (
               <button
