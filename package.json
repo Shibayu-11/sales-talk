@@ -18,7 +18,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test",
     "native:audio:build": "cd src/native/audio-capture && node-gyp rebuild",
     "native:audio:clean": "cd src/native/audio-capture && node-gyp clean",
     "native:audio:smoke": "tsx scripts/audio-capture-smoke.ts",
