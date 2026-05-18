@@ -56,6 +56,12 @@ const IPC = {
     has: 'secrets:has',
     delete: 'secrets:delete',
   },
+  dev: {
+    isEnabled: 'dev:is-enabled',
+    startMockCall: 'dev:start-mock-call',
+    endMockCall: 'dev:end-mock-call',
+    injectTranscript: 'dev:inject-transcript',
+  },
 } as const;
 
 /**
@@ -148,6 +154,12 @@ const api: RendererApi = {
     set: (key, value) => ipcRenderer.invoke(IPC.secrets.set, { key, value }),
     has: (key) => ipcRenderer.invoke(IPC.secrets.has, key),
     delete: (key) => ipcRenderer.invoke(IPC.secrets.delete, key),
+  },
+  dev: {
+    isEnabled: () => ipcRenderer.invoke(IPC.dev.isEnabled),
+    startMockCall: (productId) => ipcRenderer.invoke(IPC.dev.startMockCall, productId),
+    endMockCall: () => ipcRenderer.invoke(IPC.dev.endMockCall),
+    injectTranscript: (transcript) => ipcRenderer.invoke(IPC.dev.injectTranscript, transcript),
   },
 };
 

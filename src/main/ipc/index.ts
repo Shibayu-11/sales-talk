@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
   AudioChunkSchema,
+  DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeSearchInputSchema,
   ObjectionDismissInputSchema,
@@ -44,6 +45,7 @@ import {
   getNativeAudioCaptureModuleStatus,
   loadNativeAudioCaptureModule,
 } from '../audio/native-module-loader';
+import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -141,13 +143,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.call.end, () => {
-    callState = { status: 'idle' };
-    activeObjectionPipelineService?.cancelActive();
-    void stopNativeAudioCapture();
-    void stopSTT();
-    setCallModeLogging(false);
-    notifyCallState(windows);
-    windows.getOverlayWindow()?.hide();
+    endCurrentCall(windows);
     logger.info('call ended');
   });
 
@@ -191,6 +187,30 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const id = ObjectionDismissInputSchema.parse(payload);
     activeObjectionPipelineService?.cancelActive();
     logger.info({ id }, 'objection dismissed');
+  });
+
+  ipcMain.handle(IPC.dev.isEnabled, () => isDevToolsEnabled());
+  ipcMain.handle(IPC.dev.startMockCall, (_event, payload: unknown) => {
+    assertDevToolsEnabled();
+    const productId = ProductIdSchema.parse(payload);
+    callState = { status: 'in_call', productId, startedAt: Date.now() };
+    setCallModeLogging(true);
+    notifyCallState(windows);
+    windows.getOverlayWindow()?.showInactive();
+    logger.info({ productId }, 'development mock call started');
+  });
+  ipcMain.handle(IPC.dev.endMockCall, () => {
+    assertDevToolsEnabled();
+    endCurrentCall(windows);
+    logger.info('development mock call ended');
+  });
+  ipcMain.handle(IPC.dev.injectTranscript, async (_event, payload: unknown) => {
+    assertDevToolsEnabled();
+    const transcript = DevInjectTranscriptInputSchema.parse(payload);
+    notifyTranscript(windows, transcript);
+    if (callState.status === 'in_call') {
+      await handlePipelineTranscript(transcript);
+    }
   });
 
   notifyCallState(windows);
@@ -305,4 +325,19 @@ function notifySettings(windows: IpcWindowAccessors, settings: AppSettings): voi
 
 function notifySharingState(windows: IpcWindowAccessors): void {
   windows.getOverlayWindow()?.webContents.send(IPC.overlay.onSharingState, sharingState);
+}
+
+function notifyTranscript(windows: IpcWindowAccessors, transcript: Transcript): void {
+  const channel = transcript.isFinal ? IPC.stt.onFinal : IPC.stt.onInterim;
+  windows.getControlWindow()?.webContents.send(channel, transcript);
+}
+
+function endCurrentCall(windows: IpcWindowAccessors): void {
+  callState = { status: 'idle' };
+  activeObjectionPipelineService?.cancelActive();
+  void stopNativeAudioCapture();
+  void stopSTT();
+  setCallModeLogging(false);
+  notifyCallState(windows);
+  windows.getOverlayWindow()?.hide();
 }

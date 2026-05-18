@@ -41,6 +41,7 @@ export function App(): JSX.Element {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [sttError, setSttError] = useState<string | null>(null);
   const [recentTranscripts, setRecentTranscripts] = useState<Transcript[]>([]);
+  const [devToolsEnabled, setDevToolsEnabled] = useState(false);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
     (call.status === 'in_call' ||
@@ -53,6 +54,7 @@ export function App(): JSX.Element {
     void window.api.app.getVersion().then(setVersion);
     void window.api.permissions.check().then(setPermissions);
     void refreshAudioStatus();
+    void window.api.dev.isEnabled().then(setDevToolsEnabled);
     void window.api.settings.get().then((loadedSettings) => {
       setSettings(loadedSettings);
       if (loadedSettings.selectedProductId) setProductId(loadedSettings.selectedProductId);
@@ -133,6 +135,26 @@ export function App(): JSX.Element {
     await refreshAudioStatus();
   };
 
+  const startDevMockCall = async (): Promise<void> => {
+    await window.api.dev.startMockCall(productId);
+  };
+
+  const endDevMockCall = async (): Promise<void> => {
+    await window.api.dev.endMockCall();
+    await refreshAudioStatus();
+  };
+
+  const injectDevTranscript = async (): Promise<void> => {
+    const now = Date.now();
+    await window.api.dev.injectTranscript({
+      speaker: 'counterpart',
+      text: '価格が高いので、今すぐ導入するのは難しいです。',
+      isFinal: true,
+      startMs: now - 2_000,
+      endMs: now,
+    });
+  };
+
   const refreshAudioStatus = async (): Promise<void> => {
     const status = await window.api.audio.getStatus();
     setAudioStatus(status);
@@ -199,11 +221,15 @@ export function App(): JSX.Element {
               onStartCall={startCall}
               onStopAudioDiagnostic={stopAudioDiagnostic}
               onSelectProduct={selectProduct}
+              onStartDevMockCall={startDevMockCall}
+              onEndDevMockCall={endDevMockCall}
+              onInjectDevTranscript={injectDevTranscript}
               onOpenSettings={() => setActiveNav('設定')}
               audioError={audioError}
               audioStatus={audioStatus}
               audioStatusPolling={shouldPollAudioStatus}
               deepgramConfigured={Boolean(secretStatus.deepgram_api_key)}
+              devToolsEnabled={devToolsEnabled}
               recentTranscripts={recentTranscripts}
               sttError={sttError}
               sttState={sttState}
@@ -245,9 +271,13 @@ function DashboardPanel(props: {
   onStartCall: () => Promise<void>;
   onStopAudioDiagnostic: () => Promise<void>;
   onSelectProduct: (productId: ProductId) => Promise<void>;
+  onStartDevMockCall: () => Promise<void>;
+  onEndDevMockCall: () => Promise<void>;
+  onInjectDevTranscript: () => Promise<void>;
   onOpenSettings: () => void;
   recentTranscripts: Transcript[];
   deepgramConfigured: boolean;
+  devToolsEnabled: boolean;
   sttError: string | null;
   sttState: ConnectionState;
 }): JSX.Element {
@@ -321,6 +351,48 @@ function DashboardPanel(props: {
           <span className="text-xs text-zinc-500">状態: {props.call.status}</span>
         </div>
       </div>
+
+      {props.devToolsEnabled && (
+        <div className="rounded-lg border border-dashed border-zinc-700 p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-zinc-400">Dev transcript injection</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                API key なしで STT event / pipeline / overlay 表示を確認します。
+              </p>
+            </div>
+            <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+              dev only
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {props.call.status === 'in_call' ? (
+              <button
+                type="button"
+                onClick={() => void props.onEndDevMockCall()}
+                className="rounded bg-overlay-objection px-3 py-2 text-xs font-medium text-white"
+              >
+                mock 通話終了
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void props.onStartDevMockCall()}
+                className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900"
+              >
+                mock 通話開始
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void props.onInjectDevTranscript()}
+              className="rounded bg-zinc-800 px-3 py-2 text-xs hover:bg-zinc-700"
+            >
+              反論 transcript 注入
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-3 flex items-center justify-between">

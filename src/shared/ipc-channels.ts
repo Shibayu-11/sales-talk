@@ -120,6 +120,14 @@ export const IPC = {
   log: {
     write: 'log:write',
   },
+
+  // Development-only diagnostics. Handlers are gated in Main.
+  dev: {
+    isEnabled: 'dev:is-enabled',
+    startMockCall: 'dev:start-mock-call',
+    endMockCall: 'dev:end-mock-call',
+    injectTranscript: 'dev:inject-transcript',
+  },
 } as const;
 
 export type IpcChannelMap = typeof IPC;

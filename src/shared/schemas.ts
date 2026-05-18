@@ -170,6 +170,8 @@ export const AppErrorSchema = z.object({
   context: z.record(z.unknown()).optional(),
 });
 
+export const DevInjectTranscriptInputSchema = TranscriptSchema;
+
 export type ProductIdInput = z.infer<typeof ProductIdSchema>;
 export type AudioChunkInput = z.infer<typeof AudioChunkSchema>;
 export type OverlayLayerInput = z.infer<typeof OverlayLayerSchema>;

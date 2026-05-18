@@ -245,6 +245,12 @@ export interface RendererApi {
     has(key: string): Promise<boolean>;
     delete(key: string): Promise<void>;
   };
+  dev: {
+    isEnabled(): Promise<boolean>;
+    startMockCall(productId: ProductId): Promise<void>;
+    endMockCall(): Promise<void>;
+    injectTranscript(transcript: Transcript): Promise<void>;
+  };
 }
 
 declare global {

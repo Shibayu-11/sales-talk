@@ -6,6 +6,7 @@ import { createAnthropicLlmProvider } from './anthropic';
 import { createRuntimeKnowledgeSearchService } from './knowledge-runtime';
 import { ObjectionLlmService } from './llm';
 import type { LlmProvider } from './llm';
+import { isMockPipelineEnabled } from './dev-mode';
 import { ObjectionPipelineService } from './objection-pipeline';
 
 export interface ObjectionRuntimeWindowAccessors {
@@ -19,6 +20,9 @@ export function createRuntimeObjectionPipelineService(
 ): ObjectionPipelineService {
   let providerPromise: Promise<LlmProvider> | null = null;
   const getProvider = async (): Promise<LlmProvider> => {
+    if (isMockPipelineEnabled()) {
+      return new DevelopmentMockLlmProvider();
+    }
     providerPromise ??= createAnthropicLlmProvider();
     return providerPromise;
   };
@@ -48,4 +52,45 @@ export function createRuntimeObjectionPipelineService(
       },
     },
   });
+}
+
+class DevelopmentMockLlmProvider implements LlmProvider {
+  async detectObjection(input: { utterance: string }): Promise<unknown> {
+    return {
+      isObjection: true,
+      type: inferObjectionType(input.utterance),
+      confidence: 0.92,
+      triggerText: input.utterance,
+      reasoning: 'development mock pipeline',
+    };
+  }
+
+  async generateObjectionResponse(): Promise<unknown> {
+    return {
+      layer1Peek: '条件を分解',
+      layer2Summary: {
+        mainResponse: 'development mock response',
+        keyPoints: ['価格の内訳を確認', '導入時期を分ける', '次回判断材料を合意'],
+      },
+      layer3Detail: {
+        fullScript:
+          'ありがとうございます。価格だけで判断する前に、対象範囲と導入時期を分けて確認させてください。今すぐ全体導入が難しければ、効果が見えやすい範囲から小さく始め、次回までに費用対効果を判断できる材料を整理します。',
+        rationale: '開発用 mock。外部 LLM なしで overlay と pipeline の表示を検証します。',
+        cautions: ['本番回答ではありません'],
+        similarCases: [],
+      },
+      confidence: 0.9,
+      riskFlags: [],
+    };
+  }
+}
+
+function inferObjectionType(text: string): string {
+  if (text.includes('高い') || text.includes('費用') || text.includes('価格')) {
+    return 'price';
+  }
+  if (text.includes('今') || text.includes('時期')) {
+    return 'timing';
+  }
+  return 'status_quo';
 }

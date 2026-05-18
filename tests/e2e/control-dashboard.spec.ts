@@ -31,8 +31,34 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
   });
 });
 
+test('dev transcript injection drives the mock pipeline without API keys', async () => {
+  await withSalesTalkApp(
+    async ({ controlWindow, electronApp }) => {
+      const overlayWindow = await waitForOverlayWindow(electronApp);
+
+      await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
+      await controlWindow.getByRole('button', { name: 'mock 通話開始' }).click();
+      await expect(controlWindow.getByText('状態: in_call')).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: '反論 transcript 注入' }).click();
+      await expect(
+        controlWindow.getByText('価格が高いので、今すぐ導入するのは難しいです。'),
+      ).toBeVisible();
+      await expect(overlayWindow.getByText('条件を分解')).toBeVisible();
+      await expect(overlayWindow.getByText('価格の内訳を確認')).toBeVisible();
+    },
+    {
+      env: {
+        SALES_TALK_ENABLE_DEV_TOOLS: '1',
+        SALES_TALK_MOCK_LLM: '1',
+      },
+    },
+  );
+});
+
 async function withSalesTalkApp(
   run: (context: { controlWindow: Page; electronApp: ElectronApplication }) => Promise<void>,
+  options: { env?: Record<string, string> } = {},
 ): Promise<void> {
   const userDataPath = await mkdtemp(join(tmpdir(), 'sales-talk-e2e-'));
   const electronApp = await electron.launch({
@@ -40,6 +66,7 @@ async function withSalesTalkApp(
     cwd: process.cwd(),
     env: {
       ...process.env,
+      ...options.env,
       SALES_TALK_USER_DATA_PATH: userDataPath,
     },
   });
@@ -88,4 +115,26 @@ async function waitForControlWindow(electronApp: ElectronApplication): Promise<P
     throw new Error('Control window was not found');
   }
   return controlWindow;
+}
+
+async function waitForOverlayWindow(electronApp: ElectronApplication): Promise<Page> {
+  await expect
+    .poll(
+      () => {
+        const overlayWindow = electronApp
+          .windows()
+          .find((window) => window.url().includes('/overlay/'));
+        return overlayWindow?.url() ?? null;
+      },
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+
+  const overlayWindow = electronApp
+    .windows()
+    .find((window) => window.url().includes('/overlay/'));
+  if (!overlayWindow) {
+    throw new Error('Overlay window was not found');
+  }
+  return overlayWindow;
 }
