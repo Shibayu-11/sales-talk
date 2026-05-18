@@ -85,6 +85,51 @@ export const ObjectionResponseSchema = z.object({
   generatedAtMs: z.number(),
 });
 
+export const MeetingMinuteSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  productId: ProductIdSchema,
+  summary: z.string(),
+  agreed: z.array(z.string()),
+  pending: z.array(z.string()),
+  decisions: z.array(z.string()),
+  numbers: z.array(z.object({ label: z.string(), value: z.string() })),
+  generatedAt: z.string(),
+});
+
+export const MinutesGenerateInputSchema = z.object({
+  productId: ProductIdSchema,
+  transcripts: z.array(TranscriptSchema).max(100),
+});
+
+export const TaskOwnerSchema = z.enum(['own', 'customer', 'joint']);
+
+export const TaskDueSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('explicit'), date: z.string() }),
+  z.object({ kind: z.literal('inferred'), date: z.string() }),
+  z.object({ kind: z.literal('none') }),
+]);
+
+export const ActionItemTaskSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  owner: TaskOwnerSchema,
+  description: z.string().min(1).max(500),
+  due: TaskDueSchema,
+  completed: z.boolean(),
+  createdAt: z.string(),
+});
+
+export const TaskCreateInputSchema = z.object({
+  owner: TaskOwnerSchema,
+  description: z.string().trim().min(1).max(500),
+});
+
+export const TaskCompleteInputSchema = z.object({
+  id: z.string().uuid(),
+  completed: z.boolean(),
+});
+
 export const SharingStateSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('not_sharing') }),
   z.object({ status: z.literal('verifying') }),

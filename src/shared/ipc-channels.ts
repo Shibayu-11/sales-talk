@@ -85,6 +85,7 @@ export const IPC = {
   },
   tasks: {
     list: 'tasks:list',
+    create: 'tasks:create',
     update: 'tasks:update',
     complete: 'tasks:complete',
   },

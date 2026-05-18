@@ -8,6 +8,9 @@ import type {
   KnowledgeEntry,
   Transcript,
   ConnectionState,
+  MeetingMinute,
+  ActionItemTask,
+  TaskOwner,
 } from '@shared/types';
 
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
@@ -49,6 +52,15 @@ const IPC = {
     setLayer: 'overlay:set-layer',
   },
   knowledge: { search: 'knowledge:search' },
+  minutes: {
+    generate: 'minutes:generate',
+    get: 'minutes:get',
+  },
+  tasks: {
+    list: 'tasks:list',
+    create: 'tasks:create',
+    complete: 'tasks:complete',
+  },
   settings: {
     get: 'settings:get',
     set: 'settings:set',
@@ -155,6 +167,18 @@ const api: RendererApi = {
   knowledge: {
     search: (query: string, productId: ProductId, limit?: number): Promise<KnowledgeEntry[]> =>
       ipcRenderer.invoke(IPC.knowledge.search, { query, productId, limit }),
+  },
+  minutes: {
+    generate: (productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute> =>
+      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts }),
+    get: (): Promise<MeetingMinute | null> => ipcRenderer.invoke(IPC.minutes.get),
+  },
+  tasks: {
+    list: (): Promise<ActionItemTask[]> => ipcRenderer.invoke(IPC.tasks.list),
+    create: (owner: TaskOwner, description: string): Promise<ActionItemTask> =>
+      ipcRenderer.invoke(IPC.tasks.create, { owner, description }),
+    complete: (id: string, completed: boolean): Promise<ActionItemTask> =>
+      ipcRenderer.invoke(IPC.tasks.complete, { id, completed }),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settings.get),

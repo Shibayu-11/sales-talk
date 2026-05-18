@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   AppSettings,
+  ActionItemTask,
   AudioCaptureStatus,
   CallState,
   ConnectionState,
   DetectedObjection,
+  MeetingMinute,
   ObjectionResponse,
   PermissionState,
   ProductId,
@@ -33,13 +35,6 @@ const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
 interface ObjectionHistoryItem {
   objection: DetectedObjection;
   response: ObjectionResponse | null;
-}
-
-interface LocalTask {
-  id: string;
-  owner: TaskOwner;
-  description: string;
-  completed: boolean;
 }
 
 export function App(): JSX.Element {
@@ -286,7 +281,11 @@ export function App(): JSX.Element {
             />
           )}
           {activeNav === '商談履歴' && (
-            <HistoryPanel objectionHistory={objectionHistory} recentTranscripts={recentTranscripts} />
+            <HistoryPanel
+              objectionHistory={objectionHistory}
+              productId={productId}
+              recentTranscripts={recentTranscripts}
+            />
           )}
           {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
           {activeNav === 'タスク' && <TasksPanel />}
@@ -827,10 +826,50 @@ function SettingsPanel(props: {
 
 function HistoryPanel(props: {
   objectionHistory: ObjectionHistoryItem[];
+  productId: ProductId;
   recentTranscripts: Transcript[];
 }): JSX.Element {
+  const [meetingMinute, setMeetingMinute] = useState<MeetingMinute | null>(null);
+
+  useEffect(() => {
+    void window.api.minutes.get().then(setMeetingMinute);
+  }, []);
+
+  const generateMinutes = async (): Promise<void> => {
+    const generated = await window.api.minutes.generate(props.productId, props.recentTranscripts);
+    setMeetingMinute(generated);
+  };
+
   return (
     <div className="space-y-6">
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-zinc-400">ローカル議事録</h2>
+          <button
+            type="button"
+            onClick={() => void generateMinutes()}
+            className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900"
+          >
+            transcript から生成
+          </button>
+        </div>
+        {meetingMinute ? (
+          <div className="space-y-3">
+            <p className="rounded border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-300">
+              {meetingMinute.summary}
+            </p>
+            <MinuteList title="保留事項" items={meetingMinute.pending} empty="保留事項なし" />
+            <MinuteList
+              title="数値メモ"
+              items={meetingMinute.numbers.map((number) => `${number.label}: ${number.value}`)}
+              empty="数値なし"
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-600">まだ生成されていません。</p>
+        )}
+      </div>
+
       <div className="rounded-lg border border-zinc-800 p-5">
         <h2 className="mb-3 text-sm font-medium text-zinc-400">商談履歴</h2>
         {props.objectionHistory.length === 0 ? (
@@ -884,34 +923,47 @@ function HistoryPanel(props: {
   );
 }
 
+function MinuteList(props: { title: string; items: string[]; empty: string }): JSX.Element {
+  return (
+    <div>
+      <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">{props.title}</div>
+      {props.items.length === 0 ? (
+        <p className="text-xs text-zinc-600">{props.empty}</p>
+      ) : (
+        <ul className="space-y-1 text-xs text-zinc-400">
+          {props.items.map((item) => (
+            <li key={item} className="rounded bg-zinc-900 px-3 py-2">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function TasksPanel(): JSX.Element {
-  const [tasks, setTasks] = useState<LocalTask[]>([]);
+  const [tasks, setTasks] = useState<ActionItemTask[]>([]);
   const [description, setDescription] = useState('');
   const [owner, setOwner] = useState<TaskOwner>('own');
 
-  const addTask = (): void => {
+  useEffect(() => {
+    void window.api.tasks.list().then(setTasks);
+  }, []);
+
+  const addTask = async (): Promise<void> => {
     const trimmedDescription = description.trim();
     if (!trimmedDescription) {
       return;
     }
-    setTasks((current) => [
-      {
-        id: `${Date.now()}-${current.length}`,
-        owner,
-        description: trimmedDescription,
-        completed: false,
-      },
-      ...current,
-    ]);
+    const task = await window.api.tasks.create(owner, trimmedDescription);
+    setTasks((current) => [task, ...current]);
     setDescription('');
   };
 
-  const toggleTask = (taskId: string): void => {
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === taskId ? { ...task, completed: !task.completed } : task,
-      ),
-    );
+  const toggleTask = async (taskId: string, completed: boolean): Promise<void> => {
+    const task = await window.api.tasks.complete(taskId, completed);
+    setTasks((current) => current.map((candidate) => (candidate.id === task.id ? task : candidate)));
   };
 
   return (
@@ -940,7 +992,7 @@ function TasksPanel(): JSX.Element {
         />
         <button
           type="button"
-          onClick={addTask}
+          onClick={() => void addTask()}
           className="rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900 disabled:opacity-40"
           disabled={!description.trim()}
         >
@@ -960,7 +1012,7 @@ function TasksPanel(): JSX.Element {
               >
                 <button
                   type="button"
-                  onClick={() => toggleTask(task.id)}
+                  onClick={() => void toggleTask(task.id, !task.completed)}
                   className={`text-left ${task.completed ? 'text-zinc-600 line-through' : 'text-zinc-200'}`}
                 >
                   <span className="mr-2 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">

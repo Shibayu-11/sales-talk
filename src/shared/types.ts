@@ -235,6 +235,15 @@ export interface RendererApi {
   knowledge: {
     search(query: string, productId: ProductId, limit?: number): Promise<KnowledgeEntry[]>;
   };
+  minutes: {
+    generate(productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute>;
+    get(): Promise<MeetingMinute | null>;
+  };
+  tasks: {
+    list(): Promise<ActionItemTask[]>;
+    create(owner: TaskOwner, description: string): Promise<ActionItemTask>;
+    complete(id: string, completed: boolean): Promise<ActionItemTask>;
+  };
   settings: {
     get(): Promise<AppSettings>;
     set(patch: Partial<AppSettings>): Promise<void>;

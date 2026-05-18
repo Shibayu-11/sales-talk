@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import {
@@ -6,17 +7,22 @@ import {
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeSearchInputSchema,
+  MinutesGenerateInputSchema,
   ObjectionDismissInputSchema,
   OverlayLayerSchema,
   ProductIdSchema,
   SecretKeySchema,
   SecretSetInputSchema,
+  TaskCompleteInputSchema,
+  TaskCreateInputSchema,
 } from '@shared/schemas';
 import type {
+  ActionItemTask,
   AppSettings,
   AudioChunk,
   AudioCaptureStatus,
   CallState,
+  MeetingMinute,
   PermissionState,
   SharingState,
   Transcript,
@@ -46,6 +52,7 @@ import {
   loadNativeAudioCaptureModule,
 } from '../audio/native-module-loader';
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
+import { localActivityStore } from '../services/local-activity-store';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -62,6 +69,8 @@ let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
 let audioCaptureStats = createInitialAudioCaptureStats();
+let activeCallId: string | null = null;
+const localSessionId = randomUUID();
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   activeObjectionPipelineService = createRuntimeObjectionPipelineService(
@@ -133,6 +142,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
       return;
     }
     audioCaptureStats = createInitialAudioCaptureStats();
+    activeCallId = randomUUID();
     callState = { status: 'in_call', productId, startedAt: Date.now() };
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
@@ -178,6 +188,33 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     });
   });
 
+  ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
+    const input = MinutesGenerateInputSchema.parse(payload);
+    return localActivityStore.setLatestMeetingMinute(
+      generateLocalMeetingMinute(input.productId, input.transcripts),
+    );
+  });
+  ipcMain.handle(IPC.minutes.get, () => localActivityStore.getLatestMeetingMinute());
+
+  ipcMain.handle(IPC.tasks.list, () => localActivityStore.listTasks());
+  ipcMain.handle(IPC.tasks.create, async (_event, payload: unknown) => {
+    const input = TaskCreateInputSchema.parse(payload);
+    const task: ActionItemTask = {
+      id: randomUUID(),
+      callId: getCurrentCallId(),
+      owner: input.owner,
+      description: input.description,
+      due: { kind: 'none' },
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    return localActivityStore.createTask(task);
+  });
+  ipcMain.handle(IPC.tasks.complete, (_event, payload: unknown) => {
+    const input = TaskCompleteInputSchema.parse(payload);
+    return localActivityStore.completeTask(input.id, input.completed);
+  });
+
   ipcMain.handle(IPC.objection.feedback, (_event, payload: unknown) => {
     const feedback = FeedbackSchema.parse(payload);
     logger.info({ objectionResponseId: feedback.objectionResponseId, used: feedback.used }, 'feedback');
@@ -194,6 +231,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.dev.startMockCall, (_event, payload: unknown) => {
     assertDevToolsEnabled();
     const productId = ProductIdSchema.parse(payload);
+    activeCallId = randomUUID();
     callState = { status: 'in_call', productId, startedAt: Date.now() };
     setCallModeLogging(true);
     notifyCallState(windows);
@@ -336,6 +374,44 @@ function notifyTranscript(windows: IpcWindowAccessors, transcript: Transcript): 
 function notifyObjectionCancelled(windows: IpcWindowAccessors, id: string): void {
   windows.getControlWindow()?.webContents.send(IPC.objection.onCancelled, id);
   windows.getOverlayWindow()?.webContents.send(IPC.objection.onCancelled, id);
+}
+
+function generateLocalMeetingMinute(
+  productId: MeetingMinute['productId'],
+  transcripts: Transcript[],
+): MeetingMinute {
+  const finalTexts = transcripts
+    .filter((transcript) => transcript.isFinal)
+    .map((transcript) => transcript.text.trim())
+    .filter((text) => text.length > 0);
+  const summarySource = finalTexts[0] ?? '商談 transcript はまだありません。';
+  const pending = finalTexts.filter((text) =>
+    ['高い', '難しい', '検討', '確認', '次回'].some((keyword) => text.includes(keyword)),
+  );
+
+  return {
+    id: randomUUID(),
+    callId: getCurrentCallId(),
+    productId,
+    summary: `直近の発話: ${summarySource}`,
+    agreed: [],
+    pending: pending.slice(0, 5),
+    decisions: [],
+    numbers: extractNumbers(finalTexts.join('\n')),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function extractNumbers(text: string): MeetingMinute['numbers'] {
+  const matches = text.match(/\d[\d,]*(?:円|万円|%|％|ヶ月|か月|月|日)?/g) ?? [];
+  return [...new Set(matches)].slice(0, 10).map((value, index) => ({
+    label: `number_${index + 1}`,
+    value,
+  }));
+}
+
+function getCurrentCallId(): string {
+  return activeCallId ?? localSessionId;
 }
 
 function endCurrentCall(windows: IpcWindowAccessors): void {
