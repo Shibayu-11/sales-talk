@@ -186,6 +186,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.objection.dismiss, (_event, payload: unknown) => {
     const id = ObjectionDismissInputSchema.parse(payload);
     activeObjectionPipelineService?.cancelActive();
+    notifyObjectionCancelled(windows, id);
     logger.info({ id }, 'objection dismissed');
   });
 
@@ -330,6 +331,11 @@ function notifySharingState(windows: IpcWindowAccessors): void {
 function notifyTranscript(windows: IpcWindowAccessors, transcript: Transcript): void {
   const channel = transcript.isFinal ? IPC.stt.onFinal : IPC.stt.onInterim;
   windows.getControlWindow()?.webContents.send(channel, transcript);
+}
+
+function notifyObjectionCancelled(windows: IpcWindowAccessors, id: string): void {
+  windows.getControlWindow()?.webContents.send(IPC.objection.onCancelled, id);
+  windows.getOverlayWindow()?.webContents.send(IPC.objection.onCancelled, id);
 }
 
 function endCurrentCall(windows: IpcWindowAccessors): void {

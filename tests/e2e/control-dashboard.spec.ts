@@ -8,6 +8,7 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
     await expect(controlWindow.getByText('音声 / STT 診断')).toBeVisible();
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
     await expect(controlWindow.getByText('Deepgram API key が未設定です')).toBeVisible();
+    await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
 
     await expect
       .poll(() => controlWindow.evaluate(() => typeof window.api?.app?.getVersion))
@@ -42,10 +43,31 @@ test('dev transcript injection drives the mock pipeline without API keys', async
 
       await controlWindow.getByRole('button', { name: '反論 transcript 注入' }).click();
       await expect(
-        controlWindow.getByText('価格が高いので、今すぐ導入するのは難しいです。'),
+        controlWindow.getByText('価格が高いので、今すぐ導入するのは難しいです。', { exact: true }),
       ).toBeVisible();
+      await expect(controlWindow.getByText('現在の反論')).toBeVisible();
+      await expect(controlWindow.getByText('confidence: 92%')).toBeVisible();
       await expect(overlayWindow.getByText('条件を分解')).toBeVisible();
       await expect(overlayWindow.getByText('価格の内訳を確認')).toBeVisible();
+
+      await overlayWindow.getByRole('button', { name: 'L3' }).click();
+      await expect(overlayWindow.getByText('根拠詳細')).toBeVisible();
+      await expect(overlayWindow.getByText('本番回答ではありません')).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: 'dismiss' }).click();
+      await expect(controlWindow.getByText('検知待機中')).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: '商談履歴' }).click();
+      await expect(controlWindow.getByRole('heading', { name: '商談履歴' })).toBeVisible();
+      await expect(controlWindow.getByText('価格の内訳を確認')).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: 'タスク' }).click();
+      await controlWindow.getByLabel('タスク担当').selectOption('joint');
+      await controlWindow.getByLabel('タスク内容').fill('費用対効果の資料を送る');
+      await controlWindow.getByRole('button', { name: '追加' }).click();
+      await expect(
+        controlWindow.getByRole('button', { name: /共同.*費用対効果の資料を送る/ }),
+      ).toBeVisible();
     },
     {
       env: {

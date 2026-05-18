@@ -5,8 +5,11 @@ import type {
   AudioCaptureStatus,
   CallState,
   ConnectionState,
+  DetectedObjection,
+  ObjectionResponse,
   PermissionState,
   ProductId,
+  TaskOwner,
   Transcript,
 } from '@shared/types';
 
@@ -27,6 +30,18 @@ const SECRET_KEYS = [
 ] as const;
 const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
 
+interface ObjectionHistoryItem {
+  objection: DetectedObjection;
+  response: ObjectionResponse | null;
+}
+
+interface LocalTask {
+  id: string;
+  owner: TaskOwner;
+  description: string;
+  completed: boolean;
+}
+
 export function App(): JSX.Element {
   const [version, setVersion] = useState<string>('');
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
@@ -41,6 +56,9 @@ export function App(): JSX.Element {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [sttError, setSttError] = useState<string | null>(null);
   const [recentTranscripts, setRecentTranscripts] = useState<Transcript[]>([]);
+  const [currentObjection, setCurrentObjection] = useState<DetectedObjection | null>(null);
+  const [currentResponse, setCurrentResponse] = useState<ObjectionResponse | null>(null);
+  const [objectionHistory, setObjectionHistory] = useState<ObjectionHistoryItem[]>([]);
   const [devToolsEnabled, setDevToolsEnabled] = useState(false);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
@@ -77,6 +95,23 @@ export function App(): JSX.Element {
     };
     const offInterim = window.api.stt.onInterim(rememberTranscript);
     const offFinal = window.api.stt.onFinal(rememberTranscript);
+    const offObjection = window.api.objection.onDetected((objection) => {
+      setCurrentObjection(objection);
+      setCurrentResponse(null);
+      setObjectionHistory((current) => [{ objection, response: null }, ...current].slice(0, 20));
+    });
+    const offResponse = window.api.objection.onResponseReady((response) => {
+      setCurrentResponse(response);
+      setObjectionHistory((current) =>
+        current.map((item) =>
+          item.objection.id === response.objectionId ? { ...item, response } : item,
+        ),
+      );
+    });
+    const offCancelled = window.api.objection.onCancelled((id) => {
+      setCurrentObjection((current) => (current?.id === id ? null : current));
+      setCurrentResponse((current) => (current?.objectionId === id ? null : current));
+    });
     return () => {
       offPerm();
       offCall();
@@ -86,6 +121,9 @@ export function App(): JSX.Element {
       offSttState();
       offInterim();
       offFinal();
+      offObjection();
+      offResponse();
+      offCancelled();
     };
   }, []);
 
@@ -153,6 +191,15 @@ export function App(): JSX.Element {
       startMs: now - 2_000,
       endMs: now,
     });
+  };
+
+  const dismissCurrentObjection = async (): Promise<void> => {
+    if (!currentObjection) {
+      return;
+    }
+    await window.api.objection.dismiss(currentObjection.id);
+    setCurrentObjection(null);
+    setCurrentResponse(null);
   };
 
   const refreshAudioStatus = async (): Promise<void> => {
@@ -224,20 +271,25 @@ export function App(): JSX.Element {
               onStartDevMockCall={startDevMockCall}
               onEndDevMockCall={endDevMockCall}
               onInjectDevTranscript={injectDevTranscript}
+              onDismissCurrentObjection={dismissCurrentObjection}
               onOpenSettings={() => setActiveNav('設定')}
               audioError={audioError}
               audioStatus={audioStatus}
               audioStatusPolling={shouldPollAudioStatus}
               deepgramConfigured={Boolean(secretStatus.deepgram_api_key)}
               devToolsEnabled={devToolsEnabled}
+              currentObjection={currentObjection}
+              currentResponse={currentResponse}
               recentTranscripts={recentTranscripts}
               sttError={sttError}
               sttState={sttState}
             />
           )}
-          {activeNav === '商談履歴' && <EmptyPanel title="商談履歴" body="議事録生成後の履歴一覧をここに表示します。" />}
+          {activeNav === '商談履歴' && (
+            <HistoryPanel objectionHistory={objectionHistory} recentTranscripts={recentTranscripts} />
+          )}
           {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
-          {activeNav === 'タスク' && <EmptyPanel title="タスク" body="議事録から抽出した own/customer/joint タスクをここで管理します。" />}
+          {activeNav === 'タスク' && <TasksPanel />}
           {activeNav === '設定' && (
             <SettingsPanel
               permissions={permissions}
@@ -274,7 +326,10 @@ function DashboardPanel(props: {
   onStartDevMockCall: () => Promise<void>;
   onEndDevMockCall: () => Promise<void>;
   onInjectDevTranscript: () => Promise<void>;
+  onDismissCurrentObjection: () => Promise<void>;
   onOpenSettings: () => void;
+  currentObjection: DetectedObjection | null;
+  currentResponse: ObjectionResponse | null;
   recentTranscripts: Transcript[];
   deepgramConfigured: boolean;
   devToolsEnabled: boolean;
@@ -394,6 +449,12 @@ function DashboardPanel(props: {
         </div>
       )}
 
+      <CurrentObjectionPanel
+        objection={props.currentObjection}
+        response={props.currentResponse}
+        onDismiss={props.onDismissCurrentObjection}
+      />
+
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -491,6 +552,58 @@ function DashboardPanel(props: {
         </div>
       </div>
     </>
+  );
+}
+
+function CurrentObjectionPanel(props: {
+  objection: DetectedObjection | null;
+  response: ObjectionResponse | null;
+  onDismiss: () => Promise<void>;
+}): JSX.Element {
+  if (!props.objection) {
+    return (
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-2 text-sm font-medium text-zinc-400">現在の反論</h2>
+        <p className="text-sm text-zinc-600">検知待機中</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-overlay-objection/50 bg-overlay-objection/10 p-5">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-medium text-overlay-objection">現在の反論</h2>
+          <div className="mt-1 text-lg font-semibold text-zinc-100">{props.response?.peak ?? props.objection.type}</div>
+          <p className="mt-1 text-sm text-zinc-400">{props.objection.triggerText}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void props.onDismiss()}
+          className="rounded bg-zinc-900 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800"
+        >
+          dismiss
+        </button>
+      </div>
+      <div className="mb-3 flex items-center gap-2 text-xs text-zinc-500">
+        <span>type: {props.objection.type}</span>
+        <span>confidence: {Math.round(props.objection.confidence * 100)}%</span>
+      </div>
+      {props.response ? (
+        <div className="space-y-3">
+          <ul className="grid gap-2 text-sm md:grid-cols-3">
+            {props.response.summary.slice(0, 3).map((line) => (
+              <li key={line} className="rounded border border-zinc-800 bg-zinc-950/60 p-3">
+                {line}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-zinc-500">{props.response.reasoning}</p>
+        </div>
+      ) : (
+        <p className="text-xs text-overlay-warning">切り返し生成中</p>
+      )}
+    </div>
   );
 }
 
@@ -712,6 +825,161 @@ function SettingsPanel(props: {
   );
 }
 
+function HistoryPanel(props: {
+  objectionHistory: ObjectionHistoryItem[];
+  recentTranscripts: Transcript[];
+}): JSX.Element {
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">商談履歴</h2>
+        {props.objectionHistory.length === 0 ? (
+          <p className="text-sm text-zinc-600">このセッションではまだ反論を検知していません。</p>
+        ) : (
+          <ul className="space-y-3">
+            {props.objectionHistory.map((item) => (
+              <li key={item.objection.id} className="rounded border border-zinc-800 bg-zinc-950/40 p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-overlay-objection">
+                    {item.response?.peak ?? item.objection.type}
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    confidence {Math.round(item.objection.confidence * 100)}%
+                  </span>
+                </div>
+                <p className="text-sm text-zinc-300">{item.objection.triggerText}</p>
+                {item.response && (
+                  <ul className="mt-3 grid gap-2 text-xs md:grid-cols-3">
+                    {item.response.summary.slice(0, 3).map((line) => (
+                      <li key={line} className="rounded bg-zinc-900 p-2 text-zinc-400">
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">直近 transcript</h2>
+        {props.recentTranscripts.length === 0 ? (
+          <p className="text-sm text-zinc-600">未受信</p>
+        ) : (
+          <ul className="space-y-2">
+            {props.recentTranscripts.map((transcript, index) => (
+              <li key={`${transcript.startMs}-${index}`} className="rounded border border-zinc-800 p-3 text-xs">
+                <span className="mr-2 text-zinc-500">
+                  {transcript.isFinal ? 'final' : 'interim'} / {transcript.speaker}
+                </span>
+                {transcript.text}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TasksPanel(): JSX.Element {
+  const [tasks, setTasks] = useState<LocalTask[]>([]);
+  const [description, setDescription] = useState('');
+  const [owner, setOwner] = useState<TaskOwner>('own');
+
+  const addTask = (): void => {
+    const trimmedDescription = description.trim();
+    if (!trimmedDescription) {
+      return;
+    }
+    setTasks((current) => [
+      {
+        id: `${Date.now()}-${current.length}`,
+        owner,
+        description: trimmedDescription,
+        completed: false,
+      },
+      ...current,
+    ]);
+    setDescription('');
+  };
+
+  const toggleTask = (taskId: string): void => {
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === taskId ? { ...task, completed: !task.completed } : task,
+      ),
+    );
+  };
+
+  return (
+    <div className="rounded-lg border border-zinc-800 p-5">
+      <h2 className="mb-3 text-sm font-medium text-zinc-400">タスク</h2>
+      <p className="mb-4 text-xs text-zinc-500">
+        議事録生成前でも、商談中に手動タスクを仮置きできます。
+      </p>
+      <div className="grid gap-2 md:grid-cols-[160px_1fr_auto]">
+        <select
+          aria-label="タスク担当"
+          value={owner}
+          onChange={(event) => setOwner(event.currentTarget.value as TaskOwner)}
+          className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+        >
+          <option value="own">自社</option>
+          <option value="customer">顧客</option>
+          <option value="joint">共同</option>
+        </select>
+        <input
+          aria-label="タスク内容"
+          value={description}
+          onChange={(event) => setDescription(event.currentTarget.value)}
+          className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          placeholder="例: 次回までに費用対効果の資料を送る"
+        />
+        <button
+          type="button"
+          onClick={addTask}
+          className="rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900 disabled:opacity-40"
+          disabled={!description.trim()}
+        >
+          追加
+        </button>
+      </div>
+
+      <div className="mt-4">
+        {tasks.length === 0 ? (
+          <p className="rounded border border-zinc-800 p-3 text-sm text-zinc-600">未登録</p>
+        ) : (
+          <ul className="space-y-2">
+            {tasks.map((task) => (
+              <li
+                key={task.id}
+                className="flex items-center justify-between gap-3 rounded border border-zinc-800 p-3 text-sm"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleTask(task.id)}
+                  className={`text-left ${task.completed ? 'text-zinc-600 line-through' : 'text-zinc-200'}`}
+                >
+                  <span className="mr-2 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+                    {ownerLabel(task.owner)}
+                  </span>
+                  {task.description}
+                </button>
+                <span className={task.completed ? 'text-overlay-success' : 'text-zinc-600'}>
+                  {task.completed ? '完了' : '未完了'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
   const [query, setQuery] = useState('');
   const [resultCount, setResultCount] = useState<number | null>(null);
@@ -747,13 +1015,14 @@ function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
   );
 }
 
-function EmptyPanel(props: { title: string; body: string }): JSX.Element {
-  return (
-    <div className="rounded-lg border border-zinc-800 p-5">
-      <h2 className="mb-2 text-sm font-medium text-zinc-400">{props.title}</h2>
-      <p className="text-sm text-zinc-500">{props.body}</p>
-    </div>
-  );
+function ownerLabel(owner: TaskOwner): string {
+  if (owner === 'own') {
+    return '自社';
+  }
+  if (owner === 'customer') {
+    return '顧客';
+  }
+  return '共同';
 }
 
 function PermissionRow(props: {
