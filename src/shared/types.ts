@@ -234,6 +234,16 @@ export interface RendererApi {
   };
   knowledge: {
     search(query: string, productId: ProductId, limit?: number): Promise<KnowledgeEntry[]>;
+    list(productId: ProductId): Promise<KnowledgeEntry[]>;
+    create(input: {
+      productId: ProductId;
+      objectionType: string;
+      trigger: string;
+      response: string;
+      reasoning?: string;
+      riskFlags?: string[];
+    }): Promise<KnowledgeEntry>;
+    delete(id: string): Promise<void>;
   };
   minutes: {
     generate(productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute>;

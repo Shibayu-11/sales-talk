@@ -7,6 +7,7 @@ import type {
   CallState,
   ConnectionState,
   DetectedObjection,
+  KnowledgeEntry,
   MeetingMinute,
   ObjectionResponse,
   PermissionState,
@@ -1034,35 +1035,123 @@ function TasksPanel(): JSX.Element {
 
 function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
   const [query, setQuery] = useState('');
-  const [resultCount, setResultCount] = useState<number | null>(null);
+  const [results, setResults] = useState<KnowledgeEntry[]>([]);
+  const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [objectionType, setObjectionType] = useState('price');
+  const [trigger, setTrigger] = useState('');
+  const [response, setResponse] = useState('');
+
+  useEffect(() => {
+    void window.api.knowledge.list(props.productId).then(setEntries);
+  }, [props.productId]);
 
   const search = async (): Promise<void> => {
     if (!query.trim()) return;
-    const results = await window.api.knowledge.search(query, props.productId, 5);
-    setResultCount(results.length);
+    setResults(await window.api.knowledge.search(query, props.productId, 5));
+  };
+
+  const createEntry = async (): Promise<void> => {
+    if (!trigger.trim() || !response.trim()) {
+      return;
+    }
+    const entry = await window.api.knowledge.create({
+      productId: props.productId,
+      objectionType,
+      trigger,
+      response,
+      reasoning: 'ローカル登録',
+      riskFlags: [],
+    });
+    setEntries((current) => [entry, ...current]);
+    setTrigger('');
+    setResponse('');
   };
 
   return (
-    <div className="rounded-lg border border-zinc-800 p-5">
-      <h2 className="mb-3 text-sm font-medium text-zinc-400">ナレッジ検索</h2>
-      <div className="flex gap-2">
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-          placeholder="例: 価格が高い"
+    <div className="space-y-6">
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">ナレッジ登録</h2>
+        <div className="grid gap-2 md:grid-cols-[140px_1fr]">
+          <input
+            aria-label="反論タイプ"
+            value={objectionType}
+            onChange={(event) => setObjectionType(event.currentTarget.value)}
+            className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          />
+          <input
+            aria-label="反論トリガー"
+            value={trigger}
+            onChange={(event) => setTrigger(event.currentTarget.value)}
+            className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+            placeholder="例: 価格が高い"
+          />
+        </div>
+        <textarea
+          aria-label="切り返し"
+          value={response}
+          onChange={(event) => setResponse(event.currentTarget.value)}
+          className="mt-2 min-h-24 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          placeholder="切り返しスクリプト"
         />
         <button
           type="button"
-          onClick={() => void search()}
-          className="rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900"
+          onClick={() => void createEntry()}
+          className="mt-2 rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900 disabled:opacity-40"
+          disabled={!trigger.trim() || !response.trim()}
         >
-          検索
+          登録
         </button>
       </div>
-      {resultCount !== null && (
-        <p className="mt-3 text-sm text-zinc-500">検索結果: {resultCount}件</p>
-      )}
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">ナレッジ検索</h2>
+        <div className="flex gap-2">
+          <input
+            aria-label="ナレッジ検索"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+            placeholder="例: 価格が高い"
+          />
+          <button
+            type="button"
+            onClick={() => void search()}
+            className="rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900"
+          >
+            検索
+          </button>
+        </div>
+        {results.length > 0 && <KnowledgeEntryList entries={results} title="検索結果" />}
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">ローカルナレッジ</h2>
+        {entries.length === 0 ? (
+          <p className="text-sm text-zinc-600">未登録</p>
+        ) : (
+          <KnowledgeEntryList entries={entries} title="登録済み" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeEntryList(props: {
+  entries: KnowledgeEntry[];
+  title: string;
+}): JSX.Element {
+  return (
+    <div className="mt-4">
+      <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">{props.title}</div>
+      <ul className="space-y-2">
+        {props.entries.map((entry) => (
+          <li key={entry.id} className="rounded border border-zinc-800 bg-zinc-950/40 p-3">
+            <div className="mb-1 text-xs text-overlay-objection">{entry.objectionType}</div>
+            <div className="text-sm text-zinc-200">{entry.trigger}</div>
+            <div className="mt-1 text-xs leading-relaxed text-zinc-500">{entry.response}</div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

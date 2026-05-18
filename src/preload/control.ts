@@ -51,7 +51,12 @@ const IPC = {
     setHover: 'overlay:set-hover',
     setLayer: 'overlay:set-layer',
   },
-  knowledge: { search: 'knowledge:search' },
+  knowledge: {
+    search: 'knowledge:search',
+    list: 'knowledge:list',
+    create: 'knowledge:create',
+    delete: 'knowledge:delete',
+  },
   minutes: {
     generate: 'minutes:generate',
     get: 'minutes:get',
@@ -167,6 +172,10 @@ const api: RendererApi = {
   knowledge: {
     search: (query: string, productId: ProductId, limit?: number): Promise<KnowledgeEntry[]> =>
       ipcRenderer.invoke(IPC.knowledge.search, { query, productId, limit }),
+    list: (productId: ProductId): Promise<KnowledgeEntry[]> =>
+      ipcRenderer.invoke(IPC.knowledge.list, productId),
+    create: (input): Promise<KnowledgeEntry> => ipcRenderer.invoke(IPC.knowledge.create, input),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.knowledge.delete, id),
   },
   minutes: {
     generate: (productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute> =>

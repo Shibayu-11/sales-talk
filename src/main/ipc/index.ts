@@ -6,6 +6,8 @@ import {
   AudioChunkSchema,
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
+  KnowledgeCreateInputSchema,
+  KnowledgeDeleteInputSchema,
   KnowledgeSearchInputSchema,
   MinutesGenerateInputSchema,
   ObjectionDismissInputSchema,
@@ -53,6 +55,7 @@ import {
 } from '../audio/native-module-loader';
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 import { localActivityStore } from '../services/local-activity-store';
+import { localKnowledgeStore } from '../services/local-knowledge-store';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -178,14 +181,29 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     windows.getOverlayWindow()?.webContents.send(IPC.overlay.setLayer, layer);
   });
 
-  ipcMain.handle(IPC.knowledge.search, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.knowledge.search, async (_event, payload: unknown) => {
     const input = KnowledgeSearchInputSchema.parse(payload);
     logger.debug({ productId: input.productId, limit: input.limit }, 'knowledge search requested');
-    return knowledgeSearchService.search({
+    const limit = input.limit ?? 5;
+    const localResults = await localKnowledgeStore.search(input.query, input.productId, limit);
+    const remoteResults = await knowledgeSearchService.search({
       query: input.query,
       productId: input.productId,
-      limit: input.limit ?? 5,
+      limit,
     });
+    return [...localResults, ...remoteResults].slice(0, limit);
+  });
+  ipcMain.handle(IPC.knowledge.list, (_event, payload: unknown) => {
+    const productId = ProductIdSchema.parse(payload);
+    return localKnowledgeStore.list(productId);
+  });
+  ipcMain.handle(IPC.knowledge.create, (_event, payload: unknown) => {
+    const input = KnowledgeCreateInputSchema.parse(payload);
+    return localKnowledgeStore.create(input);
+  });
+  ipcMain.handle(IPC.knowledge.delete, async (_event, payload: unknown) => {
+    const id = KnowledgeDeleteInputSchema.parse(payload);
+    await localKnowledgeStore.delete(id);
   });
 
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {

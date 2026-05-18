@@ -189,6 +189,17 @@ export const KnowledgeSearchInputSchema = z.object({
   limit: z.number().int().min(1).max(20).optional(),
 });
 
+export const KnowledgeCreateInputSchema = z.object({
+  productId: ProductIdSchema,
+  objectionType: z.string().trim().min(1).max(80),
+  trigger: z.string().trim().min(1).max(500),
+  response: z.string().trim().min(1).max(2_000),
+  reasoning: z.string().trim().max(1_000).optional(),
+  riskFlags: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+});
+
+export const KnowledgeDeleteInputSchema = z.string().uuid();
+
 export const KnowledgeEntrySchema = z.object({
   id: z.string().uuid(),
   productId: ProductIdSchema,
@@ -225,3 +236,4 @@ export type AppSettingsPatchInput = z.infer<typeof AppSettingsPatchSchema>;
 export type AppErrorInput = z.infer<typeof AppErrorSchema>;
 export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchema>;
 export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
+export type KnowledgeCreateInput = z.infer<typeof KnowledgeCreateInputSchema>;
