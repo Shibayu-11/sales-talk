@@ -3,6 +3,7 @@
 Zoomビデオ商談中にリアルタイムで反論ハンドリングを支援する macOS アシスタント。
 
 詳細設計: [sales-assistant-prd.md](./sales-assistant-prd.md)
+2軸開発計画: [docs/two-track-development-plan.md](./docs/two-track-development-plan.md)
 エージェント協働: [CLAUDE.md](./CLAUDE.md) (Swift/macOS) / [AGENTS.md](./AGENTS.md) (TS/React/DB)
 
 ## クイックスタート
