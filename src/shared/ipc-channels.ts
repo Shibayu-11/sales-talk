@@ -90,6 +90,13 @@ export const IPC = {
     complete: 'tasks:complete',
   },
 
+  // Compliance review (two-track plan)
+  compliance: {
+    rulesList: 'compliance:rules-list',
+    rulesCreate: 'compliance:rules-create',
+    rulesDelete: 'compliance:rules-delete',
+  },
+
   // Settings
   settings: {
     get: 'settings:get',

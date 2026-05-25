@@ -4,6 +4,8 @@ import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
   AudioChunkSchema,
+  ComplianceRuleCreateInputSchema,
+  ComplianceRuleDeleteInputSchema,
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeCreateInputSchema,
@@ -56,6 +58,8 @@ import {
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 import { localActivityStore } from '../services/local-activity-store';
 import { localKnowledgeStore } from '../services/local-knowledge-store';
+import { localComplianceStore } from '../services/local-compliance-store';
+import { evaluateCompliance } from '../services/compliance';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -209,7 +213,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
     const input = MinutesGenerateInputSchema.parse(payload);
     return localActivityStore.setLatestMeetingMinute(
-      generateLocalMeetingMinute(input.productId, input.transcripts),
+      await generateLocalMeetingMinute(input.productId, input.transcripts, input.source),
     );
   });
   ipcMain.handle(IPC.minutes.get, () => localActivityStore.getLatestMeetingMinute());
@@ -231,6 +235,16 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.tasks.complete, (_event, payload: unknown) => {
     const input = TaskCompleteInputSchema.parse(payload);
     return localActivityStore.completeTask(input.id, input.completed);
+  });
+
+  ipcMain.handle(IPC.compliance.rulesList, () => localComplianceStore.listRules());
+  ipcMain.handle(IPC.compliance.rulesCreate, (_event, payload: unknown) => {
+    const input = ComplianceRuleCreateInputSchema.parse(payload);
+    return localComplianceStore.createRule(input);
+  });
+  ipcMain.handle(IPC.compliance.rulesDelete, async (_event, payload: unknown) => {
+    const id = ComplianceRuleDeleteInputSchema.parse(payload);
+    await localComplianceStore.deleteRule(id);
   });
 
   ipcMain.handle(IPC.objection.feedback, (_event, payload: unknown) => {
@@ -394,10 +408,11 @@ function notifyObjectionCancelled(windows: IpcWindowAccessors, id: string): void
   windows.getOverlayWindow()?.webContents.send(IPC.objection.onCancelled, id);
 }
 
-function generateLocalMeetingMinute(
+async function generateLocalMeetingMinute(
   productId: MeetingMinute['productId'],
   transcripts: Transcript[],
-): MeetingMinute {
+  source: MeetingMinute['source'],
+): Promise<MeetingMinute> {
   const finalTexts = transcripts
     .filter((transcript) => transcript.isFinal)
     .map((transcript) => transcript.text.trim())
@@ -406,16 +421,23 @@ function generateLocalMeetingMinute(
   const pending = finalTexts.filter((text) =>
     ['高い', '難しい', '検討', '確認', '次回'].some((keyword) => text.includes(keyword)),
   );
+  const rules = await localComplianceStore.listRules('insurance');
 
   return {
     id: randomUUID(),
     callId: getCurrentCallId(),
+    source,
     productId,
     summary: `直近の発話: ${summarySource}`,
     agreed: [],
     pending: pending.slice(0, 5),
     decisions: [],
     numbers: extractNumbers(finalTexts.join('\n')),
+    complianceFindings: evaluateCompliance({
+      meetingId: getCurrentCallId(),
+      transcripts,
+      rules,
+    }),
     generatedAt: new Date().toISOString(),
   };
 }

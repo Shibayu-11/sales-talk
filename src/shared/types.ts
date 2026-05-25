@@ -5,6 +5,14 @@
 
 export type ProductId = 'real_estate' | 'kenko_keiei' | 'hojokin';
 
+export type MeetingSource =
+  | 'zoom_desktop'
+  | 'mobile_recording'
+  | 'uploaded_audio'
+  | 'manual_transcript';
+
+export type Industry = 'btob_sales' | 'insurance';
+
 export type Speaker = 'self' | 'counterpart';
 
 export type ObjectionType =
@@ -144,13 +152,48 @@ export interface KnowledgeEntry {
 export interface MeetingMinute {
   id: string;
   callId: string;
+  source: MeetingSource;
   productId: ProductId;
   summary: string;
   agreed: string[];
   pending: string[];
   decisions: string[];
   numbers: { label: string; value: string }[];
+  complianceFindings: ComplianceFinding[];
   generatedAt: string;
+}
+
+export type ComplianceSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type ComplianceRuleType =
+  | 'prohibited_expression'
+  | 'caution_expression'
+  | 'required_disclosure';
+export type ComplianceReviewStatus = 'unreviewed' | 'approved' | 'dismissed' | 'escalated';
+
+export interface ComplianceRule {
+  id: string;
+  companyId: string;
+  industry: Industry;
+  productCategory: string;
+  severity: ComplianceSeverity;
+  ruleType: ComplianceRuleType;
+  pattern: string;
+  reason: string;
+  recommendedPhrase: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplianceFinding {
+  id: string;
+  ruleId: string;
+  severity: ComplianceSeverity;
+  ruleType: ComplianceRuleType;
+  quotedText: string;
+  reason: string;
+  recommendedAction: string;
+  reviewStatus: ComplianceReviewStatus;
+  detectedAtMs: number;
 }
 
 export type TaskOwner = 'own' | 'customer' | 'joint';
@@ -246,13 +289,31 @@ export interface RendererApi {
     delete(id: string): Promise<void>;
   };
   minutes: {
-    generate(productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute>;
+    generate(
+      productId: ProductId,
+      transcripts: Transcript[],
+      source?: MeetingSource,
+    ): Promise<MeetingMinute>;
     get(): Promise<MeetingMinute | null>;
   };
   tasks: {
     list(): Promise<ActionItemTask[]>;
     create(owner: TaskOwner, description: string): Promise<ActionItemTask>;
     complete(id: string, completed: boolean): Promise<ActionItemTask>;
+  };
+  compliance: {
+    listRules(): Promise<ComplianceRule[]>;
+    createRule(input: {
+      companyId: string;
+      industry: Industry;
+      productCategory: string;
+      severity: ComplianceSeverity;
+      ruleType: ComplianceRuleType;
+      pattern: string;
+      reason: string;
+      recommendedPhrase: string;
+    }): Promise<ComplianceRule>;
+    deleteRule(id: string): Promise<void>;
   };
   settings: {
     get(): Promise<AppSettings>;

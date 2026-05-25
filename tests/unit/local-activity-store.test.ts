@@ -14,12 +14,14 @@ describe('LocalActivityStore', () => {
       const minute = await store.setLatestMeetingMinute({
         id: '3e5c9ec8-3c67-478a-b0a8-f05f7a9834e1',
         callId: 'ce710872-1efd-4965-8ca4-e4d13f810250',
+        source: 'manual_transcript',
         productId: 'real_estate',
         summary: '直近の発話: 価格が高い',
         agreed: [],
         pending: ['価格が高い'],
         decisions: [],
         numbers: [{ label: 'number_1', value: '100万円' }],
+        complianceFindings: [],
         generatedAt: '2026-05-18T00:00:00.000Z',
       });
       await store.createTask({

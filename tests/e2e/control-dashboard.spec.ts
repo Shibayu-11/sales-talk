@@ -54,15 +54,28 @@ test('dev transcript injection drives the mock pipeline without API keys', async
       await expect(overlayWindow.getByText('根拠詳細')).toBeVisible();
       await expect(overlayWindow.getByText('本番回答ではありません')).toBeVisible();
 
+      await controlWindow.evaluate(() =>
+        window.api.dev.injectTranscript({
+          speaker: 'counterpart',
+          text: 'この商品は絶対儲かります。',
+          isFinal: true,
+          startMs: Date.now() - 1_000,
+          endMs: Date.now(),
+        }),
+      );
+      await expect(controlWindow.getByText('この商品は絶対儲かります。', { exact: true })).toBeVisible();
+
       await controlWindow.getByRole('button', { name: 'dismiss' }).click();
       await expect(controlWindow.getByText('検知待機中')).toBeVisible();
 
       await controlWindow.getByRole('button', { name: '商談履歴' }).click();
       await expect(controlWindow.getByRole('heading', { name: '商談履歴' })).toBeVisible();
-      await expect(controlWindow.getByText('価格の内訳を確認')).toBeVisible();
+      await expect(controlWindow.getByText('価格の内訳を確認').first()).toBeVisible();
       await controlWindow.getByRole('button', { name: 'transcript から生成' }).click();
       await expect(controlWindow.getByText(/直近の発話:/)).toBeVisible();
       await expect(controlWindow.getByText('保留事項')).toBeVisible();
+      await expect(controlWindow.getByText('コンプラレビュー')).toBeVisible();
+      await expect(controlWindow.getByText('将来利益を断定する表現は顧客誤認につながります。')).toBeVisible();
 
       await controlWindow.getByRole('button', { name: 'タスク' }).click();
       await controlWindow.getByLabel('タスク担当').selectOption('joint');

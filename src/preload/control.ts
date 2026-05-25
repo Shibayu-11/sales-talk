@@ -11,6 +11,11 @@ import type {
   MeetingMinute,
   ActionItemTask,
   TaskOwner,
+  MeetingSource,
+  ComplianceRule,
+  Industry,
+  ComplianceSeverity,
+  ComplianceRuleType,
 } from '@shared/types';
 
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
@@ -65,6 +70,11 @@ const IPC = {
     list: 'tasks:list',
     create: 'tasks:create',
     complete: 'tasks:complete',
+  },
+  compliance: {
+    rulesList: 'compliance:rules-list',
+    rulesCreate: 'compliance:rules-create',
+    rulesDelete: 'compliance:rules-delete',
   },
   settings: {
     get: 'settings:get',
@@ -178,8 +188,12 @@ const api: RendererApi = {
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.knowledge.delete, id),
   },
   minutes: {
-    generate: (productId: ProductId, transcripts: Transcript[]): Promise<MeetingMinute> =>
-      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts }),
+    generate: (
+      productId: ProductId,
+      transcripts: Transcript[],
+      source: MeetingSource = 'manual_transcript',
+    ): Promise<MeetingMinute> =>
+      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts, source }),
     get: (): Promise<MeetingMinute | null> => ipcRenderer.invoke(IPC.minutes.get),
   },
   tasks: {
@@ -188,6 +202,20 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.tasks.create, { owner, description }),
     complete: (id: string, completed: boolean): Promise<ActionItemTask> =>
       ipcRenderer.invoke(IPC.tasks.complete, { id, completed }),
+  },
+  compliance: {
+    listRules: (): Promise<ComplianceRule[]> => ipcRenderer.invoke(IPC.compliance.rulesList),
+    createRule: (input: {
+      companyId: string;
+      industry: Industry;
+      productCategory: string;
+      severity: ComplianceSeverity;
+      ruleType: ComplianceRuleType;
+      pattern: string;
+      reason: string;
+      recommendedPhrase: string;
+    }): Promise<ComplianceRule> => ipcRenderer.invoke(IPC.compliance.rulesCreate, input),
+    deleteRule: (id: string): Promise<void> => ipcRenderer.invoke(IPC.compliance.rulesDelete, id),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settings.get),

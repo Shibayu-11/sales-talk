@@ -865,6 +865,7 @@ function HistoryPanel(props: {
               items={meetingMinute.numbers.map((number) => `${number.label}: ${number.value}`)}
               empty="数値なし"
             />
+            <ComplianceFindingList findings={meetingMinute.complianceFindings} />
           </div>
         ) : (
           <p className="text-sm text-zinc-600">まだ生成されていません。</p>
@@ -920,6 +921,38 @@ function HistoryPanel(props: {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+function ComplianceFindingList(props: {
+  findings: MeetingMinute['complianceFindings'];
+}): JSX.Element {
+  return (
+    <div>
+      <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">コンプラレビュー</div>
+      {props.findings.length === 0 ? (
+        <p className="text-xs text-zinc-600">検知なし</p>
+      ) : (
+        <ul className="space-y-2">
+          {props.findings.map((finding) => (
+            <li
+              key={finding.id}
+              className="rounded border border-overlay-objection/40 bg-overlay-objection/10 p-3 text-xs"
+            >
+              <div className="mb-1 flex items-center gap-2">
+                <span className="rounded bg-zinc-900 px-2 py-0.5 text-overlay-objection">
+                  {finding.severity}
+                </span>
+                <span className="text-zinc-500">{finding.ruleType}</span>
+              </div>
+              <div className="text-zinc-200">{finding.quotedText}</div>
+              <div className="mt-1 text-zinc-500">{finding.reason}</div>
+              <div className="mt-2 text-overlay-warning">{finding.recommendedAction}</div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

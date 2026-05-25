@@ -6,6 +6,13 @@ import { z } from 'zod';
  */
 
 export const ProductIdSchema = z.enum(['real_estate', 'kenko_keiei', 'hojokin']);
+export const MeetingSourceSchema = z.enum([
+  'zoom_desktop',
+  'mobile_recording',
+  'uploaded_audio',
+  'manual_transcript',
+]);
+export const IndustrySchema = z.enum(['btob_sales', 'insurance']);
 export const SpeakerSchema = z.enum(['self', 'counterpart']);
 export const OverlayLayerSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 
@@ -85,21 +92,76 @@ export const ObjectionResponseSchema = z.object({
   generatedAtMs: z.number(),
 });
 
+export const ComplianceSeveritySchema = z.enum(['critical', 'high', 'medium', 'low']);
+export const ComplianceRuleTypeSchema = z.enum([
+  'prohibited_expression',
+  'caution_expression',
+  'required_disclosure',
+]);
+export const ComplianceReviewStatusSchema = z.enum([
+  'unreviewed',
+  'approved',
+  'dismissed',
+  'escalated',
+]);
+
+export const ComplianceRuleSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().min(1),
+  industry: IndustrySchema,
+  productCategory: z.string().min(1),
+  severity: ComplianceSeveritySchema,
+  ruleType: ComplianceRuleTypeSchema,
+  pattern: z.string().min(1),
+  reason: z.string().min(1),
+  recommendedPhrase: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const ComplianceFindingSchema = z.object({
+  id: z.string().uuid(),
+  ruleId: z.string().uuid(),
+  severity: ComplianceSeveritySchema,
+  ruleType: ComplianceRuleTypeSchema,
+  quotedText: z.string(),
+  reason: z.string(),
+  recommendedAction: z.string(),
+  reviewStatus: ComplianceReviewStatusSchema,
+  detectedAtMs: z.number(),
+});
+
+export const ComplianceRuleCreateInputSchema = z.object({
+  companyId: z.string().trim().min(1).max(120),
+  industry: IndustrySchema,
+  productCategory: z.string().trim().min(1).max(120),
+  severity: ComplianceSeveritySchema,
+  ruleType: ComplianceRuleTypeSchema,
+  pattern: z.string().trim().min(1).max(500),
+  reason: z.string().trim().min(1).max(1_000),
+  recommendedPhrase: z.string().trim().min(1).max(1_000),
+});
+
+export const ComplianceRuleDeleteInputSchema = z.string().uuid();
+
 export const MeetingMinuteSchema = z.object({
   id: z.string().uuid(),
   callId: z.string().uuid(),
+  source: MeetingSourceSchema,
   productId: ProductIdSchema,
   summary: z.string(),
   agreed: z.array(z.string()),
   pending: z.array(z.string()),
   decisions: z.array(z.string()),
   numbers: z.array(z.object({ label: z.string(), value: z.string() })),
+  complianceFindings: z.array(ComplianceFindingSchema),
   generatedAt: z.string(),
 });
 
 export const MinutesGenerateInputSchema = z.object({
   productId: ProductIdSchema,
   transcripts: z.array(TranscriptSchema).max(100),
+  source: MeetingSourceSchema.default('manual_transcript'),
 });
 
 export const TaskOwnerSchema = z.enum(['own', 'customer', 'joint']);
@@ -237,3 +299,4 @@ export type AppErrorInput = z.infer<typeof AppErrorSchema>;
 export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchema>;
 export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
 export type KnowledgeCreateInput = z.infer<typeof KnowledgeCreateInputSchema>;
+export type ComplianceRuleCreateInput = z.infer<typeof ComplianceRuleCreateInputSchema>;
