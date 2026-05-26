@@ -12,6 +12,8 @@ import type {
   ObjectionResponse,
   PermissionState,
   ProductId,
+  ReviewTask,
+  ReviewTaskStatus,
   TaskOwner,
   Transcript,
 } from '@shared/types';
@@ -22,7 +24,7 @@ const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'hojokin', label: '補助金助成金' },
 ];
 
-const NAV_ITEMS = ['ダッシュボード', '商談履歴', 'ナレッジ', 'タスク', '設定'] as const;
+const NAV_ITEMS = ['ダッシュボード', '商談履歴', 'レビュー', 'ナレッジ', 'タスク', '設定'] as const;
 type NavItem = (typeof NAV_ITEMS)[number];
 
 const SECRET_KEYS = [
@@ -288,6 +290,7 @@ export function App(): JSX.Element {
               recentTranscripts={recentTranscripts}
             />
           )}
+          {activeNav === 'レビュー' && <ReviewPanel />}
           {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
           {activeNav === 'タスク' && <TasksPanel />}
           {activeNav === '設定' && (
@@ -974,6 +977,145 @@ function MinuteList(props: { title: string; items: string[]; empty: string }): J
       )}
     </div>
   );
+}
+
+function ReviewPanel(): JSX.Element {
+  const [reviewTasks, setReviewTasks] = useState<ReviewTask[]>([]);
+
+  useEffect(() => {
+    void window.api.reviews.list().then(setReviewTasks);
+  }, []);
+
+  const updateStatus = async (
+    taskId: string,
+    status: ReviewTaskStatus,
+  ): Promise<void> => {
+    const task = await window.api.reviews.updateStatus(taskId, status);
+    setReviewTasks((current) =>
+      current.map((candidate) => (candidate.id === task.id ? task : candidate)),
+    );
+  };
+
+  const openTasks = reviewTasks.filter((task) => task.status === 'open');
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-medium text-zinc-400">管理者レビュー</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              コンプラ検知から自動作成された要確認案件を処理します。
+            </p>
+          </div>
+          <div className="rounded bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+            open {openTasks.length} / total {reviewTasks.length}
+          </div>
+        </div>
+
+        {reviewTasks.length === 0 ? (
+          <p className="rounded border border-zinc-800 p-3 text-sm text-zinc-600">
+            要レビュー案件はまだありません。
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {reviewTasks.map((task) => (
+              <li
+                key={task.id}
+                className="rounded border border-zinc-800 bg-zinc-950/40 p-4 text-sm"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-zinc-200">{task.title}</span>
+                    <span className="rounded bg-overlay-objection/15 px-2 py-0.5 text-xs text-overlay-objection">
+                      {task.severity}
+                    </span>
+                    <span className="rounded bg-zinc-900 px-2 py-0.5 text-xs text-zinc-500">
+                      {reviewStatusLabel(task.status)}
+                    </span>
+                  </div>
+                  <span className="text-xs text-zinc-600">
+                    {new Date(task.createdAt).toLocaleString('ja-JP')}
+                  </span>
+                </div>
+                <blockquote className="rounded border border-zinc-800 bg-zinc-900/60 p-3 text-zinc-200">
+                  {task.quotedText}
+                </blockquote>
+                <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
+                  <div className="rounded bg-zinc-900/70 p-3 text-zinc-400">
+                    <div className="mb-1 text-zinc-600">検知理由</div>
+                    {task.reason}
+                  </div>
+                  <div className="rounded bg-zinc-900/70 p-3 text-overlay-warning">
+                    <div className="mb-1 text-zinc-600">推奨対応</div>
+                    {task.recommendedAction}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ReviewActionButton
+                    disabled={task.status === 'approved'}
+                    onClick={() => void updateStatus(task.id, 'approved')}
+                  >
+                    問題なし
+                  </ReviewActionButton>
+                  <ReviewActionButton
+                    disabled={task.status === 'training_required'}
+                    onClick={() => void updateStatus(task.id, 'training_required')}
+                  >
+                    要教育
+                  </ReviewActionButton>
+                  <ReviewActionButton
+                    disabled={task.status === 'escalated'}
+                    onClick={() => void updateStatus(task.id, 'escalated')}
+                  >
+                    重大確認
+                  </ReviewActionButton>
+                  <ReviewActionButton
+                    disabled={task.status === 'dismissed'}
+                    onClick={() => void updateStatus(task.id, 'dismissed')}
+                  >
+                    誤検知
+                  </ReviewActionButton>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReviewActionButton(props: {
+  children: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function reviewStatusLabel(status: ReviewTaskStatus): string {
+  switch (status) {
+    case 'open':
+      return '未確認';
+    case 'approved':
+      return '問題なし';
+    case 'dismissed':
+      return '誤検知';
+    case 'training_required':
+      return '要教育';
+    case 'escalated':
+      return '重大確認';
+  }
 }
 
 function TasksPanel(): JSX.Element {

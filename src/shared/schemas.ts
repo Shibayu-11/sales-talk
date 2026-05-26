@@ -104,6 +104,20 @@ export const ComplianceReviewStatusSchema = z.enum([
   'dismissed',
   'escalated',
 ]);
+export const ReviewTaskStatusSchema = z.enum([
+  'open',
+  'approved',
+  'dismissed',
+  'training_required',
+  'escalated',
+]);
+export const AuditActorTypeSchema = z.enum(['system', 'user', 'ai']);
+export const AuditActionSchema = z.enum([
+  'minutes.generated',
+  'compliance.finding_detected',
+  'review_task.created',
+  'review_task.status_updated',
+]);
 
 export const ComplianceRuleSchema = z.object({
   id: z.string().uuid(),
@@ -130,6 +144,79 @@ export const ComplianceFindingSchema = z.object({
   reviewStatus: ComplianceReviewStatusSchema,
   detectedAtMs: z.number(),
 });
+
+export const ReviewTaskSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  meetingMinuteId: z.string().uuid(),
+  findingId: z.string().uuid(),
+  severity: ComplianceSeveritySchema,
+  status: ReviewTaskStatusSchema,
+  title: z.string().min(1).max(200),
+  quotedText: z.string(),
+  reason: z.string(),
+  recommendedAction: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const ReviewTaskUpdateStatusInputSchema = z.object({
+  id: z.string().uuid(),
+  status: ReviewTaskStatusSchema,
+});
+
+export const AuditLogEntrySchema = z.object({
+  id: z.string().uuid(),
+  actorType: AuditActorTypeSchema,
+  action: AuditActionSchema,
+  targetType: z.string().min(1).max(120),
+  targetId: z.string().min(1).max(120),
+  metadata: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  createdAt: z.string(),
+});
+
+export const PresentationRiskLevelSchema = z.enum(['none', 'low', 'medium', 'high', 'critical']);
+export const PresentationBlockSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('summary_card'),
+    title: z.string(),
+    body: z.string(),
+    riskLevel: PresentationRiskLevelSchema,
+  }),
+  z.object({
+    type: z.literal('risk_item'),
+    label: z.string(),
+    quote: z.string(),
+    severity: ComplianceSeveritySchema,
+    suggestion: z.string(),
+  }),
+  z.object({
+    type: z.literal('transcript_quote'),
+    speaker: SpeakerSchema,
+    quote: z.string(),
+    startMs: z.number(),
+  }),
+  z.object({
+    type: z.literal('action_list'),
+    items: z.array(z.string()),
+  }),
+  z.object({
+    type: z.literal('review_decision'),
+    taskId: z.string().uuid(),
+    status: ReviewTaskStatusSchema,
+  }),
+  z.object({
+    type: z.literal('metric_card'),
+    label: z.string(),
+    value: z.string(),
+    trend: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('table'),
+    columns: z.array(z.string()),
+    rows: z.array(z.array(z.string())),
+  }),
+]);
 
 export const ComplianceRuleCreateInputSchema = z.object({
   companyId: z.string().trim().min(1).max(120),
@@ -300,3 +387,4 @@ export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchem
 export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
 export type KnowledgeCreateInput = z.infer<typeof KnowledgeCreateInputSchema>;
 export type ComplianceRuleCreateInput = z.infer<typeof ComplianceRuleCreateInputSchema>;
+export type ReviewTaskUpdateStatusInput = z.infer<typeof ReviewTaskUpdateStatusInputSchema>;

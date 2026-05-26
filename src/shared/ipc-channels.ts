@@ -89,6 +89,10 @@ export const IPC = {
     update: 'tasks:update',
     complete: 'tasks:complete',
   },
+  reviews: {
+    list: 'reviews:list',
+    updateStatus: 'reviews:update-status',
+  },
 
   // Compliance review (two-track plan)
   compliance: {

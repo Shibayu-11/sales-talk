@@ -2,22 +2,33 @@ import { app } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { ActionItemTaskSchema, MeetingMinuteSchema } from '@shared/schemas';
-import type { ActionItemTask, MeetingMinute } from '@shared/types';
+import {
+  ActionItemTaskSchema,
+  AuditLogEntrySchema,
+  MeetingMinuteSchema,
+  ReviewTaskSchema,
+} from '@shared/schemas';
+import type { ActionItemTask, AuditLogEntry, MeetingMinute, ReviewTask } from '@shared/types';
 
 const LocalActivityDataSchema = z.object({
   latestMeetingMinute: MeetingMinuteSchema.nullable(),
   tasks: z.array(ActionItemTaskSchema),
+  reviewTasks: z.array(ReviewTaskSchema).default([]),
+  auditLogs: z.array(AuditLogEntrySchema).default([]),
 });
 
 interface LocalActivityData {
   latestMeetingMinute: MeetingMinute | null;
   tasks: ActionItemTask[];
+  reviewTasks: ReviewTask[];
+  auditLogs: AuditLogEntry[];
 }
 
 const DEFAULT_ACTIVITY_DATA: LocalActivityData = {
   latestMeetingMinute: null,
   tasks: [],
+  reviewTasks: [],
+  auditLogs: [],
 };
 
 export class LocalActivityStore {
@@ -64,6 +75,53 @@ export class LocalActivityStore {
     this.cache = next;
     await this.persist(next);
     return nextTask;
+  }
+
+  async listReviewTasks(): Promise<ReviewTask[]> {
+    return (await this.get()).reviewTasks;
+  }
+
+  async createReviewTasks(tasks: ReviewTask[]): Promise<ReviewTask[]> {
+    if (tasks.length === 0) {
+      return [];
+    }
+
+    const data = await this.get();
+    const next = { ...data, reviewTasks: [...tasks, ...data.reviewTasks] };
+    this.cache = next;
+    await this.persist(next);
+    return tasks;
+  }
+
+  async updateReviewTaskStatus(id: string, status: ReviewTask['status']): Promise<ReviewTask> {
+    const data = await this.get();
+    const task = data.reviewTasks.find((candidate) => candidate.id === id);
+    if (!task) {
+      throw new Error('Review task was not found');
+    }
+
+    const nextTask = { ...task, status, updatedAt: new Date().toISOString() };
+    const next = {
+      ...data,
+      reviewTasks: data.reviewTasks.map((candidate) =>
+        candidate.id === id ? nextTask : candidate,
+      ),
+    };
+    this.cache = next;
+    await this.persist(next);
+    return nextTask;
+  }
+
+  async appendAuditLogs(entries: AuditLogEntry[]): Promise<AuditLogEntry[]> {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    const data = await this.get();
+    const next = { ...data, auditLogs: [...entries, ...data.auditLogs].slice(0, 1_000) };
+    this.cache = next;
+    await this.persist(next);
+    return entries;
   }
 
   private async get(): Promise<LocalActivityData> {

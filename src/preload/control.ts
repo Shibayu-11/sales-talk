@@ -16,6 +16,8 @@ import type {
   Industry,
   ComplianceSeverity,
   ComplianceRuleType,
+  ReviewTask,
+  ReviewTaskStatus,
 } from '@shared/types';
 
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
@@ -70,6 +72,10 @@ const IPC = {
     list: 'tasks:list',
     create: 'tasks:create',
     complete: 'tasks:complete',
+  },
+  reviews: {
+    list: 'reviews:list',
+    updateStatus: 'reviews:update-status',
   },
   compliance: {
     rulesList: 'compliance:rules-list',
@@ -202,6 +208,11 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.tasks.create, { owner, description }),
     complete: (id: string, completed: boolean): Promise<ActionItemTask> =>
       ipcRenderer.invoke(IPC.tasks.complete, { id, completed }),
+  },
+  reviews: {
+    list: (): Promise<ReviewTask[]> => ipcRenderer.invoke(IPC.reviews.list),
+    updateStatus: (id: string, status: ReviewTaskStatus): Promise<ReviewTask> =>
+      ipcRenderer.invoke(IPC.reviews.updateStatus, { id, status }),
   },
   compliance: {
     listRules: (): Promise<ComplianceRule[]> => ipcRenderer.invoke(IPC.compliance.rulesList),

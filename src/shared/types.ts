@@ -169,6 +169,18 @@ export type ComplianceRuleType =
   | 'caution_expression'
   | 'required_disclosure';
 export type ComplianceReviewStatus = 'unreviewed' | 'approved' | 'dismissed' | 'escalated';
+export type ReviewTaskStatus =
+  | 'open'
+  | 'approved'
+  | 'dismissed'
+  | 'training_required'
+  | 'escalated';
+export type AuditActorType = 'system' | 'user' | 'ai';
+export type AuditAction =
+  | 'minutes.generated'
+  | 'compliance.finding_detected'
+  | 'review_task.created'
+  | 'review_task.status_updated';
 
 export interface ComplianceRule {
   id: string;
@@ -195,6 +207,74 @@ export interface ComplianceFinding {
   reviewStatus: ComplianceReviewStatus;
   detectedAtMs: number;
 }
+
+export interface ReviewTask {
+  id: string;
+  callId: string;
+  meetingMinuteId: string;
+  findingId: string;
+  severity: ComplianceSeverity;
+  status: ReviewTaskStatus;
+  title: string;
+  quotedText: string;
+  reason: string;
+  recommendedAction: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorType: AuditActorType;
+  action: AuditAction;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, string | number | boolean | null>;
+  createdAt: string;
+}
+
+export type PresentationRiskLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
+
+export type PresentationBlock =
+  | {
+      type: 'summary_card';
+      title: string;
+      body: string;
+      riskLevel: PresentationRiskLevel;
+    }
+  | {
+      type: 'risk_item';
+      label: string;
+      quote: string;
+      severity: ComplianceSeverity;
+      suggestion: string;
+    }
+  | {
+      type: 'transcript_quote';
+      speaker: Speaker;
+      quote: string;
+      startMs: number;
+    }
+  | {
+      type: 'action_list';
+      items: string[];
+    }
+  | {
+      type: 'review_decision';
+      taskId: string;
+      status: ReviewTaskStatus;
+    }
+  | {
+      type: 'metric_card';
+      label: string;
+      value: string;
+      trend?: string;
+    }
+  | {
+      type: 'table';
+      columns: string[];
+      rows: string[][];
+    };
 
 export type TaskOwner = 'own' | 'customer' | 'joint';
 export type TaskDue = { kind: 'explicit'; date: string } | { kind: 'inferred'; date: string } | { kind: 'none' };
@@ -300,6 +380,10 @@ export interface RendererApi {
     list(): Promise<ActionItemTask[]>;
     create(owner: TaskOwner, description: string): Promise<ActionItemTask>;
     complete(id: string, completed: boolean): Promise<ActionItemTask>;
+  };
+  reviews: {
+    list(): Promise<ReviewTask[]>;
+    updateStatus(id: string, status: ReviewTaskStatus): Promise<ReviewTask>;
   };
   compliance: {
     listRules(): Promise<ComplianceRule[]>;

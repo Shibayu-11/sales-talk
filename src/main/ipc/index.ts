@@ -15,6 +15,7 @@ import {
   ObjectionDismissInputSchema,
   OverlayLayerSchema,
   ProductIdSchema,
+  ReviewTaskUpdateStatusInputSchema,
   SecretKeySchema,
   SecretSetInputSchema,
   TaskCompleteInputSchema,
@@ -22,12 +23,14 @@ import {
 } from '@shared/schemas';
 import type {
   ActionItemTask,
+  AuditLogEntry,
   AppSettings,
   AudioChunk,
   AudioCaptureStatus,
   CallState,
   MeetingMinute,
   PermissionState,
+  ReviewTask,
   SharingState,
   Transcript,
 } from '@shared/types';
@@ -237,6 +240,21 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     return localActivityStore.completeTask(input.id, input.completed);
   });
 
+  ipcMain.handle(IPC.reviews.list, () => localActivityStore.listReviewTasks());
+  ipcMain.handle(IPC.reviews.updateStatus, async (_event, payload: unknown) => {
+    const input = ReviewTaskUpdateStatusInputSchema.parse(payload);
+    const task = await localActivityStore.updateReviewTaskStatus(input.id, input.status);
+    await localActivityStore.appendAuditLogs([
+      createAuditLogEntry({
+        action: 'review_task.status_updated',
+        targetType: 'review_task',
+        targetId: task.id,
+        metadata: { status: task.status, severity: task.severity },
+      }),
+    ]);
+    return task;
+  });
+
   ipcMain.handle(IPC.compliance.rulesList, () => localComplianceStore.listRules());
   ipcMain.handle(IPC.compliance.rulesCreate, (_event, payload: unknown) => {
     const input = ComplianceRuleCreateInputSchema.parse(payload);
@@ -423,7 +441,7 @@ async function generateLocalMeetingMinute(
   );
   const rules = await localComplianceStore.listRules('insurance');
 
-  return {
+  const meetingMinute: MeetingMinute = {
     id: randomUUID(),
     callId: getCurrentCallId(),
     source,
@@ -439,6 +457,93 @@ async function generateLocalMeetingMinute(
       rules,
     }),
     generatedAt: new Date().toISOString(),
+  };
+  const reviewTasks = createReviewTasksFromMinute(meetingMinute);
+  await localActivityStore.createReviewTasks(reviewTasks);
+  await localActivityStore.appendAuditLogs([
+    createAuditLogEntry({
+      action: 'minutes.generated',
+      targetType: 'meeting_minute',
+      targetId: meetingMinute.id,
+      metadata: {
+        callId: meetingMinute.callId,
+        source: meetingMinute.source,
+        complianceFindings: meetingMinute.complianceFindings.length,
+      },
+    }),
+    ...meetingMinute.complianceFindings.map((finding) =>
+      createAuditLogEntry({
+        action: 'compliance.finding_detected',
+        targetType: 'compliance_finding',
+        targetId: finding.id,
+        metadata: {
+          callId: meetingMinute.callId,
+          severity: finding.severity,
+          ruleType: finding.ruleType,
+        },
+      }),
+    ),
+    ...reviewTasks.map((task) =>
+      createAuditLogEntry({
+        action: 'review_task.created',
+        targetType: 'review_task',
+        targetId: task.id,
+        metadata: {
+          callId: task.callId,
+          findingId: task.findingId,
+          severity: task.severity,
+        },
+      }),
+    ),
+  ]);
+  return meetingMinute;
+}
+
+function createReviewTasksFromMinute(minute: MeetingMinute): ReviewTask[] {
+  const now = new Date().toISOString();
+  return minute.complianceFindings.map((finding) => ({
+    id: randomUUID(),
+    callId: minute.callId,
+    meetingMinuteId: minute.id,
+    findingId: finding.id,
+    severity: finding.severity,
+    status: 'open',
+    title: createReviewTaskTitle(finding.severity),
+    quotedText: finding.quotedText,
+    reason: finding.reason,
+    recommendedAction: finding.recommendedAction,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
+function createReviewTaskTitle(severity: ReviewTask['severity']): string {
+  switch (severity) {
+    case 'critical':
+      return '重大リスク発話の確認';
+    case 'high':
+      return '高リスク発話の確認';
+    case 'medium':
+      return '要注意発話の確認';
+    case 'low':
+      return '低リスク発話の確認';
+  }
+}
+
+function createAuditLogEntry(input: {
+  action: AuditLogEntry['action'];
+  targetType: string;
+  targetId: string;
+  metadata: AuditLogEntry['metadata'];
+}): AuditLogEntry {
+  return {
+    id: randomUUID(),
+    actorType: 'system',
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    metadata: input.metadata,
+    createdAt: new Date().toISOString(),
   };
 }
 

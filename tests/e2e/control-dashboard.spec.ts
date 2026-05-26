@@ -77,6 +77,12 @@ test('dev transcript injection drives the mock pipeline without API keys', async
       await expect(controlWindow.getByText('コンプラレビュー')).toBeVisible();
       await expect(controlWindow.getByText('将来利益を断定する表現は顧客誤認につながります。')).toBeVisible();
 
+      await controlWindow.getByRole('button', { name: 'レビュー' }).click();
+      await expect(controlWindow.getByRole('heading', { name: '管理者レビュー' })).toBeVisible();
+      await expect(controlWindow.getByText('高リスク発話の確認')).toBeVisible();
+      await controlWindow.getByRole('button', { name: '要教育' }).click();
+      await expect(controlWindow.locator('span').filter({ hasText: '要教育' })).toBeVisible();
+
       await controlWindow.getByRole('button', { name: 'タスク' }).click();
       await controlWindow.getByLabel('タスク担当').selectOption('joint');
       await controlWindow.getByLabel('タスク内容').fill('費用対効果の資料を送る');
