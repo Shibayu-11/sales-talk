@@ -1,7 +1,10 @@
-# SalesTalk 2軸開発計画
+# SalesTalk / セルログ 2軸開発計画
 
-作成日: 2026-05-25  
-目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ基盤で進める。
+作成日: 2026-05-25
+更新日: 2026-05-26
+目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ業務API基盤で進める。
+
+中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
 
 ## 1. 方針
 
@@ -12,7 +15,7 @@
 | Track A | Mac 商談支援 | Zoom / オンライン商談 | リアルタイム反論対応、商談品質向上 | 複雑商材BtoB営業 |
 | Track B | スマホ録音 + コンプラ議事録 | 訪問 / 対面の保険営業 | 募集品質管理、NG発話検知、上長レビュー効率化 | 保険代理店、保険会社、募集管理部門 |
 
-共通の中核は `Meeting Intelligence Platform` として扱う。
+共通の中核は `セルログ業務API` として扱う。UI、Macアプリ、スマホ、AIチャットはすべて同じAPIを叩くクライアントにする。
 
 ```mermaid
 flowchart LR
@@ -21,8 +24,9 @@ flowchart LR
   C --> D["Rule & Knowledge Engine"]
   D --> E["Realtime Assist"]
   D --> F["Compliance Review"]
-  F --> G["Minutes / Tasks / Audit Trail"]
+  F --> G["Minutes / Review Tasks / Audit Trail"]
   G --> H["Manager Review"]
+  H --> I["Presentation JSON"]
 ```
 
 ## 2. プロダクト定義
@@ -50,6 +54,15 @@ flowchart LR
 - 上長が確認、差し戻し、教育に使う
 
 最初から商談中リアルタイム警告を狙わない。訪問商談ではスマホ画面を見続ける UX が弱いため、MVP は商談後レビューを主軸にする。
+
+### AI-Native 方針
+
+AIはDBを直接読む補助チャットではなく、権限付きの業務APIを呼ぶ正規クライアントにする。
+
+- UIもAIも同じAPIを使う
+- コンプラ判定の不変条件はAPI/ルールエンジン側に置く
+- LLMは最終判定者ではなく、要約・説明・言い換え・操作補助に使う
+- すべての重要操作を audit log に残す
 
 ## 3. 共通アーキテクチャ
 
@@ -104,6 +117,9 @@ flowchart LR
 - `meeting_minutes`
 - `tasks`
 - `manager_reviews`
+- `review_tasks`
+- `audit_logs`
+- `presentation_blocks`
 
 ### 3.3 ルールエンジン
 
@@ -116,6 +132,18 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 | 商品別ルール | 会社・商品ごとの差分 | 採用 |
 | LLM分類 | 文脈依存の曖昧判定 | 補助 |
 | 管理者レビュー学習 | 誤検知改善 | Phase 2 |
+
+### 3.4 Storage 方針
+
+Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise は AWS adapter を想定する。
+
+| フェーズ | Storage | 理由 |
+|---|---|---|
+| Local MVP | local JSON / SQLite | 低コスト、keyなし検証、個人情報を端末内に置ける |
+| Cloud β | Cloudflare D1 / R2 / Queues | 使い慣れている、スマホ/管理画面/API化と相性が良い |
+| Enterprise | AWS | 大手・閉域・監査・SSO・個別セキュリティ要件に対応 |
+
+実装では `Repository` interface を先に切り、`local` / `cloudflare` / `aws` adapter を差し替え可能にする。
 
 ## 4. 保険営業向けユースケース
 
@@ -151,9 +179,10 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 
 - `MeetingSource` 型を追加
 - transcript segment の共通保存
-- local / Supabase 両対応の repository 境界
+- local / Cloudflare / AWS を見据えた repository 境界
 - 議事録生成を source 非依存にする
 - compliance finding の型とスキーマを追加
+- review task / audit log / presentation block の型を追加
 
 完了条件:
 
@@ -206,6 +235,21 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 
 - 営業マンが訪問先で録音し、管理画面に議事録とコンプラ結果が出る
 
+### MVP 5: AI Operator
+
+目的: AIチャットが業務APIを安全に操作できる状態にする。
+
+- tool schema
+- tool execution gateway
+- permission guard
+- audit log
+- presentation JSON response
+- AI chat UI
+
+完了条件:
+
+- 「今月の高リスク面談を出して」などの自然言語指示が、権限付きAPI経由で処理される
+
 ## 6. 開発ロードマップ
 
 ### Phase 0: 現状維持と土台整理
@@ -216,7 +260,8 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 - `MeetingSource` 設計
 - compliance finding schema
 - local repository の整理
-- README / PRD の2軸化
+- review task / audit log / presentation block schema
+- README / PRD / 計画書のセルログ化
 
 ### Phase 1: 保険コンプラMVP
 
@@ -227,6 +272,8 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 - transcript へのルール照合
 - 議事録への compliance review 追加
 - 管理者レビュー UI の最小版
+- review task 生成
+- Presentation JSON の最小 renderer
 
 ### Phase 2: Upload Audio MVP
 
@@ -248,14 +295,26 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 - 処理ステータス
 - 同意取得チェック
 
-### Phase 4: Mac リアルタイム高度化
+### Phase 4: Cloudflare β
+
+期間目安: 2〜4週
+
+- Workers API skeleton
+- D1 schema
+- R2 audio upload
+- Queues worker
+- tenant / company scope
+- audit log
+- local adapter と cloudflare adapter の切替
+
+### Phase 5: Mac リアルタイム高度化
 
 期間目安: 並行継続
 
 - 実 Zoom audio smoke
 - Deepgram 実 key 疎通
 - Anthropic 本番回答生成
-- Cohere / Supabase RAG
+- Cohere / Cloudflare or local RAG
 - Overlay UX 改善
 
 ## 7. 実装優先順位
@@ -268,10 +327,11 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 4. rule engine
 5. 議事録への compliance review 欄
 6. 管理者レビュー UI
-7. 音声ファイル import UI
-8. STT job abstraction
-9. iOS recorder PoC
-10. Supabase 永続化
+7. ReviewTask / AuditLog / PresentationBlock
+8. 音声ファイル import UI
+9. STT job abstraction
+10. Cloudflare Workers / D1 / R2 β
+11. iOS recorder PoC
 
 ## 8. あなたがやる必要がある作業
 
@@ -281,7 +341,8 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 - 会社別に「禁止」「注意」「必須説明」のサンプルを10〜30件作る
 - 録音同意の運用方針を決める
 - 保険募集コンプラに詳しい人へ初期レビュー依頼
-- Deepgram / Anthropic / Cohere / Supabase key 発行
+- Deepgram / Anthropic key 発行
+- Cloudflare アカウントと Workers / D1 / R2 利用方針
 - iOS 配布するなら Apple Developer Program
 - 実際の訪問商談録音サンプルを用意
 
@@ -321,4 +382,4 @@ MVP はルールベースを主軸にする。LLM は補助判定。
 - スマホは訪問録音とコンプラ議事録の入口
 - transcript / rule engine / minutes / tasks / review は共通
 
-直近の開発は、保険向け `ComplianceRule` と `ComplianceFinding` を共通基盤に追加するところから始める。
+直近の開発は、セルログの `ReviewTask` / `AuditLog` / `PresentationBlock` を共通基盤に追加し、管理者レビュー画面へ接続する。

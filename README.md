@@ -4,6 +4,7 @@ Zoomビデオ商談中にリアルタイムで反論ハンドリングを支援�
 
 詳細設計: [sales-assistant-prd.md](./sales-assistant-prd.md)
 2軸開発計画: [docs/two-track-development-plan.md](./docs/two-track-development-plan.md)
+セルログ AI-Native 計画: [docs/selllog-ai-native-plan.md](./docs/selllog-ai-native-plan.md)
 エージェント協働: [CLAUDE.md](./CLAUDE.md) (Swift/macOS) / [AGENTS.md](./AGENTS.md) (TS/React/DB)
 
 ## クイックスタート
