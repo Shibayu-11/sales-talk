@@ -8,12 +8,15 @@ import type {
   MeetingMinute,
   ProductId,
   ReviewTask,
+  Transcript,
+  TranscriptSegment,
 } from '@shared/types';
 import type { ComplianceRuleCreateInput, KnowledgeCreateInput } from '@shared/schemas';
 import { localActivityStore } from './local-activity-store';
 import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
 import { localKnowledgeStore } from './local-knowledge-store';
+import { localTranscriptStore } from './local-transcript-store';
 
 export interface KnowledgeEntryRepository {
   list(productId: ProductId): Promise<KnowledgeEntry[]>;
@@ -31,6 +34,11 @@ export interface CallRepository {
   }): Promise<CallSession>;
   endCall(id: string, endedAt?: Date): Promise<CallSession>;
   listCalls(): Promise<CallSession[]>;
+}
+
+export interface TranscriptRepository {
+  appendTranscript(callId: string, transcript: Transcript): Promise<TranscriptSegment>;
+  listTranscripts(callId: string): Promise<TranscriptSegment[]>;
 }
 
 export interface MinutesRepository {
@@ -62,6 +70,7 @@ export interface ComplianceRuleRepository {
 
 export interface AppRepositories {
   calls: CallRepository;
+  transcripts: TranscriptRepository;
   knowledge: KnowledgeEntryRepository;
   minutes: MinutesRepository;
   tasks: ActionItemTaskRepository;
@@ -72,6 +81,7 @@ export interface AppRepositories {
 
 export const appRepositories: AppRepositories = {
   calls: localCallStore,
+  transcripts: localTranscriptStore,
   knowledge: localKnowledgeStore,
   minutes: localActivityStore,
   tasks: localActivityStore,

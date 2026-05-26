@@ -326,6 +326,17 @@ export const CallSessionSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const TranscriptSegmentSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  speaker: SpeakerSchema,
+  text: z.string(),
+  isFinal: z.boolean(),
+  startMs: z.number(),
+  endMs: z.number().nullable(),
+  createdAt: z.string(),
+});
+
 export const FeedbackSchema = z.object({
   objectionResponseId: z.string().uuid(),
   used: z.boolean(),

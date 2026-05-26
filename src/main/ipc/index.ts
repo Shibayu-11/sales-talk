@@ -322,6 +322,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 }
 
 export async function handlePipelineTranscript(transcript: Transcript): Promise<void> {
+  await persistCurrentTranscript(transcript);
   await activeObjectionPipelineService?.handleTranscript(transcript);
 }
 
@@ -443,7 +444,11 @@ async function generateLocalMeetingMinute(
   transcripts: Transcript[],
   source: MeetingMinute['source'],
 ): Promise<MeetingMinute> {
-  const finalTexts = transcripts
+  const effectiveTranscripts =
+    transcripts.length === 0 && activeCallId
+      ? await getStoredTranscripts(activeCallId)
+      : transcripts;
+  const finalTexts = effectiveTranscripts
     .filter((transcript) => transcript.isFinal)
     .map((transcript) => transcript.text.trim())
     .filter((text) => text.length > 0);
@@ -465,7 +470,7 @@ async function generateLocalMeetingMinute(
     numbers: extractNumbers(finalTexts.join('\n')),
     complianceFindings: evaluateCompliance({
       meetingId: getCurrentCallId(),
-      transcripts,
+      transcripts: effectiveTranscripts,
       rules,
     }),
     generatedAt: new Date().toISOString(),
@@ -509,6 +514,26 @@ async function generateLocalMeetingMinute(
     ),
   ]);
   return meetingMinute;
+}
+
+async function getStoredTranscripts(callId: string): Promise<Transcript[]> {
+  const storedTranscripts = await appRepositories.transcripts.listTranscripts(callId);
+  return storedTranscripts.map((segment) =>
+    segment.isFinal
+      ? {
+          speaker: segment.speaker,
+          text: segment.text,
+          isFinal: true,
+          startMs: segment.startMs,
+          endMs: segment.endMs ?? segment.startMs,
+        }
+      : {
+          speaker: segment.speaker,
+          text: segment.text,
+          isFinal: false,
+          startMs: segment.startMs,
+        },
+  );
 }
 
 function createReviewTasksFromMinute(minute: MeetingMinute): ReviewTask[] {
@@ -569,6 +594,18 @@ function extractNumbers(text: string): MeetingMinute['numbers'] {
 
 function getCurrentCallId(): string {
   return activeCallId ?? localSessionId;
+}
+
+async function persistCurrentTranscript(transcript: Transcript): Promise<void> {
+  if (!activeCallId) {
+    return;
+  }
+
+  try {
+    await appRepositories.transcripts.appendTranscript(activeCallId, transcript);
+  } catch (error) {
+    logger.warn({ error }, 'failed to persist transcript');
+  }
 }
 
 function endCurrentCall(windows: IpcWindowAccessors): void {

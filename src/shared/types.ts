@@ -149,6 +149,17 @@ export interface CallSession {
   updatedAt: string;
 }
 
+export interface TranscriptSegment {
+  id: string;
+  callId: string;
+  speaker: Speaker;
+  text: string;
+  isFinal: boolean;
+  startMs: number;
+  endMs: number | null;
+  createdAt: string;
+}
+
 export interface KnowledgeEntry {
   id: string;
   productId: ProductId;
