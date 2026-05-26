@@ -135,6 +135,20 @@ export interface AppSettings {
   schemaVersion: number;
 }
 
+export type CallLifecycleStatus = 'active' | 'ended';
+
+export interface CallSession {
+  id: string;
+  source: MeetingSource;
+  industry: Industry;
+  productId: ProductId;
+  status: CallLifecycleStatus;
+  startedAt: string;
+  endedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface KnowledgeEntry {
   id: string;
   productId: ProductId;

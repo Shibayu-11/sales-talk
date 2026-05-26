@@ -312,6 +312,20 @@ export const AppSettingsSchema = z.object({
 
 export const AppSettingsPatchSchema = AppSettingsSchema.partial();
 
+export const CallLifecycleStatusSchema = z.enum(['active', 'ended']);
+
+export const CallSessionSchema = z.object({
+  id: z.string().uuid(),
+  source: MeetingSourceSchema,
+  industry: IndustrySchema,
+  productId: ProductIdSchema,
+  status: CallLifecycleStatusSchema,
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 export const FeedbackSchema = z.object({
   objectionResponseId: z.string().uuid(),
   used: z.boolean(),

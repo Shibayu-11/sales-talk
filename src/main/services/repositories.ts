@@ -1,6 +1,7 @@
 import type {
   ActionItemTask,
   AuditLogEntry,
+  CallSession,
   ComplianceRule,
   Industry,
   KnowledgeEntry,
@@ -10,6 +11,7 @@ import type {
 } from '@shared/types';
 import type { ComplianceRuleCreateInput, KnowledgeCreateInput } from '@shared/schemas';
 import { localActivityStore } from './local-activity-store';
+import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
 import { localKnowledgeStore } from './local-knowledge-store';
 
@@ -18,6 +20,17 @@ export interface KnowledgeEntryRepository {
   search(query: string, productId: ProductId, limit: number): Promise<KnowledgeEntry[]>;
   create(input: KnowledgeCreateInput): Promise<KnowledgeEntry>;
   delete(id: string): Promise<void>;
+}
+
+export interface CallRepository {
+  createCall(input: {
+    source: CallSession['source'];
+    industry: CallSession['industry'];
+    productId: CallSession['productId'];
+    startedAt?: Date | undefined;
+  }): Promise<CallSession>;
+  endCall(id: string, endedAt?: Date): Promise<CallSession>;
+  listCalls(): Promise<CallSession[]>;
 }
 
 export interface MinutesRepository {
@@ -48,6 +61,7 @@ export interface ComplianceRuleRepository {
 }
 
 export interface AppRepositories {
+  calls: CallRepository;
   knowledge: KnowledgeEntryRepository;
   minutes: MinutesRepository;
   tasks: ActionItemTaskRepository;
@@ -57,6 +71,7 @@ export interface AppRepositories {
 }
 
 export const appRepositories: AppRepositories = {
+  calls: localCallStore,
   knowledge: localKnowledgeStore,
   minutes: localActivityStore,
   tasks: localActivityStore,

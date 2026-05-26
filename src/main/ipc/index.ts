@@ -150,8 +150,15 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
       return;
     }
     audioCaptureStats = createInitialAudioCaptureStats();
-    activeCallId = randomUUID();
-    callState = { status: 'in_call', productId, startedAt: Date.now() };
+    const startedAt = new Date();
+    const call = await appRepositories.calls.createCall({
+      source: 'zoom_desktop',
+      industry: 'btob_sales',
+      productId,
+      startedAt,
+    });
+    activeCallId = call.id;
+    callState = { status: 'in_call', productId, startedAt: startedAt.getTime() };
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
     setCallModeLogging(true);
@@ -276,11 +283,18 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.dev.isEnabled, () => isDevToolsEnabled());
-  ipcMain.handle(IPC.dev.startMockCall, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.dev.startMockCall, async (_event, payload: unknown) => {
     assertDevToolsEnabled();
     const productId = ProductIdSchema.parse(payload);
-    activeCallId = randomUUID();
-    callState = { status: 'in_call', productId, startedAt: Date.now() };
+    const startedAt = new Date();
+    const call = await appRepositories.calls.createCall({
+      source: 'manual_transcript',
+      industry: 'insurance',
+      productId,
+      startedAt,
+    });
+    activeCallId = call.id;
+    callState = { status: 'in_call', productId, startedAt: startedAt.getTime() };
     setCallModeLogging(true);
     notifyCallState(windows);
     windows.getOverlayWindow()?.showInactive();
@@ -558,6 +572,12 @@ function getCurrentCallId(): string {
 }
 
 function endCurrentCall(windows: IpcWindowAccessors): void {
+  if (activeCallId) {
+    void appRepositories.calls.endCall(activeCallId).catch((error: unknown) => {
+      logger.warn({ error }, 'failed to persist call end');
+    });
+  }
+  activeCallId = null;
   callState = { status: 'idle' };
   activeObjectionPipelineService?.cancelActive();
   void stopNativeAudioCapture();
