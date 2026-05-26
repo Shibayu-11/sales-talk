@@ -26,10 +26,23 @@ function repository(results: RankedKnowledgeCandidate[] = []): KnowledgeReposito
 }
 
 describe('createRuntimeKnowledgeRepository', () => {
+  it('uses an empty repository when remote knowledge is disabled', async () => {
+    const onUnavailable = vi.fn();
+    const repo = createRuntimeKnowledgeRepository({
+      env: { SALES_TALK_TENANT_ID: tenantId },
+      onUnavailable,
+      createEmbeddingProvider: vi.fn(async () => ({ embedTexts: vi.fn() })),
+      createRepository: vi.fn(async () => repository()),
+    });
+
+    await expect(repo.searchByText(searchInput)).resolves.toEqual([]);
+    expect(onUnavailable).toHaveBeenCalledWith('remote_knowledge_disabled');
+  });
+
   it('uses an empty repository when tenant id is missing', async () => {
     const onUnavailable = vi.fn();
     const repo = createRuntimeKnowledgeRepository({
-      env: {},
+      env: { SALES_TALK_ENABLE_REMOTE_KNOWLEDGE: '1' },
       onUnavailable,
       createEmbeddingProvider: vi.fn(async () => ({ embedTexts: vi.fn() })),
       createRepository: vi.fn(async () => repository()),
@@ -45,7 +58,7 @@ describe('createRuntimeKnowledgeRepository', () => {
     const createdRepository = repository();
     const createRepository = vi.fn(async () => createdRepository);
     const repo = createRuntimeKnowledgeRepository({
-      env: { SALES_TALK_TENANT_ID: tenantId },
+      env: { SALES_TALK_ENABLE_REMOTE_KNOWLEDGE: '1', SALES_TALK_TENANT_ID: tenantId },
       createEmbeddingProvider,
       createRepository,
     });
@@ -66,7 +79,7 @@ describe('createRuntimeKnowledgeRepository', () => {
       .mockResolvedValueOnce({ embedTexts: vi.fn(async () => [[0.1]]) });
     const createRepository = vi.fn(async () => repository());
     const repo = createRuntimeKnowledgeRepository({
-      env: { SALES_TALK_TENANT_ID: tenantId },
+      env: { SALES_TALK_ENABLE_REMOTE_KNOWLEDGE: '1', SALES_TALK_TENANT_ID: tenantId },
       createEmbeddingProvider,
       createRepository,
       onUnavailable,

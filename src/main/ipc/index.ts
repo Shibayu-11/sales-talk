@@ -59,9 +59,7 @@ import {
   loadNativeAudioCaptureModule,
 } from '../audio/native-module-loader';
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
-import { localActivityStore } from '../services/local-activity-store';
-import { localKnowledgeStore } from '../services/local-knowledge-store';
-import { localComplianceStore } from '../services/local-compliance-store';
+import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
 
 /**
@@ -192,7 +190,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const input = KnowledgeSearchInputSchema.parse(payload);
     logger.debug({ productId: input.productId, limit: input.limit }, 'knowledge search requested');
     const limit = input.limit ?? 5;
-    const localResults = await localKnowledgeStore.search(input.query, input.productId, limit);
+    const localResults = await appRepositories.knowledge.search(input.query, input.productId, limit);
     const remoteResults = await knowledgeSearchService.search({
       query: input.query,
       productId: input.productId,
@@ -202,26 +200,26 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
   ipcMain.handle(IPC.knowledge.list, (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
-    return localKnowledgeStore.list(productId);
+    return appRepositories.knowledge.list(productId);
   });
   ipcMain.handle(IPC.knowledge.create, (_event, payload: unknown) => {
     const input = KnowledgeCreateInputSchema.parse(payload);
-    return localKnowledgeStore.create(input);
+    return appRepositories.knowledge.create(input);
   });
   ipcMain.handle(IPC.knowledge.delete, async (_event, payload: unknown) => {
     const id = KnowledgeDeleteInputSchema.parse(payload);
-    await localKnowledgeStore.delete(id);
+    await appRepositories.knowledge.delete(id);
   });
 
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
     const input = MinutesGenerateInputSchema.parse(payload);
-    return localActivityStore.setLatestMeetingMinute(
+    return appRepositories.minutes.setLatestMeetingMinute(
       await generateLocalMeetingMinute(input.productId, input.transcripts, input.source),
     );
   });
-  ipcMain.handle(IPC.minutes.get, () => localActivityStore.getLatestMeetingMinute());
+  ipcMain.handle(IPC.minutes.get, () => appRepositories.minutes.getLatestMeetingMinute());
 
-  ipcMain.handle(IPC.tasks.list, () => localActivityStore.listTasks());
+  ipcMain.handle(IPC.tasks.list, () => appRepositories.tasks.listTasks());
   ipcMain.handle(IPC.tasks.create, async (_event, payload: unknown) => {
     const input = TaskCreateInputSchema.parse(payload);
     const task: ActionItemTask = {
@@ -233,18 +231,18 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
       completed: false,
       createdAt: new Date().toISOString(),
     };
-    return localActivityStore.createTask(task);
+    return appRepositories.tasks.createTask(task);
   });
   ipcMain.handle(IPC.tasks.complete, (_event, payload: unknown) => {
     const input = TaskCompleteInputSchema.parse(payload);
-    return localActivityStore.completeTask(input.id, input.completed);
+    return appRepositories.tasks.completeTask(input.id, input.completed);
   });
 
-  ipcMain.handle(IPC.reviews.list, () => localActivityStore.listReviewTasks());
+  ipcMain.handle(IPC.reviews.list, () => appRepositories.reviews.listReviewTasks());
   ipcMain.handle(IPC.reviews.updateStatus, async (_event, payload: unknown) => {
     const input = ReviewTaskUpdateStatusInputSchema.parse(payload);
-    const task = await localActivityStore.updateReviewTaskStatus(input.id, input.status);
-    await localActivityStore.appendAuditLogs([
+    const task = await appRepositories.reviews.updateReviewTaskStatus(input.id, input.status);
+    await appRepositories.auditLogs.appendAuditLogs([
       createAuditLogEntry({
         action: 'review_task.status_updated',
         targetType: 'review_task',
@@ -255,14 +253,14 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     return task;
   });
 
-  ipcMain.handle(IPC.compliance.rulesList, () => localComplianceStore.listRules());
+  ipcMain.handle(IPC.compliance.rulesList, () => appRepositories.complianceRules.listRules());
   ipcMain.handle(IPC.compliance.rulesCreate, (_event, payload: unknown) => {
     const input = ComplianceRuleCreateInputSchema.parse(payload);
-    return localComplianceStore.createRule(input);
+    return appRepositories.complianceRules.createRule(input);
   });
   ipcMain.handle(IPC.compliance.rulesDelete, async (_event, payload: unknown) => {
     const id = ComplianceRuleDeleteInputSchema.parse(payload);
-    await localComplianceStore.deleteRule(id);
+    await appRepositories.complianceRules.deleteRule(id);
   });
 
   ipcMain.handle(IPC.objection.feedback, (_event, payload: unknown) => {
@@ -439,7 +437,7 @@ async function generateLocalMeetingMinute(
   const pending = finalTexts.filter((text) =>
     ['高い', '難しい', '検討', '確認', '次回'].some((keyword) => text.includes(keyword)),
   );
-  const rules = await localComplianceStore.listRules('insurance');
+  const rules = await appRepositories.complianceRules.listRules('insurance');
 
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),
@@ -459,8 +457,8 @@ async function generateLocalMeetingMinute(
     generatedAt: new Date().toISOString(),
   };
   const reviewTasks = createReviewTasksFromMinute(meetingMinute);
-  await localActivityStore.createReviewTasks(reviewTasks);
-  await localActivityStore.appendAuditLogs([
+  await appRepositories.reviews.createReviewTasks(reviewTasks);
+  await appRepositories.auditLogs.appendAuditLogs([
     createAuditLogEntry({
       action: 'minutes.generated',
       targetType: 'meeting_minute',

@@ -15,6 +15,7 @@ const TenantIdSchema = z.string().uuid();
 
 export interface KnowledgeRuntimeEnvironment {
   SALES_TALK_TENANT_ID?: string | undefined;
+  SALES_TALK_ENABLE_REMOTE_KNOWLEDGE?: string | undefined;
 }
 
 export interface KnowledgeRuntimeOptions {
@@ -40,7 +41,13 @@ export function createRuntimeKnowledgeSearchService(
 export function createRuntimeKnowledgeRepository(
   options: KnowledgeRuntimeOptions = {},
 ): KnowledgeRepository {
-  const tenantId = parseTenantId(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  if (!isRemoteKnowledgeEnabled(env)) {
+    options.onUnavailable?.('remote_knowledge_disabled');
+    return new EmptyKnowledgeRepository();
+  }
+
+  const tenantId = parseTenantId(env);
   if (!tenantId) {
     options.onUnavailable?.('missing_or_invalid_tenant_id');
     return new EmptyKnowledgeRepository();
@@ -100,4 +107,8 @@ function parseTenantId(env: KnowledgeRuntimeEnvironment): string | null {
   const tenantId = env.SALES_TALK_TENANT_ID;
   const parsed = TenantIdSchema.safeParse(tenantId);
   return parsed.success ? parsed.data : null;
+}
+
+function isRemoteKnowledgeEnabled(env: KnowledgeRuntimeEnvironment): boolean {
+  return env.SALES_TALK_ENABLE_REMOTE_KNOWLEDGE === '1';
 }
