@@ -74,6 +74,12 @@ export const IPC = {
     list: 'transcripts:list',
   },
 
+  // Uploaded / imported audio assets
+  audioAssets: {
+    import: 'audio-assets:import',
+    list: 'audio-assets:list',
+  },
+
   // Knowledge base
   knowledge: {
     search: 'knowledge:search',

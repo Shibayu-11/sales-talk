@@ -160,6 +160,22 @@ export interface TranscriptSegment {
   createdAt: string;
 }
 
+export interface AudioAsset {
+  id: string;
+  callId: string;
+  fileName: string;
+  originalPath: string;
+  storedPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface AudioImportResult {
+  call: CallSession;
+  asset: AudioAsset;
+}
+
 export interface KnowledgeEntry {
   id: string;
   productId: ProductId;
@@ -205,7 +221,8 @@ export type AuditAction =
   | 'minutes.generated'
   | 'compliance.finding_detected'
   | 'review_task.created'
-  | 'review_task.status_updated';
+  | 'review_task.status_updated'
+  | 'call.audio_imported';
 
 export interface ComplianceRule {
   id: string;
@@ -365,6 +382,10 @@ export interface RendererApi {
     start(): Promise<void>;
     stop(): Promise<void>;
     onError(cb: (message: string) => void): () => void;
+  };
+  audioAssets: {
+    import(productId: ProductId): Promise<AudioImportResult | null>;
+    list(callId: string): Promise<AudioAsset[]>;
   };
   stt: {
     onInterim(cb: (transcript: Transcript) => void): () => void;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
@@ -28,6 +28,7 @@ import type {
   AppSettings,
   AudioChunk,
   AudioCaptureStatus,
+  AudioImportResult,
   CallState,
   MeetingMinute,
   PermissionState,
@@ -133,6 +134,15 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audio.stop, async () => {
     await stopNativeAudioCapture();
     await stopSTT();
+  });
+
+  ipcMain.handle(IPC.audioAssets.import, async (_event, payload: unknown) => {
+    const productId = ProductIdSchema.parse(payload);
+    return importAudioAsset(windows, productId);
+  });
+  ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    return appRepositories.audioAssets.listAudioAssets(callId);
   });
 
   ipcMain.handle(IPC.audio.onSystemChunk, async (_event, payload: unknown) => {
@@ -413,6 +423,57 @@ async function startNativeAudioCapture(): Promise<void> {
   }
 
   await activeNativeAudioCaptureService.start();
+}
+
+async function importAudioAsset(
+  windows: IpcWindowAccessors,
+  productId: AudioImportResult['call']['productId'],
+): Promise<AudioImportResult | null> {
+  const dialogOptions = {
+    title: '音声ファイルを取り込む',
+    properties: ['openFile'],
+    filters: [
+      {
+        name: 'Audio',
+        extensions: ['m4a', 'mp3', 'wav', 'aac', 'mp4', 'webm'],
+      },
+    ],
+  } satisfies Electron.OpenDialogOptions;
+  const controlWindow = windows.getControlWindow();
+  const dialogResult = controlWindow
+    ? await dialog.showOpenDialog(controlWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  if (dialogResult.canceled || !dialogResult.filePaths[0]) {
+    return null;
+  }
+
+  const startedAt = new Date();
+  const call = await appRepositories.calls.createCall({
+    source: 'uploaded_audio',
+    industry: 'insurance',
+    productId,
+    startedAt,
+  });
+  await appRepositories.calls.endCall(call.id, startedAt);
+  const asset = await appRepositories.audioAssets.importAudioFile({
+    callId: call.id,
+    filePath: dialogResult.filePaths[0],
+  });
+  await appRepositories.auditLogs.appendAuditLogs([
+    createAuditLogEntry({
+      action: 'call.audio_imported',
+      targetType: 'audio_asset',
+      targetId: asset.id,
+      metadata: {
+        callId: call.id,
+        fileName: asset.fileName,
+        sizeBytes: asset.sizeBytes,
+      },
+    }),
+  ]);
+
+  return { call: { ...call, status: 'ended', endedAt: startedAt.toISOString() }, asset };
 }
 
 async function stopNativeAudioCapture(): Promise<void> {

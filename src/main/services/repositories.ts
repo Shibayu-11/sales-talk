@@ -1,5 +1,6 @@
 import type {
   ActionItemTask,
+  AudioAsset,
   AuditLogEntry,
   CallSession,
   ComplianceRule,
@@ -13,6 +14,7 @@ import type {
 } from '@shared/types';
 import type { ComplianceRuleCreateInput, KnowledgeCreateInput } from '@shared/schemas';
 import { localActivityStore } from './local-activity-store';
+import { localAudioAssetStore } from './local-audio-asset-store';
 import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
 import { localKnowledgeStore } from './local-knowledge-store';
@@ -39,6 +41,11 @@ export interface CallRepository {
 export interface TranscriptRepository {
   appendTranscript(callId: string, transcript: Transcript): Promise<TranscriptSegment>;
   listTranscripts(callId: string): Promise<TranscriptSegment[]>;
+}
+
+export interface AudioAssetRepository {
+  importAudioFile(input: { callId: string; filePath: string }): Promise<AudioAsset>;
+  listAudioAssets(callId: string): Promise<AudioAsset[]>;
 }
 
 export interface MinutesRepository {
@@ -71,6 +78,7 @@ export interface ComplianceRuleRepository {
 export interface AppRepositories {
   calls: CallRepository;
   transcripts: TranscriptRepository;
+  audioAssets: AudioAssetRepository;
   knowledge: KnowledgeEntryRepository;
   minutes: MinutesRepository;
   tasks: ActionItemTaskRepository;
@@ -82,6 +90,7 @@ export interface AppRepositories {
 export const appRepositories: AppRepositories = {
   calls: localCallStore,
   transcripts: localTranscriptStore,
+  audioAssets: localAudioAssetStore,
   knowledge: localKnowledgeStore,
   minutes: localActivityStore,
   tasks: localActivityStore,

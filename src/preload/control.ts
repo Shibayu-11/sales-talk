@@ -11,6 +11,8 @@ import type {
   ConnectionState,
   MeetingMinute,
   ActionItemTask,
+  AudioAsset,
+  AudioImportResult,
   TaskOwner,
   MeetingSource,
   ComplianceRule,
@@ -46,6 +48,10 @@ const IPC = {
     start: 'audio:start',
     stop: 'audio:stop',
     onError: 'audio:on-error',
+  },
+  audioAssets: {
+    import: 'audio-assets:import',
+    list: 'audio-assets:list',
   },
   stt: {
     onInterim: 'stt:on-interim',
@@ -148,6 +154,12 @@ const api: RendererApi = {
       ipcRenderer.on(IPC.audio.onError, listener);
       return () => ipcRenderer.off(IPC.audio.onError, listener);
     },
+  },
+  audioAssets: {
+    import: (productId: ProductId): Promise<AudioImportResult | null> =>
+      ipcRenderer.invoke(IPC.audioAssets.import, productId),
+    list: (callId: string): Promise<AudioAsset[]> =>
+      ipcRenderer.invoke(IPC.audioAssets.list, callId),
   },
   stt: {
     onInterim: (cb) => {

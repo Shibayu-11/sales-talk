@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type {
   AppSettings,
   ActionItemTask,
+  AudioAsset,
   AudioCaptureStatus,
   CallSession,
   CallState,
@@ -839,6 +840,7 @@ function HistoryPanel(props: {
   const [savedCalls, setSavedCalls] = useState<CallSession[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
+  const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
 
   useEffect(() => {
     void window.api.minutes.get().then(setMeetingMinute);
@@ -851,11 +853,26 @@ function HistoryPanel(props: {
   useEffect(() => {
     if (!selectedCallId) {
       setSavedTranscripts([]);
+      setAudioAssets([]);
       return;
     }
 
     void window.api.transcripts.list(selectedCallId).then(setSavedTranscripts);
+    void window.api.audioAssets.list(selectedCallId).then(setAudioAssets);
   }, [selectedCallId]);
+
+  const importAudio = async (): Promise<void> => {
+    const result = await window.api.audioAssets.import(props.productId);
+    if (!result) {
+      return;
+    }
+
+    const calls = await window.api.call.list();
+    setSavedCalls(calls);
+    setSelectedCallId(result.call.id);
+    setAudioAssets([result.asset]);
+    setSavedTranscripts([]);
+  };
 
   const generateMinutes = async (): Promise<void> => {
     const generated = await window.api.minutes.generate(props.productId, props.recentTranscripts);
@@ -871,13 +888,22 @@ function HistoryPanel(props: {
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-zinc-400">ローカル議事録</h2>
-          <button
-            type="button"
-            onClick={() => void generateMinutes()}
-            className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900"
-          >
-            transcript から生成
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void importAudio()}
+              className="rounded border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+            >
+              音声ファイルを取り込む
+            </button>
+            <button
+              type="button"
+              onClick={() => void generateMinutes()}
+              className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900"
+            >
+              transcript から生成
+            </button>
+          </div>
         </div>
         {meetingMinute ? (
           <div className="space-y-3">
@@ -933,6 +959,25 @@ function HistoryPanel(props: {
               ))}
             </ul>
             <div className="rounded border border-zinc-800 bg-zinc-950/40 p-3">
+              <div className="mb-4">
+                <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
+                  imported audio
+                </div>
+                {audioAssets.length === 0 ? (
+                  <p className="text-xs text-zinc-600">この call の音声ファイルは未登録です。</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {audioAssets.map((asset) => (
+                      <li key={asset.id} className="rounded bg-zinc-900/70 p-3 text-xs">
+                        <div className="text-zinc-200">{asset.fileName}</div>
+                        <div className="mt-1 text-zinc-500">
+                          {asset.mimeType} / {formatBytes(asset.sizeBytes)}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
                 saved transcript
               </div>

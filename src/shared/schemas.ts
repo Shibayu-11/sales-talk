@@ -117,6 +117,7 @@ export const AuditActionSchema = z.enum([
   'compliance.finding_detected',
   'review_task.created',
   'review_task.status_updated',
+  'call.audio_imported',
 ]);
 
 export const ComplianceRuleSchema = z.object({
@@ -336,6 +337,17 @@ export const TranscriptSegmentSchema = z.object({
   isFinal: z.boolean(),
   startMs: z.number(),
   endMs: z.number().nullable(),
+  createdAt: z.string(),
+});
+
+export const AudioAssetSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  fileName: z.string().min(1),
+  originalPath: z.string().min(1),
+  storedPath: z.string().min(1),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
   createdAt: z.string(),
 });
 
