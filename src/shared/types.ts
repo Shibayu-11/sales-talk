@@ -351,10 +351,14 @@ export interface RendererApi {
     onChange(cb: (state: PermissionState) => void): () => void;
   };
   call: {
+    list(): Promise<CallSession[]>;
     start(productId: ProductId): Promise<void>;
     end(): Promise<void>;
     setProduct(productId: ProductId): Promise<void>;
     onState(cb: (state: CallState) => void): () => void;
+  };
+  transcripts: {
+    list(callId: string): Promise<TranscriptSegment[]>;
   };
   audio: {
     getStatus(): Promise<AudioCaptureStatus>;

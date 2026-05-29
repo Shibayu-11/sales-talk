@@ -4,6 +4,7 @@ import type {
   PermissionState,
   CallState,
   AppSettings,
+  CallSession,
   ProductId,
   KnowledgeEntry,
   Transcript,
@@ -18,6 +19,7 @@ import type {
   ComplianceRuleType,
   ReviewTask,
   ReviewTaskStatus,
+  TranscriptSegment,
 } from '@shared/types';
 
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
@@ -30,10 +32,14 @@ const IPC = {
     onChange: 'permissions:on-change',
   },
   call: {
+    list: 'call:list',
     start: 'call:start',
     end: 'call:end',
     setProduct: 'call:set-product',
     onState: 'call:on-state',
+  },
+  transcripts: {
+    list: 'transcripts:list',
   },
   audio: {
     status: 'audio:status',
@@ -119,6 +125,7 @@ const api: RendererApi = {
     },
   },
   call: {
+    list: (): Promise<CallSession[]> => ipcRenderer.invoke(IPC.call.list),
     start: (productId: ProductId) => ipcRenderer.invoke(IPC.call.start, productId),
     end: () => ipcRenderer.invoke(IPC.call.end),
     setProduct: (productId: ProductId) => ipcRenderer.invoke(IPC.call.setProduct, productId),
@@ -127,6 +134,10 @@ const api: RendererApi = {
       ipcRenderer.on(IPC.call.onState, listener);
       return () => ipcRenderer.off(IPC.call.onState, listener);
     },
+  },
+  transcripts: {
+    list: (callId: string): Promise<TranscriptSegment[]> =>
+      ipcRenderer.invoke(IPC.transcripts.list, callId),
   },
   audio: {
     getStatus: () => ipcRenderer.invoke(IPC.audio.status),

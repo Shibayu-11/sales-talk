@@ -326,6 +326,8 @@ export const CallSessionSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const CallIdInputSchema = z.string().uuid();
+
 export const TranscriptSegmentSchema = z.object({
   id: z.string().uuid(),
   callId: z.string().uuid(),

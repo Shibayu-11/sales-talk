@@ -62,10 +62,16 @@ export const IPC = {
 
   // Call lifecycle
   call: {
+    list: 'call:list',
     start: 'call:start',
     end: 'call:end',
     setProduct: 'call:set-product', // real_estate | kenko_keiei | hojokin
     onState: 'call:on-state',
+  },
+
+  // Transcript segments
+  transcripts: {
+    list: 'transcripts:list',
   },
 
   // Knowledge base

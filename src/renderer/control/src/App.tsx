@@ -4,6 +4,7 @@ import type {
   AppSettings,
   ActionItemTask,
   AudioCaptureStatus,
+  CallSession,
   CallState,
   ConnectionState,
   DetectedObjection,
@@ -16,6 +17,7 @@ import type {
   ReviewTaskStatus,
   TaskOwner,
   Transcript,
+  TranscriptSegment,
 } from '@shared/types';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
@@ -834,14 +836,34 @@ function HistoryPanel(props: {
   recentTranscripts: Transcript[];
 }): JSX.Element {
   const [meetingMinute, setMeetingMinute] = useState<MeetingMinute | null>(null);
+  const [savedCalls, setSavedCalls] = useState<CallSession[]>([]);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
 
   useEffect(() => {
     void window.api.minutes.get().then(setMeetingMinute);
+    void window.api.call.list().then((calls) => {
+      setSavedCalls(calls);
+      setSelectedCallId(calls[0]?.id ?? null);
+    });
   }, []);
+
+  useEffect(() => {
+    if (!selectedCallId) {
+      setSavedTranscripts([]);
+      return;
+    }
+
+    void window.api.transcripts.list(selectedCallId).then(setSavedTranscripts);
+  }, [selectedCallId]);
 
   const generateMinutes = async (): Promise<void> => {
     const generated = await window.api.minutes.generate(props.productId, props.recentTranscripts);
     setMeetingMinute(generated);
+    const calls = await window.api.call.list();
+    setSavedCalls(calls);
+    setSelectedCallId(generated.callId);
+    setSavedTranscripts(await window.api.transcripts.list(generated.callId));
   };
 
   return (
@@ -872,6 +894,64 @@ function HistoryPanel(props: {
           </div>
         ) : (
           <p className="text-sm text-zinc-600">まだ生成されていません。</p>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-zinc-400">保存済み call / transcript</h2>
+          <span className="text-xs text-zinc-600">{savedCalls.length} calls</span>
+        </div>
+        {savedCalls.length === 0 ? (
+          <p className="text-sm text-zinc-600">保存済み call はまだありません。</p>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+            <ul className="space-y-2">
+              {savedCalls.slice(0, 20).map((call) => (
+                <li key={call.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCallId(call.id)}
+                    className={`w-full rounded border p-3 text-left text-xs ${
+                      selectedCallId === call.id
+                        ? 'border-zinc-500 bg-zinc-900 text-zinc-100'
+                        : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:bg-zinc-900/60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono">{call.id.slice(0, 8)}</span>
+                      <span>{call.status}</span>
+                    </div>
+                    <div className="mt-2 text-zinc-500">
+                      {call.source} / {call.industry} / {call.productId}
+                    </div>
+                    <div className="mt-1 text-zinc-600">
+                      {new Date(call.startedAt).toLocaleString('ja-JP')}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="rounded border border-zinc-800 bg-zinc-950/40 p-3">
+              <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
+                saved transcript
+              </div>
+              {savedTranscripts.length === 0 ? (
+                <p className="text-xs text-zinc-600">この call の transcript は未保存です。</p>
+              ) : (
+                <ul className="space-y-2">
+                  {savedTranscripts.map((segment) => (
+                    <li key={segment.id} className="rounded bg-zinc-900/70 p-3 text-xs">
+                      <span className="mr-2 text-zinc-500">
+                        {segment.isFinal ? 'final' : 'interim'} / {segment.speaker}
+                      </span>
+                      {segment.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

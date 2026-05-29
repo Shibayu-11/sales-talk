@@ -4,6 +4,7 @@ import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
   AudioChunkSchema,
+  CallIdInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
   DevInjectTranscriptInputSchema,
@@ -144,6 +145,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     await sendAudioChunkToSTT({ ...chunk, speaker: 'self' });
   });
 
+  ipcMain.handle(IPC.call.list, () => appRepositories.calls.listCalls());
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
     if (!preflightAudioCapturePermissions(windows)) {
@@ -180,6 +182,11 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
       callState = { ...callState, productId };
       notifyCallState(windows);
     }
+  });
+
+  ipcMain.handle(IPC.transcripts.list, (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    return appRepositories.transcripts.listTranscripts(callId);
   });
 
   ipcMain.handle(IPC.overlay.show, () => windows.getOverlayWindow()?.showInactive());
