@@ -5,6 +5,7 @@ import type {
   ActionItemTask,
   AudioAsset,
   AudioCaptureStatus,
+  AudioSttJob,
   CallSession,
   CallState,
   ConnectionState,
@@ -841,6 +842,7 @@ function HistoryPanel(props: {
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
   const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
+  const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
 
   useEffect(() => {
     void window.api.minutes.get().then(setMeetingMinute);
@@ -854,11 +856,13 @@ function HistoryPanel(props: {
     if (!selectedCallId) {
       setSavedTranscripts([]);
       setAudioAssets([]);
+      setSttJobs([]);
       return;
     }
 
     void window.api.transcripts.list(selectedCallId).then(setSavedTranscripts);
     void window.api.audioAssets.list(selectedCallId).then(setAudioAssets);
+    void window.api.sttJobs.list(selectedCallId).then(setSttJobs);
   }, [selectedCallId]);
 
   const importAudio = async (): Promise<void> => {
@@ -871,7 +875,13 @@ function HistoryPanel(props: {
     setSavedCalls(calls);
     setSelectedCallId(result.call.id);
     setAudioAssets([result.asset]);
+    setSttJobs(await window.api.sttJobs.list(result.call.id));
     setSavedTranscripts([]);
+  };
+
+  const createSttJob = async (audioAssetId: string): Promise<void> => {
+    const job = await window.api.sttJobs.create(audioAssetId);
+    setSttJobs((current) => [job, ...current]);
   };
 
   const generateMinutes = async (): Promise<void> => {
@@ -969,10 +979,46 @@ function HistoryPanel(props: {
                   <ul className="space-y-2">
                     {audioAssets.map((asset) => (
                       <li key={asset.id} className="rounded bg-zinc-900/70 p-3 text-xs">
-                        <div className="text-zinc-200">{asset.fileName}</div>
-                        <div className="mt-1 text-zinc-500">
-                          {asset.mimeType} / {formatBytes(asset.sizeBytes)}
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-zinc-200">{asset.fileName}</div>
+                            <div className="mt-1 text-zinc-500">
+                              {asset.mimeType} / {formatBytes(asset.sizeBytes)}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void createSttJob(asset.id)}
+                            className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                          >
+                            STT job作成
+                          </button>
                         </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="mb-4">
+                <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">stt jobs</div>
+                {sttJobs.length === 0 ? (
+                  <p className="text-xs text-zinc-600">この call の STT job は未作成です。</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {sttJobs.map((job) => (
+                      <li key={job.id} className="rounded bg-zinc-900/70 p-3 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-zinc-400">{job.id.slice(0, 8)}</span>
+                          <span className="rounded bg-zinc-950 px-2 py-0.5 text-zinc-300">
+                            {job.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-zinc-500">
+                          {job.provider} / asset {job.audioAssetId.slice(0, 8)}
+                        </div>
+                        {job.errorMessage && (
+                          <div className="mt-1 text-overlay-objection">{job.errorMessage}</div>
+                        )}
                       </li>
                     ))}
                   </ul>

@@ -1,6 +1,7 @@
 import type {
   ActionItemTask,
   AudioAsset,
+  AudioSttJob,
   AuditLogEntry,
   CallSession,
   ComplianceRule,
@@ -18,6 +19,7 @@ import { localAudioAssetStore } from './local-audio-asset-store';
 import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
 import { localKnowledgeStore } from './local-knowledge-store';
+import { localSttJobStore } from './local-stt-job-store';
 import { localTranscriptStore } from './local-transcript-store';
 
 export interface KnowledgeEntryRepository {
@@ -46,6 +48,20 @@ export interface TranscriptRepository {
 export interface AudioAssetRepository {
   importAudioFile(input: { callId: string; filePath: string }): Promise<AudioAsset>;
   listAudioAssets(callId: string): Promise<AudioAsset[]>;
+}
+
+export interface AudioSttJobRepository {
+  createJob(input: {
+    callId: string;
+    audioAssetId: string;
+    provider?: AudioSttJob['provider'] | undefined;
+  }): Promise<AudioSttJob>;
+  listJobs(callId: string): Promise<AudioSttJob[]>;
+  updateJobStatus(
+    id: string,
+    status: AudioSttJob['status'],
+    errorMessage?: string | null,
+  ): Promise<AudioSttJob>;
 }
 
 export interface MinutesRepository {
@@ -79,6 +95,7 @@ export interface AppRepositories {
   calls: CallRepository;
   transcripts: TranscriptRepository;
   audioAssets: AudioAssetRepository;
+  sttJobs: AudioSttJobRepository;
   knowledge: KnowledgeEntryRepository;
   minutes: MinutesRepository;
   tasks: ActionItemTaskRepository;
@@ -91,6 +108,7 @@ export const appRepositories: AppRepositories = {
   calls: localCallStore,
   transcripts: localTranscriptStore,
   audioAssets: localAudioAssetStore,
+  sttJobs: localSttJobStore,
   knowledge: localKnowledgeStore,
   minutes: localActivityStore,
   tasks: localActivityStore,

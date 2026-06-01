@@ -118,6 +118,7 @@ export const AuditActionSchema = z.enum([
   'review_task.created',
   'review_task.status_updated',
   'call.audio_imported',
+  'stt_job.created',
 ]);
 
 export const ComplianceRuleSchema = z.object({
@@ -349,6 +350,24 @@ export const AudioAssetSchema = z.object({
   mimeType: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
   createdAt: z.string(),
+});
+
+export const AudioSttJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+export const AudioSttProviderSchema = z.enum(['deepgram']);
+
+export const AudioSttJobSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  audioAssetId: z.string().uuid(),
+  provider: AudioSttProviderSchema,
+  status: AudioSttJobStatusSchema,
+  errorMessage: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const AudioSttJobCreateInputSchema = z.object({
+  audioAssetId: z.string().uuid(),
 });
 
 export const FeedbackSchema = z.object({

@@ -4,6 +4,7 @@ import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
   AudioChunkSchema,
+  AudioSttJobCreateInputSchema,
   CallIdInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
@@ -29,6 +30,7 @@ import type {
   AudioChunk,
   AudioCaptureStatus,
   AudioImportResult,
+  AudioSttJob,
   CallState,
   MeetingMinute,
   PermissionState,
@@ -143,6 +145,14 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
     return appRepositories.audioAssets.listAudioAssets(callId);
+  });
+  ipcMain.handle(IPC.sttJobs.create, async (_event, payload: unknown) => {
+    const input = AudioSttJobCreateInputSchema.parse(payload);
+    return createAudioSttJob(input.audioAssetId);
+  });
+  ipcMain.handle(IPC.sttJobs.list, (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    return appRepositories.sttJobs.listJobs(callId);
   });
 
   ipcMain.handle(IPC.audio.onSystemChunk, async (_event, payload: unknown) => {
@@ -474,6 +484,39 @@ async function importAudioAsset(
   ]);
 
   return { call: { ...call, status: 'ended', endedAt: startedAt.toISOString() }, asset };
+}
+
+async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
+  const calls = await appRepositories.calls.listCalls();
+  for (const call of calls) {
+    const assets = await appRepositories.audioAssets.listAudioAssets(call.id);
+    const asset = assets.find((candidate) => candidate.id === audioAssetId);
+    if (!asset) {
+      continue;
+    }
+
+    const job = await appRepositories.sttJobs.createJob({
+      callId: call.id,
+      audioAssetId: asset.id,
+      provider: 'deepgram',
+    });
+    await appRepositories.auditLogs.appendAuditLogs([
+      createAuditLogEntry({
+        action: 'stt_job.created',
+        targetType: 'audio_stt_job',
+        targetId: job.id,
+        metadata: {
+          callId: call.id,
+          audioAssetId: asset.id,
+          provider: job.provider,
+          status: job.status,
+        },
+      }),
+    ]);
+    return job;
+  }
+
+  throw new Error('Audio asset was not found');
 }
 
 async function stopNativeAudioCapture(): Promise<void> {

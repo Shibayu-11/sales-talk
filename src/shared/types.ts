@@ -176,6 +176,20 @@ export interface AudioImportResult {
   asset: AudioAsset;
 }
 
+export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type AudioSttProvider = 'deepgram';
+
+export interface AudioSttJob {
+  id: string;
+  callId: string;
+  audioAssetId: string;
+  provider: AudioSttProvider;
+  status: AudioSttJobStatus;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface KnowledgeEntry {
   id: string;
   productId: ProductId;
@@ -222,7 +236,8 @@ export type AuditAction =
   | 'compliance.finding_detected'
   | 'review_task.created'
   | 'review_task.status_updated'
-  | 'call.audio_imported';
+  | 'call.audio_imported'
+  | 'stt_job.created';
 
 export interface ComplianceRule {
   id: string;
@@ -386,6 +401,10 @@ export interface RendererApi {
   audioAssets: {
     import(productId: ProductId): Promise<AudioImportResult | null>;
     list(callId: string): Promise<AudioAsset[]>;
+  };
+  sttJobs: {
+    create(audioAssetId: string): Promise<AudioSttJob>;
+    list(callId: string): Promise<AudioSttJob[]>;
   };
   stt: {
     onInterim(cb: (transcript: Transcript) => void): () => void;

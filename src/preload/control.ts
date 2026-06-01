@@ -13,6 +13,7 @@ import type {
   ActionItemTask,
   AudioAsset,
   AudioImportResult,
+  AudioSttJob,
   TaskOwner,
   MeetingSource,
   ComplianceRule,
@@ -52,6 +53,10 @@ const IPC = {
   audioAssets: {
     import: 'audio-assets:import',
     list: 'audio-assets:list',
+  },
+  sttJobs: {
+    create: 'stt-jobs:create',
+    list: 'stt-jobs:list',
   },
   stt: {
     onInterim: 'stt:on-interim',
@@ -160,6 +165,12 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.audioAssets.import, productId),
     list: (callId: string): Promise<AudioAsset[]> =>
       ipcRenderer.invoke(IPC.audioAssets.list, callId),
+  },
+  sttJobs: {
+    create: (audioAssetId: string): Promise<AudioSttJob> =>
+      ipcRenderer.invoke(IPC.sttJobs.create, { audioAssetId }),
+    list: (callId: string): Promise<AudioSttJob[]> =>
+      ipcRenderer.invoke(IPC.sttJobs.list, callId),
   },
   stt: {
     onInterim: (cb) => {

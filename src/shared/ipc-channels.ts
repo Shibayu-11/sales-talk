@@ -80,6 +80,12 @@ export const IPC = {
     list: 'audio-assets:list',
   },
 
+  // STT jobs for imported audio
+  sttJobs: {
+    create: 'stt-jobs:create',
+    list: 'stt-jobs:list',
+  },
+
   // Knowledge base
   knowledge: {
     search: 'knowledge:search',
