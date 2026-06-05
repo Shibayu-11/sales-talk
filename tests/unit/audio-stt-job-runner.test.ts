@@ -29,9 +29,11 @@ describe('AudioSttJobRunner', () => {
         appendedTranscripts.push(transcript);
       },
     });
+    const onCompleted = vi.fn(async () => undefined);
     const runner = new AudioSttJobRunner({
       repositories,
       transcribeAudio: vi.fn(async () => transcripts),
+      onCompleted,
     });
 
     await expect(runner.run(jobId)).resolves.toMatchObject({ id: jobId, status: 'completed' });
@@ -41,6 +43,10 @@ describe('AudioSttJobRunner', () => {
         isFinal: true,
       },
     ]);
+    expect(onCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: jobId, status: 'completed' }),
+      transcripts,
+    );
   });
 
   it('marks a job failed when transcription fails', async () => {

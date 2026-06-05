@@ -893,6 +893,9 @@ function HistoryPanel(props: {
     if (selectedCallId) {
       setSavedTranscripts(await window.api.transcripts.list(selectedCallId));
     }
+    if (job.status === 'completed') {
+      setMeetingMinute(await window.api.minutes.get());
+    }
   };
 
   const generateMinutes = async (): Promise<void> => {

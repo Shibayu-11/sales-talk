@@ -29,6 +29,7 @@ const DeepgramPrerecordedResponseSchema = z.object({
 export interface AudioSttJobRunnerOptions {
   repositories: AppRepositories;
   transcribeAudio?: ((asset: AudioAsset) => Promise<Transcript[]>) | undefined;
+  onCompleted?: ((job: AudioSttJob, transcripts: Transcript[]) => Promise<void>) | undefined;
 }
 
 export class AudioSttJobRunner {
@@ -49,7 +50,12 @@ export class AudioSttJobRunner {
         await this.options.repositories.transcripts.appendTranscript(job.callId, transcript);
       }
 
-      return this.options.repositories.sttJobs.updateJobStatus(job.id, 'completed');
+      const completedJob = await this.options.repositories.sttJobs.updateJobStatus(
+        job.id,
+        'completed',
+      );
+      await this.options.onCompleted?.(completedJob, transcripts);
+      return completedJob;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return this.options.repositories.sttJobs.updateJobStatus(job.id, 'failed', message);

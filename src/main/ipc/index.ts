@@ -79,7 +79,26 @@ interface IpcWindowAccessors {
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
-const audioSttJobRunner = new AudioSttJobRunner({ repositories: appRepositories });
+const audioSttJobRunner = new AudioSttJobRunner({
+  repositories: appRepositories,
+  onCompleted: async (job) => {
+    const call = (await appRepositories.calls.listCalls()).find(
+      (candidate) => candidate.id === job.callId,
+    );
+    if (!call) {
+      throw new Error('Call was not found');
+    }
+
+    await appRepositories.minutes.setLatestMeetingMinute(
+      await generateMeetingMinuteForCall({
+        callId: call.id,
+        productId: call.productId,
+        source: call.source,
+        transcripts: [],
+      }),
+    );
+  },
+});
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
@@ -562,10 +581,22 @@ async function generateLocalMeetingMinute(
   transcripts: Transcript[],
   source: MeetingMinute['source'],
 ): Promise<MeetingMinute> {
+  return generateMeetingMinuteForCall({
+    callId: getCurrentCallId(),
+    productId,
+    source,
+    transcripts,
+  });
+}
+
+async function generateMeetingMinuteForCall(input: {
+  callId: string;
+  productId: MeetingMinute['productId'];
+  source: MeetingMinute['source'];
+  transcripts: Transcript[];
+}): Promise<MeetingMinute> {
   const effectiveTranscripts =
-    transcripts.length === 0 && activeCallId
-      ? await getStoredTranscripts(activeCallId)
-      : transcripts;
+    input.transcripts.length === 0 ? await getStoredTranscripts(input.callId) : input.transcripts;
   const finalTexts = effectiveTranscripts
     .filter((transcript) => transcript.isFinal)
     .map((transcript) => transcript.text.trim())
@@ -578,16 +609,16 @@ async function generateLocalMeetingMinute(
 
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),
-    callId: getCurrentCallId(),
-    source,
-    productId,
+    callId: input.callId,
+    source: input.source,
+    productId: input.productId,
     summary: `直近の発話: ${summarySource}`,
     agreed: [],
     pending: pending.slice(0, 5),
     decisions: [],
     numbers: extractNumbers(finalTexts.join('\n')),
     complianceFindings: evaluateCompliance({
-      meetingId: getCurrentCallId(),
+      meetingId: input.callId,
       transcripts: effectiveTranscripts,
       rules,
     }),
