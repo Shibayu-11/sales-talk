@@ -370,6 +370,10 @@ export const AudioSttJobCreateInputSchema = z.object({
   audioAssetId: z.string().uuid(),
 });
 
+export const AudioSttJobRunInputSchema = z.object({
+  jobId: z.string().uuid(),
+});
+
 export const FeedbackSchema = z.object({
   objectionResponseId: z.string().uuid(),
   used: z.boolean(),

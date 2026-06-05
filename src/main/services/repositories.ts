@@ -57,6 +57,7 @@ export interface AudioSttJobRepository {
     provider?: AudioSttJob['provider'] | undefined;
   }): Promise<AudioSttJob>;
   listJobs(callId: string): Promise<AudioSttJob[]>;
+  getJob(id: string): Promise<AudioSttJob | null>;
   updateJobStatus(
     id: string,
     status: AudioSttJob['status'],

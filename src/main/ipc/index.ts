@@ -5,6 +5,7 @@ import {
   AppSettingsPatchSchema,
   AudioChunkSchema,
   AudioSttJobCreateInputSchema,
+  AudioSttJobRunInputSchema,
   CallIdInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
@@ -65,6 +66,7 @@ import {
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
+import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -77,6 +79,7 @@ interface IpcWindowAccessors {
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
+const audioSttJobRunner = new AudioSttJobRunner({ repositories: appRepositories });
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
@@ -149,6 +152,10 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.sttJobs.create, async (_event, payload: unknown) => {
     const input = AudioSttJobCreateInputSchema.parse(payload);
     return createAudioSttJob(input.audioAssetId);
+  });
+  ipcMain.handle(IPC.sttJobs.run, async (_event, payload: unknown) => {
+    const input = AudioSttJobRunInputSchema.parse(payload);
+    return audioSttJobRunner.run(input.jobId);
   });
   ipcMain.handle(IPC.sttJobs.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);

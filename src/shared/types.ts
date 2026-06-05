@@ -404,6 +404,7 @@ export interface RendererApi {
   };
   sttJobs: {
     create(audioAssetId: string): Promise<AudioSttJob>;
+    run(jobId: string): Promise<AudioSttJob>;
     list(callId: string): Promise<AudioSttJob[]>;
   };
   stt: {

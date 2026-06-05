@@ -51,6 +51,11 @@ export class LocalSttJobStore {
     return data.jobs.filter((job) => job.callId === callId);
   }
 
+  async getJob(id: string): Promise<AudioSttJob | null> {
+    const data = await this.get();
+    return data.jobs.find((job) => job.id === id) ?? null;
+  }
+
   async updateJobStatus(
     id: string,
     status: AudioSttJob['status'],

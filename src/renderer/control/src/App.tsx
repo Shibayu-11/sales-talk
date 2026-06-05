@@ -884,6 +884,17 @@ function HistoryPanel(props: {
     setSttJobs((current) => [job, ...current]);
   };
 
+  const runSttJob = async (jobId: string): Promise<void> => {
+    setSttJobs((current) =>
+      current.map((job) => (job.id === jobId ? { ...job, status: 'running' } : job)),
+    );
+    const job = await window.api.sttJobs.run(jobId);
+    setSttJobs((current) => current.map((candidate) => (candidate.id === job.id ? job : candidate)));
+    if (selectedCallId) {
+      setSavedTranscripts(await window.api.transcripts.list(selectedCallId));
+    }
+  };
+
   const generateMinutes = async (): Promise<void> => {
     const generated = await window.api.minutes.generate(props.productId, props.recentTranscripts);
     setMeetingMinute(generated);
@@ -1016,6 +1027,14 @@ function HistoryPanel(props: {
                         <div className="mt-1 text-zinc-500">
                           {job.provider} / asset {job.audioAssetId.slice(0, 8)}
                         </div>
+                        <button
+                          type="button"
+                          disabled={job.status === 'running' || job.status === 'completed'}
+                          onClick={() => void runSttJob(job.id)}
+                          className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          STT実行
+                        </button>
                         {job.errorMessage && (
                           <div className="mt-1 text-overlay-objection">{job.errorMessage}</div>
                         )}

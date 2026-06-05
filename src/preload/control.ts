@@ -56,6 +56,7 @@ const IPC = {
   },
   sttJobs: {
     create: 'stt-jobs:create',
+    run: 'stt-jobs:run',
     list: 'stt-jobs:list',
   },
   stt: {
@@ -169,6 +170,8 @@ const api: RendererApi = {
   sttJobs: {
     create: (audioAssetId: string): Promise<AudioSttJob> =>
       ipcRenderer.invoke(IPC.sttJobs.create, { audioAssetId }),
+    run: (jobId: string): Promise<AudioSttJob> =>
+      ipcRenderer.invoke(IPC.sttJobs.run, { jobId }),
     list: (callId: string): Promise<AudioSttJob[]> =>
       ipcRenderer.invoke(IPC.sttJobs.list, callId),
   },

@@ -83,6 +83,7 @@ export const IPC = {
   // STT jobs for imported audio
   sttJobs: {
     create: 'stt-jobs:create',
+    run: 'stt-jobs:run',
     list: 'stt-jobs:list',
   },
 

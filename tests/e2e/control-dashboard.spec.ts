@@ -80,6 +80,7 @@ test('dev transcript injection drives the mock pipeline without API keys', async
       await expect(controlWindow.getByText('保存済み call / transcript')).toBeVisible();
       await expect(controlWindow.getByText(new RegExp('manual_transcript / insurance'))).toBeVisible();
       await expect(controlWindow.getByText('stt jobs')).toBeVisible();
+      await expect(controlWindow.getByText('この call の STT job は未作成です。')).toBeVisible();
       await expect(controlWindow.getByText('saved transcript')).toBeVisible();
 
       await controlWindow.getByRole('button', { name: 'レビュー' }).click();
