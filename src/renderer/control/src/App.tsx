@@ -843,6 +843,7 @@ function HistoryPanel(props: {
   const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
   const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
   const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
+  const [processingAudio, setProcessingAudio] = useState(false);
 
   useEffect(() => {
     void window.api.minutes.get().then(setMeetingMinute);
@@ -879,6 +880,26 @@ function HistoryPanel(props: {
     setSavedTranscripts([]);
   };
 
+  const importAndProcessAudio = async (): Promise<void> => {
+    setProcessingAudio(true);
+    try {
+      const result = await window.api.audioAssets.importAndProcess(props.productId);
+      if (!result) {
+        return;
+      }
+
+      const calls = await window.api.call.list();
+      setSavedCalls(calls);
+      setSelectedCallId(result.call.id);
+      setAudioAssets([result.asset]);
+      setSttJobs([result.job]);
+      setSavedTranscripts(await window.api.transcripts.list(result.call.id));
+      setMeetingMinute(result.meetingMinute);
+    } finally {
+      setProcessingAudio(false);
+    }
+  };
+
   const createSttJob = async (audioAssetId: string): Promise<void> => {
     const job = await window.api.sttJobs.create(audioAssetId);
     setSttJobs((current) => [job, ...current]);
@@ -913,6 +934,14 @@ function HistoryPanel(props: {
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-zinc-400">ローカル議事録</h2>
           <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={processingAudio}
+              onClick={() => void importAndProcessAudio()}
+              className="rounded bg-overlay-success px-3 py-2 text-xs font-medium text-zinc-950 hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
+            >
+              {processingAudio ? '音声を処理中…' : '音声から自動生成'}
+            </button>
             <button
               type="button"
               onClick={() => void importAudio()}

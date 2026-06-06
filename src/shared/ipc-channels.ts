@@ -77,6 +77,7 @@ export const IPC = {
   // Uploaded / imported audio assets
   audioAssets: {
     import: 'audio-assets:import',
+    importAndProcess: 'audio-assets:import-and-process',
     list: 'audio-assets:list',
   },
 

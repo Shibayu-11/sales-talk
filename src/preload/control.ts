@@ -13,6 +13,7 @@ import type {
   ActionItemTask,
   AudioAsset,
   AudioImportResult,
+  AudioImportProcessResult,
   AudioSttJob,
   TaskOwner,
   MeetingSource,
@@ -52,6 +53,7 @@ const IPC = {
   },
   audioAssets: {
     import: 'audio-assets:import',
+    importAndProcess: 'audio-assets:import-and-process',
     list: 'audio-assets:list',
   },
   sttJobs: {
@@ -164,6 +166,8 @@ const api: RendererApi = {
   audioAssets: {
     import: (productId: ProductId): Promise<AudioImportResult | null> =>
       ipcRenderer.invoke(IPC.audioAssets.import, productId),
+    importAndProcess: (productId: ProductId): Promise<AudioImportProcessResult | null> =>
+      ipcRenderer.invoke(IPC.audioAssets.importAndProcess, productId),
     list: (callId: string): Promise<AudioAsset[]> =>
       ipcRenderer.invoke(IPC.audioAssets.list, callId),
   },

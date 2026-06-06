@@ -176,6 +176,11 @@ export interface AudioImportResult {
   asset: AudioAsset;
 }
 
+export interface AudioImportProcessResult extends AudioImportResult {
+  job: AudioSttJob;
+  meetingMinute: MeetingMinute | null;
+}
+
 export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type AudioSttProvider = 'deepgram';
 
@@ -400,6 +405,7 @@ export interface RendererApi {
   };
   audioAssets: {
     import(productId: ProductId): Promise<AudioImportResult | null>;
+    importAndProcess(productId: ProductId): Promise<AudioImportProcessResult | null>;
     list(callId: string): Promise<AudioAsset[]>;
   };
   sttJobs: {

@@ -31,6 +31,7 @@ import type {
   AudioChunk,
   AudioCaptureStatus,
   AudioImportResult,
+  AudioImportProcessResult,
   AudioSttJob,
   CallState,
   MeetingMinute,
@@ -163,6 +164,10 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audioAssets.import, async (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
     return importAudioAsset(windows, productId);
+  });
+  ipcMain.handle(IPC.audioAssets.importAndProcess, async (_event, payload: unknown) => {
+    const productId = ProductIdSchema.parse(payload);
+    return importAndProcessAudioAsset(windows, productId);
   });
   ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
@@ -543,6 +548,27 @@ async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
   }
 
   throw new Error('Audio asset was not found');
+}
+
+async function importAndProcessAudioAsset(
+  windows: IpcWindowAccessors,
+  productId: AudioImportResult['call']['productId'],
+): Promise<AudioImportProcessResult | null> {
+  const imported = await importAudioAsset(windows, productId);
+  if (!imported) {
+    return null;
+  }
+
+  const createdJob = await createAudioSttJob(imported.asset.id);
+  const job = await audioSttJobRunner.run(createdJob.id);
+  const meetingMinute =
+    job.status === 'completed' ? await appRepositories.minutes.getLatestMeetingMinute() : null;
+
+  return {
+    ...imported,
+    job,
+    meetingMinute,
+  };
 }
 
 async function stopNativeAudioCapture(): Promise<void> {
