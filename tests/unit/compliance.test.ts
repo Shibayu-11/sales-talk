@@ -7,6 +7,8 @@ describe('evaluateCompliance', () => {
     const rules: ComplianceRule[] = [
       {
         id: '0f0d8b25-c164-41d5-b7d7-876176de8d0f',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
         companyId: 'default',
         industry: 'insurance',
         productCategory: 'insurance_general',
@@ -43,6 +45,8 @@ describe('evaluateCompliance', () => {
     const rules: ComplianceRule[] = [
       {
         id: 'f0230688-a7f0-4377-a62a-e73f0274a3fb',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
         companyId: 'default',
         industry: 'insurance',
         productCategory: 'insurance_general',

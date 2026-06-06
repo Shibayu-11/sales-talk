@@ -23,6 +23,7 @@ import type {
   ComplianceRuleType,
   ReviewTask,
   ReviewTaskStatus,
+  RecordingConsent,
   TranscriptSegment,
 } from '@shared/types';
 
@@ -164,10 +165,13 @@ const api: RendererApi = {
     },
   },
   audioAssets: {
-    import: (productId: ProductId): Promise<AudioImportResult | null> =>
-      ipcRenderer.invoke(IPC.audioAssets.import, productId),
-    importAndProcess: (productId: ProductId): Promise<AudioImportProcessResult | null> =>
-      ipcRenderer.invoke(IPC.audioAssets.importAndProcess, productId),
+    import: (productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null> =>
+      ipcRenderer.invoke(IPC.audioAssets.import, { productId, consent }),
+    importAndProcess: (
+      productId: ProductId,
+      consent: RecordingConsent,
+    ): Promise<AudioImportProcessResult | null> =>
+      ipcRenderer.invoke(IPC.audioAssets.importAndProcess, { productId, consent }),
     list: (callId: string): Promise<AudioAsset[]> =>
       ipcRenderer.invoke(IPC.audioAssets.list, callId),
   },

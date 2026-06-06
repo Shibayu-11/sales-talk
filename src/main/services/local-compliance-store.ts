@@ -22,15 +22,27 @@ export class LocalComplianceStore {
 
   constructor(private readonly filePath = join(defaultUserDataPath(), 'local-compliance.json')) {}
 
-  async listRules(industry?: Industry): Promise<ComplianceRule[]> {
+  async listRules(
+    industry?: Industry,
+    scope?: { tenantId: string; organizationId: string },
+  ): Promise<ComplianceRule[]> {
     const data = await this.get();
-    return industry ? data.rules.filter((rule) => rule.industry === industry) : data.rules;
+    return data.rules.filter(
+      (rule) =>
+        (!industry || rule.industry === industry) &&
+        (!scope ||
+          (rule.tenantId === scope.tenantId &&
+            (rule.organizationId === scope.organizationId ||
+              rule.organizationId === '00000000-0000-4000-8000-000000000003'))),
+    );
   }
 
   async createRule(input: ComplianceRuleCreateInput): Promise<ComplianceRule> {
     const now = new Date().toISOString();
     const rule: ComplianceRule = {
       id: randomUUID(),
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
       companyId: input.companyId,
       industry: input.industry,
       productCategory: input.productCategory,
@@ -128,6 +140,8 @@ function buildDefaultRule(input: {
 }): ComplianceRule {
   return {
     id: randomUUID(),
+    tenantId: '00000000-0000-4000-8000-000000000001',
+    organizationId: '00000000-0000-4000-8000-000000000002',
     companyId: 'default',
     industry: 'insurance',
     productCategory: 'insurance_general',

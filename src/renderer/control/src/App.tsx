@@ -17,6 +17,7 @@ import type {
   ProductId,
   ReviewTask,
   ReviewTaskStatus,
+  RecordingConsent,
   TaskOwner,
   Transcript,
   TranscriptSegment,
@@ -767,6 +768,15 @@ function formatLastReceivedAt(timestampMs: number | null): string {
   });
 }
 
+function createUploadConsent(): RecordingConsent {
+  return {
+    status: 'granted',
+    method: 'upload_attestation',
+    capturedAt: new Date().toISOString(),
+    noticeVersion: 'local-v1',
+  };
+}
+
 function SettingsPanel(props: {
   permissions: PermissionState | null;
   secretInputs: Record<string, string>;
@@ -844,6 +854,7 @@ function HistoryPanel(props: {
   const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
   const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
   const [processingAudio, setProcessingAudio] = useState(false);
+  const [uploadConsentGranted, setUploadConsentGranted] = useState(false);
 
   useEffect(() => {
     void window.api.minutes.get().then(setMeetingMinute);
@@ -867,7 +878,7 @@ function HistoryPanel(props: {
   }, [selectedCallId]);
 
   const importAudio = async (): Promise<void> => {
-    const result = await window.api.audioAssets.import(props.productId);
+    const result = await window.api.audioAssets.import(props.productId, createUploadConsent());
     if (!result) {
       return;
     }
@@ -883,7 +894,10 @@ function HistoryPanel(props: {
   const importAndProcessAudio = async (): Promise<void> => {
     setProcessingAudio(true);
     try {
-      const result = await window.api.audioAssets.importAndProcess(props.productId);
+      const result = await window.api.audioAssets.importAndProcess(
+        props.productId,
+        createUploadConsent(),
+      );
       if (!result) {
         return;
       }
@@ -936,7 +950,7 @@ function HistoryPanel(props: {
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={processingAudio}
+              disabled={processingAudio || !uploadConsentGranted}
               onClick={() => void importAndProcessAudio()}
               className="rounded bg-overlay-success px-3 py-2 text-xs font-medium text-zinc-950 hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
             >
@@ -944,8 +958,9 @@ function HistoryPanel(props: {
             </button>
             <button
               type="button"
+              disabled={!uploadConsentGranted}
               onClick={() => void importAudio()}
-              className="rounded border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+              className="rounded border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               音声ファイルを取り込む
             </button>
@@ -958,6 +973,18 @@ function HistoryPanel(props: {
             </button>
           </div>
         </div>
+        <label className="mb-4 flex items-start gap-3 rounded border border-zinc-800 bg-zinc-950/50 p-3 text-xs text-zinc-400">
+          <input
+            type="checkbox"
+            checked={uploadConsentGranted}
+            onChange={(event) => setUploadConsentGranted(event.currentTarget.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            顧客から録音・文字起こし・コンプラ解析への同意を取得済みです。この確認は監査証跡として
+            call に保存されます。
+          </span>
+        </label>
         {meetingMinute ? (
           <div className="space-y-3">
             <p className="rounded border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-300">
@@ -1003,6 +1030,13 @@ function HistoryPanel(props: {
                     </div>
                     <div className="mt-2 text-zinc-500">
                       {call.source} / {call.industry} / {call.productId}
+                    </div>
+                    <div className="mt-1 text-zinc-600">
+                      tenant {call.tenantId.slice(0, 8)} / org {call.organizationId.slice(0, 8)}
+                    </div>
+                    <div className="mt-1 text-zinc-600">
+                      consent {call.recordingConsent.status} /{' '}
+                      {call.recordingConsent.method ?? '未記録'}
                     </div>
                     <div className="mt-1 text-zinc-600">
                       {new Date(call.startedAt).toLocaleString('ja-JP')}

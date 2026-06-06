@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
+  AudioImportInputSchema,
   AudioChunkSchema,
   AudioSttJobCreateInputSchema,
   AudioSttJobRunInputSchema,
@@ -162,12 +163,12 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.audioAssets.import, async (_event, payload: unknown) => {
-    const productId = ProductIdSchema.parse(payload);
-    return importAudioAsset(windows, productId);
+    const input = AudioImportInputSchema.parse(payload);
+    return importAudioAsset(windows, input.productId, input.consent);
   });
   ipcMain.handle(IPC.audioAssets.importAndProcess, async (_event, payload: unknown) => {
-    const productId = ProductIdSchema.parse(payload);
-    return importAndProcessAudioAsset(windows, productId);
+    const input = AudioImportInputSchema.parse(payload);
+    return importAndProcessAudioAsset(windows, input.productId, input.consent);
   });
   ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
@@ -204,10 +205,18 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     }
     audioCaptureStats = createInitialAudioCaptureStats();
     const startedAt = new Date();
+    const scope = await appRepositories.organizations.getDefaultScope();
     const call = await appRepositories.calls.createCall({
+      ...scope,
       source: 'zoom_desktop',
       industry: 'btob_sales',
       productId,
+      recordingConsent: {
+        status: 'pending',
+        method: null,
+        capturedAt: null,
+        noticeVersion: 'local-v1',
+      },
       startedAt,
     });
     activeCallId = call.id;
@@ -345,10 +354,18 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     assertDevToolsEnabled();
     const productId = ProductIdSchema.parse(payload);
     const startedAt = new Date();
+    const scope = await appRepositories.organizations.getDefaultScope();
     const call = await appRepositories.calls.createCall({
+      ...scope,
       source: 'manual_transcript',
       industry: 'insurance',
       productId,
+      recordingConsent: {
+        status: 'granted',
+        method: 'digital',
+        capturedAt: startedAt.toISOString(),
+        noticeVersion: 'local-v1',
+      },
       startedAt,
     });
     activeCallId = call.id;
@@ -469,6 +486,7 @@ async function startNativeAudioCapture(): Promise<void> {
 async function importAudioAsset(
   windows: IpcWindowAccessors,
   productId: AudioImportResult['call']['productId'],
+  recordingConsent: AudioImportResult['call']['recordingConsent'],
 ): Promise<AudioImportResult | null> {
   const dialogOptions = {
     title: '音声ファイルを取り込む',
@@ -490,10 +508,13 @@ async function importAudioAsset(
   }
 
   const startedAt = new Date();
+  const scope = await appRepositories.organizations.getDefaultScope();
   const call = await appRepositories.calls.createCall({
+    ...scope,
     source: 'uploaded_audio',
     industry: 'insurance',
     productId,
+    recordingConsent,
     startedAt,
   });
   await appRepositories.calls.endCall(call.id, startedAt);
@@ -510,6 +531,12 @@ async function importAudioAsset(
         callId: call.id,
         fileName: asset.fileName,
         sizeBytes: asset.sizeBytes,
+        tenantId: call.tenantId,
+        organizationId: call.organizationId,
+        consentStatus: call.recordingConsent.status,
+        consentMethod: call.recordingConsent.method ?? 'unknown',
+        consentCapturedAt: call.recordingConsent.capturedAt ?? 'unknown',
+        consentNoticeVersion: call.recordingConsent.noticeVersion,
       },
     }),
   ]);
@@ -553,8 +580,9 @@ async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
 async function importAndProcessAudioAsset(
   windows: IpcWindowAccessors,
   productId: AudioImportResult['call']['productId'],
+  recordingConsent: AudioImportResult['call']['recordingConsent'],
 ): Promise<AudioImportProcessResult | null> {
-  const imported = await importAudioAsset(windows, productId);
+  const imported = await importAudioAsset(windows, productId, recordingConsent);
   if (!imported) {
     return null;
   }
@@ -631,7 +659,13 @@ async function generateMeetingMinuteForCall(input: {
   const pending = finalTexts.filter((text) =>
     ['高い', '難しい', '検討', '確認', '次回'].some((keyword) => text.includes(keyword)),
   );
-  const rules = await appRepositories.complianceRules.listRules('insurance');
+  const call = (await appRepositories.calls.listCalls()).find(
+    (candidate) => candidate.id === input.callId,
+  );
+  const rules = await appRepositories.complianceRules.listRules(
+    'insurance',
+    call ? { tenantId: call.tenantId, organizationId: call.organizationId } : undefined,
+  );
 
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),

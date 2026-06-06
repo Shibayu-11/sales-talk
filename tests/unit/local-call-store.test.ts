@@ -12,9 +12,17 @@ describe('LocalCallStore', () => {
     try {
       const store = new LocalCallStore(filePath);
       const call = await store.createCall({
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
         source: 'manual_transcript',
         industry: 'insurance',
         productId: 'real_estate',
+        recordingConsent: {
+          status: 'granted',
+          method: 'digital',
+          capturedAt: '2026-05-18T00:00:00.000Z',
+          noticeVersion: 'local-v1',
+        },
         startedAt: new Date('2026-05-18T00:00:00.000Z'),
       });
 
@@ -22,6 +30,12 @@ describe('LocalCallStore', () => {
         source: 'manual_transcript',
         industry: 'insurance',
         productId: 'real_estate',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+        recordingConsent: {
+          status: 'granted',
+          method: 'digital',
+        },
         status: 'active',
         endedAt: null,
       });

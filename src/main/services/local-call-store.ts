@@ -4,7 +4,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { CallSessionSchema } from '@shared/schemas';
-import type { CallSession, Industry, MeetingSource, ProductId } from '@shared/types';
+import type {
+  CallSession,
+  Industry,
+  MeetingSource,
+  ProductId,
+  RecordingConsent,
+} from '@shared/types';
 
 const LocalCallDataSchema = z.object({
   calls: z.array(CallSessionSchema),
@@ -24,18 +30,24 @@ export class LocalCallStore {
   constructor(private readonly filePath = join(defaultUserDataPath(), 'local-calls.json')) {}
 
   async createCall(input: {
+    tenantId: string;
+    organizationId: string;
     source: MeetingSource;
     industry: Industry;
     productId: ProductId;
+    recordingConsent: RecordingConsent;
     startedAt?: Date | undefined;
   }): Promise<CallSession> {
     const now = new Date().toISOString();
     const startedAt = input.startedAt?.toISOString() ?? now;
     const call: CallSession = {
       id: randomUUID(),
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
       source: input.source,
       industry: input.industry,
       productId: input.productId,
+      recordingConsent: input.recordingConsent,
       status: 'active',
       startedAt,
       endedAt: null,

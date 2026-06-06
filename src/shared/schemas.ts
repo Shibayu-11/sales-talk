@@ -13,6 +13,20 @@ export const MeetingSourceSchema = z.enum([
   'manual_transcript',
 ]);
 export const IndustrySchema = z.enum(['btob_sales', 'insurance']);
+export const OrganizationTypeSchema = z.enum(['insurer', 'agency', 'internal']);
+export const RecordingConsentStatusSchema = z.enum([
+  'pending',
+  'granted',
+  'declined',
+  'not_required',
+]);
+export const RecordingConsentMethodSchema = z.enum([
+  'verbal',
+  'written',
+  'digital',
+  'upload_attestation',
+  'not_applicable',
+]);
 export const SpeakerSchema = z.enum(['self', 'counterpart']);
 export const OverlayLayerSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 
@@ -123,6 +137,8 @@ export const AuditActionSchema = z.enum([
 
 export const ComplianceRuleSchema = z.object({
   id: z.string().uuid(),
+  tenantId: z.string().uuid().default('00000000-0000-4000-8000-000000000001'),
+  organizationId: z.string().uuid().default('00000000-0000-4000-8000-000000000002'),
   companyId: z.string().min(1),
   industry: IndustrySchema,
   productCategory: z.string().min(1),
@@ -221,6 +237,8 @@ export const PresentationBlockSchema = z.discriminatedUnion('type', [
 ]);
 
 export const ComplianceRuleCreateInputSchema = z.object({
+  tenantId: z.string().uuid().default('00000000-0000-4000-8000-000000000001'),
+  organizationId: z.string().uuid().default('00000000-0000-4000-8000-000000000002'),
   companyId: z.string().trim().min(1).max(120),
   industry: IndustrySchema,
   productCategory: z.string().trim().min(1).max(120),
@@ -316,11 +334,43 @@ export const AppSettingsPatchSchema = AppSettingsSchema.partial();
 
 export const CallLifecycleStatusSchema = z.enum(['active', 'ended']);
 
+export const TenantSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const OrganizationSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  parentOrganizationId: z.string().uuid().nullable(),
+  type: OrganizationTypeSchema,
+  name: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const RecordingConsentSchema = z.object({
+  status: RecordingConsentStatusSchema,
+  method: RecordingConsentMethodSchema.nullable(),
+  capturedAt: z.string().nullable(),
+  noticeVersion: z.string().min(1),
+});
+
 export const CallSessionSchema = z.object({
   id: z.string().uuid(),
+  tenantId: z.string().uuid().default('00000000-0000-4000-8000-000000000001'),
+  organizationId: z.string().uuid().default('00000000-0000-4000-8000-000000000002'),
   source: MeetingSourceSchema,
   industry: IndustrySchema,
   productId: ProductIdSchema,
+  recordingConsent: RecordingConsentSchema.default({
+    status: 'pending',
+    method: null,
+    capturedAt: null,
+    noticeVersion: 'local-v1',
+  }),
   status: CallLifecycleStatusSchema,
   startedAt: z.string(),
   endedAt: z.string().nullable(),
@@ -350,6 +400,13 @@ export const AudioAssetSchema = z.object({
   mimeType: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
   createdAt: z.string(),
+});
+
+export const AudioImportInputSchema = z.object({
+  productId: ProductIdSchema,
+  consent: RecordingConsentSchema.refine((consent) => consent.status === 'granted', {
+    message: 'Recording consent must be granted before importing audio',
+  }),
 });
 
 export const AudioSttJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);

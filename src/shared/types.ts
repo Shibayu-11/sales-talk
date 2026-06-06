@@ -12,6 +12,14 @@ export type MeetingSource =
   | 'manual_transcript';
 
 export type Industry = 'btob_sales' | 'insurance';
+export type OrganizationType = 'insurer' | 'agency' | 'internal';
+export type RecordingConsentStatus = 'pending' | 'granted' | 'declined' | 'not_required';
+export type RecordingConsentMethod =
+  | 'verbal'
+  | 'written'
+  | 'digital'
+  | 'upload_attestation'
+  | 'not_applicable';
 
 export type Speaker = 'self' | 'counterpart';
 
@@ -137,11 +145,38 @@ export interface AppSettings {
 
 export type CallLifecycleStatus = 'active' | 'ended';
 
+export interface Tenant {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Organization {
+  id: string;
+  tenantId: string;
+  parentOrganizationId: string | null;
+  type: OrganizationType;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordingConsent {
+  status: RecordingConsentStatus;
+  method: RecordingConsentMethod | null;
+  capturedAt: string | null;
+  noticeVersion: string;
+}
+
 export interface CallSession {
   id: string;
+  tenantId: string;
+  organizationId: string;
   source: MeetingSource;
   industry: Industry;
   productId: ProductId;
+  recordingConsent: RecordingConsent;
   status: CallLifecycleStatus;
   startedAt: string;
   endedAt: string | null;
@@ -246,6 +281,9 @@ export type AuditAction =
 
 export interface ComplianceRule {
   id: string;
+  tenantId: string;
+  organizationId: string;
+  /** Deprecated compatibility alias. Use organizationId. */
   companyId: string;
   industry: Industry;
   productCategory: string;
@@ -404,8 +442,11 @@ export interface RendererApi {
     onError(cb: (message: string) => void): () => void;
   };
   audioAssets: {
-    import(productId: ProductId): Promise<AudioImportResult | null>;
-    importAndProcess(productId: ProductId): Promise<AudioImportProcessResult | null>;
+    import(productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null>;
+    importAndProcess(
+      productId: ProductId,
+      consent: RecordingConsent,
+    ): Promise<AudioImportProcessResult | null>;
     list(callId: string): Promise<AudioAsset[]>;
   };
   sttJobs: {

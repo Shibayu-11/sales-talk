@@ -70,6 +70,8 @@ test('dev transcript injection drives the mock pipeline without API keys', async
 
       await controlWindow.getByRole('button', { name: '商談履歴' }).click();
       await expect(controlWindow.getByRole('heading', { name: '商談履歴' })).toBeVisible();
+      await expect(controlWindow.getByText(/顧客から録音・文字起こし/)).toBeVisible();
+      await expect(controlWindow.getByRole('button', { name: '音声から自動生成' })).toBeDisabled();
       await expect(controlWindow.getByRole('button', { name: '音声から自動生成' })).toBeVisible();
       await expect(controlWindow.getByRole('button', { name: '音声ファイルを取り込む' })).toBeVisible();
       await expect(controlWindow.getByText('価格の内訳を確認').first()).toBeVisible();
