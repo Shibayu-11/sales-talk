@@ -141,6 +141,9 @@ export const ReviewTaskStatusSchema = z.enum([
 ]);
 export const AuditActorTypeSchema = z.enum(['system', 'user', 'ai']);
 export const AuditActionSchema = z.enum([
+  'recording.started',
+  'recording.consent_captured',
+  'organization.user_role_updated',
   'minutes.generated',
   'compliance.finding_detected',
   'review_task.created',
@@ -199,7 +202,13 @@ export const ReviewTaskUpdateStatusInputSchema = z.object({
 
 export const AuditLogEntrySchema = z.object({
   id: z.string().uuid(),
+  tenantId: z.string().uuid().nullable().default(null),
+  organizationId: z.string().uuid().nullable().default(null),
   actorType: AuditActorTypeSchema,
+  actorUserId: z.string().uuid().nullable().default(null),
+  actorMembershipId: z.string().uuid().nullable().default(null),
+  actorDisplayName: z.string().nullable().default(null),
+  actorRole: OrganizationRoleSchema.nullable().default(null),
   action: AuditActionSchema,
   targetType: z.string().min(1).max(120),
   targetId: z.string().min(1).max(120),

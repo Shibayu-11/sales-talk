@@ -124,6 +124,17 @@ export class LocalActivityStore {
     return entries;
   }
 
+  async listAuditLogs(scope: {
+    tenantId: string;
+    organizationId?: string | undefined;
+  }): Promise<AuditLogEntry[]> {
+    return (await this.get()).auditLogs.filter(
+      (entry) =>
+        entry.tenantId === scope.tenantId &&
+        (scope.organizationId === undefined || entry.organizationId === scope.organizationId),
+    );
+  }
+
   private async get(): Promise<LocalActivityData> {
     if (this.cache) {
       return this.cache;

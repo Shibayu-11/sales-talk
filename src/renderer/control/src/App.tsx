@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type {
   AppSettings,
   ActionItemTask,
+  AuditLogEntry,
   AudioAsset,
   AudioCaptureStatus,
   AudioSttJob,
@@ -33,7 +34,15 @@ const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'hojokin', label: '補助金助成金' },
 ];
 
-const NAV_ITEMS = ['ダッシュボード', '商談履歴', 'レビュー', 'ナレッジ', 'タスク', '設定'] as const;
+const NAV_ITEMS = [
+  'ダッシュボード',
+  '商談履歴',
+  'レビュー',
+  '監査ログ',
+  'ナレッジ',
+  'タスク',
+  '設定',
+] as const;
 type NavItem = (typeof NAV_ITEMS)[number];
 
 const SECRET_KEYS = [
@@ -321,6 +330,7 @@ export function App(): JSX.Element {
             />
           )}
           {activeNav === 'レビュー' && <ReviewPanel />}
+          {activeNav === '監査ログ' && <AuditLogPanel />}
           {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
           {activeNav === 'タスク' && <TasksPanel />}
           {activeNav === '設定' && (
@@ -981,6 +991,48 @@ function SettingsPanel(props: {
         {props.settings?.consentNoticeMode ?? '-'}
       </div>
     </>
+  );
+}
+
+function AuditLogPanel(): JSX.Element {
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+
+  useEffect(() => {
+    void window.api.auditLogs.list().then(setAuditLogs);
+  }, []);
+
+  return (
+    <div className="rounded-lg border border-zinc-800 p-5">
+      <h2 className="mb-1 text-sm font-medium text-zinc-400">監査ログ</h2>
+      <p className="mb-4 text-xs text-zinc-500">
+        録音開始・同意取得・ユーザーロール変更の実行者と組織スコープを記録します。
+      </p>
+      {auditLogs.length === 0 ? (
+        <div className="rounded border border-zinc-800 p-4 text-sm text-zinc-600">
+          監査ログはまだありません。
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {auditLogs.map((entry) => (
+            <li key={entry.id} className="rounded border border-zinc-800 p-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-zinc-200">{entry.action}</span>
+                <span className="text-zinc-600">
+                  {new Date(entry.createdAt).toLocaleString('ja-JP')}
+                </span>
+              </div>
+              <div className="mt-1 text-zinc-500">
+                actor: {entry.actorDisplayName ?? entry.actorType} / {entry.actorRole ?? '-'}
+              </div>
+              <div className="mt-1 font-mono text-zinc-600">
+                tenant {entry.tenantId?.slice(0, 8) ?? '-'} / org{' '}
+                {entry.organizationId?.slice(0, 8) ?? '-'} / target {entry.targetType}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

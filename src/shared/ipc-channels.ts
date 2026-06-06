@@ -76,6 +76,10 @@ export const IPC = {
     updateUserRole: 'organizations:update-user-role',
   },
 
+  auditLogs: {
+    list: 'audit-logs:list',
+  },
+
   // Transcript segments
   transcripts: {
     list: 'transcripts:list',

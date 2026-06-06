@@ -103,6 +103,7 @@ export interface ReviewTaskRepository {
 
 export interface AuditLogRepository {
   appendAuditLogs(entries: AuditLogEntry[]): Promise<AuditLogEntry[]>;
+  listAuditLogs(scope: { tenantId: string; organizationId?: string | undefined }): Promise<AuditLogEntry[]>;
 }
 
 export interface ComplianceRuleRepository {

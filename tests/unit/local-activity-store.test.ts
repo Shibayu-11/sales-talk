@@ -49,6 +49,23 @@ describe('LocalActivityStore', () => {
         completed: false,
         createdAt: '2026-05-18T00:00:00.000Z',
       });
+      await store.appendAuditLogs([
+        {
+          id: 'f620746e-38ea-4a95-950a-11ad2e13094e',
+          tenantId: '00000000-0000-4000-8000-000000000001',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+          actorType: 'user',
+          actorUserId: '00000000-0000-4000-8000-000000000004',
+          actorMembershipId: '00000000-0000-4000-8000-000000000005',
+          actorDisplayName: 'Agency Admin',
+          actorRole: 'agency_admin',
+          action: 'recording.started',
+          targetType: 'call',
+          targetId: minute.callId,
+          metadata: { consentMethod: 'verbal' },
+          createdAt: '2026-05-18T00:00:00.000Z',
+        },
+      ]);
 
       const restored = new LocalActivityStore(filePath);
       expect(await restored.getLatestMeetingMinute()).toEqual(minute);
@@ -65,6 +82,18 @@ describe('LocalActivityStore', () => {
         completed: true,
         description: '費用対効果の資料を送る',
       });
+      await expect(
+        restored.listAuditLogs({
+          tenantId: '00000000-0000-4000-8000-000000000001',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+        }),
+      ).resolves.toMatchObject([
+        {
+          action: 'recording.started',
+          actorDisplayName: 'Agency Admin',
+          actorRole: 'agency_admin',
+        },
+      ]);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

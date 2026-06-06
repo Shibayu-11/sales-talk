@@ -11,6 +11,8 @@ import {
 import {
   DEFAULT_INSURER_MEMBERSHIP_ID,
   DEFAULT_INSURER_USER_ID,
+  DEFAULT_AGENT_MEMBERSHIP_ID,
+  DEFAULT_AGENT_USER_ID,
   DEFAULT_MEMBERSHIP_ID,
   DEFAULT_ORGANIZATION_ID,
   DEFAULT_PARENT_ORGANIZATION_ID,
@@ -155,12 +157,19 @@ export class LocalOrganizationStore {
     try {
       const raw = await readFile(this.filePath, 'utf8');
       const parsed = LocalOrganizationDataSchema.parse(JSON.parse(raw));
-      if (parsed.users.length === 0 || parsed.memberships.length === 0) {
-        const defaults = createDefaultOrganizationData();
+      const defaults = createDefaultOrganizationData();
+      const missingUsers = defaults.users.filter(
+        (defaultUser) => !parsed.users.some((user) => user.id === defaultUser.id),
+      );
+      const missingMemberships = defaults.memberships.filter(
+        (defaultMembership) =>
+          !parsed.memberships.some((membership) => membership.id === defaultMembership.id),
+      );
+      if (missingUsers.length > 0 || missingMemberships.length > 0) {
         this.cache = {
           ...parsed,
-          users: defaults.users,
-          memberships: defaults.memberships,
+          users: [...parsed.users, ...missingUsers],
+          memberships: [...parsed.memberships, ...missingMemberships],
         };
         await this.persist(this.cache);
         return this.cache;
@@ -228,6 +237,13 @@ function createDefaultOrganizationData(): LocalOrganizationData {
         createdAt: now,
         updatedAt: now,
       },
+      {
+        id: DEFAULT_AGENT_USER_ID,
+        email: 'agency-agent@example.local',
+        displayName: 'Agency Agent',
+        createdAt: now,
+        updatedAt: now,
+      },
     ],
     memberships: [
       {
@@ -245,6 +261,15 @@ function createDefaultOrganizationData(): LocalOrganizationData {
         organizationId: DEFAULT_PARENT_ORGANIZATION_ID,
         userId: DEFAULT_INSURER_USER_ID,
         role: 'auditor',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: DEFAULT_AGENT_MEMBERSHIP_ID,
+        tenantId: DEFAULT_TENANT_ID,
+        organizationId: DEFAULT_ORGANIZATION_ID,
+        userId: DEFAULT_AGENT_USER_ID,
+        role: 'agent',
         createdAt: now,
         updatedAt: now,
       },

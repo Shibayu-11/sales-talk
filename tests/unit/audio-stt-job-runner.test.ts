@@ -169,6 +169,7 @@ function createRepositories(options: {
     },
     auditLogs: {
       appendAuditLogs: vi.fn(),
+      listAuditLogs: vi.fn(async () => []),
     },
     complianceRules: {
       listRules: vi.fn(),

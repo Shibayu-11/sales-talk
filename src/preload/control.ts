@@ -11,6 +11,7 @@ import type {
   ConnectionState,
   MeetingMinute,
   ActionItemTask,
+  AuditLogEntry,
   AudioAsset,
   AudioImportResult,
   AudioImportProcessResult,
@@ -52,6 +53,9 @@ const IPC = {
     list: 'organizations:list',
     usersList: 'organizations:users-list',
     updateUserRole: 'organizations:update-user-role',
+  },
+  auditLogs: {
+    list: 'audit-logs:list',
   },
   transcripts: {
     list: 'transcripts:list',
@@ -182,6 +186,9 @@ const api: RendererApi = {
     listUsers: (): Promise<OrganizationUser[]> => ipcRenderer.invoke(IPC.organizations.usersList),
     updateUserRole: (membershipId: string, role: OrganizationRole): Promise<OrganizationUser> =>
       ipcRenderer.invoke(IPC.organizations.updateUserRole, { membershipId, role }),
+  },
+  auditLogs: {
+    list: (): Promise<AuditLogEntry[]> => ipcRenderer.invoke(IPC.auditLogs.list),
   },
   audioAssets: {
     import: (productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null> =>

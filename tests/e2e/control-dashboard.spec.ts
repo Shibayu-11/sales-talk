@@ -37,6 +37,14 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
     await expect(controlWindow.getByText('Agency Admin', { exact: true })).toBeVisible();
     const auditorRole = controlWindow.getByLabel('Insurer Auditor role');
     await expect(auditorRole).toBeDisabled();
+    const agentRole = controlWindow.getByLabel('Agency Agent role');
+    await agentRole.selectOption('manager');
+    await expect(agentRole).toHaveValue('manager');
+
+    await controlWindow.getByRole('button', { name: '監査ログ' }).click();
+    await expect(controlWindow.getByRole('heading', { name: '監査ログ' })).toBeVisible();
+    await expect(controlWindow.getByText('organization.user_role_updated')).toBeVisible();
+    await expect(controlWindow.getByText(/actor: Agency Admin/)).toBeVisible();
   });
 });
 

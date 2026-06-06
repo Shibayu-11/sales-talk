@@ -313,6 +313,9 @@ export type ReviewTaskStatus =
   | 'escalated';
 export type AuditActorType = 'system' | 'user' | 'ai';
 export type AuditAction =
+  | 'recording.started'
+  | 'recording.consent_captured'
+  | 'organization.user_role_updated'
   | 'minutes.generated'
   | 'compliance.finding_detected'
   | 'review_task.created'
@@ -366,7 +369,13 @@ export interface ReviewTask {
 
 export interface AuditLogEntry {
   id: string;
+  tenantId: string | null;
+  organizationId: string | null;
   actorType: AuditActorType;
+  actorUserId: string | null;
+  actorMembershipId: string | null;
+  actorDisplayName: string | null;
+  actorRole: OrganizationRole | null;
   action: AuditAction;
   targetType: string;
   targetId: string;
@@ -487,6 +496,9 @@ export interface RendererApi {
     list(): Promise<Organization[]>;
     listUsers(): Promise<OrganizationUser[]>;
     updateUserRole(membershipId: string, role: OrganizationRole): Promise<OrganizationUser>;
+  };
+  auditLogs: {
+    list(): Promise<AuditLogEntry[]>;
   };
   audioAssets: {
     import(productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null>;

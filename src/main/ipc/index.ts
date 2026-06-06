@@ -37,7 +37,9 @@ import type {
   AudioImportResult,
   AudioImportProcessResult,
   AudioSttJob,
+  CallSession,
   CallState,
+  CurrentUserContext,
   MeetingMinute,
   PermissionState,
   ReviewTask,
@@ -152,14 +154,15 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
 
   ipcMain.handle(IPC.audio.start, async (_event, payload: unknown) => {
-    AudioStartInputSchema.parse(payload);
-    await appRepositories.organizations.assertPermission('recording:start');
+    const input = AudioStartInputSchema.parse(payload);
+    const context = await appRepositories.organizations.assertPermission('recording:start');
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
     audioCaptureStats = createInitialAudioCaptureStats();
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
+    await appendRecordingAuditLogs(context, localSessionId, input.consent, 'audio_diagnostic');
   });
 
   ipcMain.handle(IPC.audio.stop, async () => {
@@ -230,6 +233,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     setCallModeLogging(true);
     notifyCallState(windows);
     windows.getOverlayWindow()?.showInactive();
+    await appendRecordingAuditLogs(context, call.id, input.consent, 'zoom_desktop');
     logger.info(
       {
         productId: input.productId,
@@ -289,11 +293,34 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     if (context.membership.role !== 'insurer_admin' && input.role === 'insurer_admin') {
       throw new Error('Only insurer administrators can assign insurer administrator role');
     }
-    return appRepositories.organizations.updateUserRole(
+    const previousRole = target.role;
+    const updated = await appRepositories.organizations.updateUserRole(
       context.tenant.id,
       input.membershipId,
       input.role,
     );
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'organization.user_role_updated',
+        targetType: 'organization_membership',
+        targetId: updated.membershipId,
+        metadata: {
+          targetUserId: updated.id,
+          targetOrganizationId: updated.organizationId,
+          previousRole,
+          nextRole: updated.role,
+        },
+      }),
+    ]);
+    return updated;
+  });
+
+  ipcMain.handle(IPC.auditLogs.list, async () => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    return appRepositories.auditLogs.listAuditLogs({
+      tenantId: context.tenant.id,
+      organizationId: context.membership.role === 'insurer_admin' ? undefined : context.organization.id,
+    });
   });
 
   ipcMain.handle(IPC.overlay.show, () => windows.getOverlayWindow()?.showInactive());
@@ -558,9 +585,10 @@ async function importAudioAsset(
   }
 
   const startedAt = new Date();
-  const scope = await appRepositories.organizations.getDefaultScope();
+  const context = await appRepositories.organizations.assertPermission('recording:start');
   const call = await appRepositories.calls.createCall({
-    ...scope,
+    tenantId: context.tenant.id,
+    organizationId: context.organization.id,
     source: 'uploaded_audio',
     industry: 'insurance',
     productId,
@@ -573,7 +601,7 @@ async function importAudioAsset(
     filePath: dialogResult.filePaths[0],
   });
   await appRepositories.auditLogs.appendAuditLogs([
-    createAuditLogEntry({
+    createUserAuditLogEntry(context, {
       action: 'call.audio_imported',
       targetType: 'audio_asset',
       targetId: asset.id,
@@ -588,6 +616,12 @@ async function importAudioAsset(
         consentCapturedAt: call.recordingConsent.capturedAt ?? 'unknown',
         consentNoticeVersion: call.recordingConsent.noticeVersion,
       },
+    }),
+    createUserAuditLogEntry(context, {
+      action: 'recording.consent_captured',
+      targetType: 'call',
+      targetId: call.id,
+      metadata: recordingConsentMetadata(call.recordingConsent, call.source),
     }),
   ]);
 
@@ -834,12 +868,79 @@ function createAuditLogEntry(input: {
 }): AuditLogEntry {
   return {
     id: randomUUID(),
+    tenantId: null,
+    organizationId: null,
     actorType: 'system',
+    actorUserId: null,
+    actorMembershipId: null,
+    actorDisplayName: null,
+    actorRole: null,
     action: input.action,
     targetType: input.targetType,
     targetId: input.targetId,
     metadata: input.metadata,
     createdAt: new Date().toISOString(),
+  };
+}
+
+function createUserAuditLogEntry(
+  context: CurrentUserContext,
+  input: {
+    action: AuditLogEntry['action'];
+    targetType: string;
+    targetId: string;
+    metadata: AuditLogEntry['metadata'];
+  },
+): AuditLogEntry {
+  return {
+    id: randomUUID(),
+    tenantId: context.tenant.id,
+    organizationId: context.organization.id,
+    actorType: 'user',
+    actorUserId: context.user.id,
+    actorMembershipId: context.membership.id,
+    actorDisplayName: context.user.displayName,
+    actorRole: context.membership.role,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    metadata: input.metadata,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function appendRecordingAuditLogs(
+  context: CurrentUserContext,
+  targetId: string,
+  consent: CallSession['recordingConsent'],
+  source: string,
+): Promise<void> {
+  await appRepositories.auditLogs.appendAuditLogs([
+    createUserAuditLogEntry(context, {
+      action: 'recording.consent_captured',
+      targetType: 'call',
+      targetId,
+      metadata: recordingConsentMetadata(consent, source),
+    }),
+    createUserAuditLogEntry(context, {
+      action: 'recording.started',
+      targetType: 'call',
+      targetId,
+      metadata: recordingConsentMetadata(consent, source),
+    }),
+  ]);
+}
+
+function recordingConsentMetadata(
+  consent: CallSession['recordingConsent'],
+  source: string,
+): AuditLogEntry['metadata'] {
+  return {
+    source,
+    consentStatus: consent.status,
+    consentMethod: consent.method,
+    consentCapturedAt: consent.capturedAt,
+    consentNoticeVersion: consent.noticeVersion,
   };
 }
 
