@@ -3,11 +3,13 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
+  AudioStartInputSchema,
   AudioImportInputSchema,
   AudioChunkSchema,
   AudioSttJobCreateInputSchema,
   AudioSttJobRunInputSchema,
   CallIdInputSchema,
+  CallStartInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
   DevInjectTranscriptInputSchema,
@@ -17,6 +19,7 @@ import {
   KnowledgeSearchInputSchema,
   MinutesGenerateInputSchema,
   ObjectionDismissInputSchema,
+  OrganizationUserRoleUpdateInputSchema,
   OverlayLayerSchema,
   ProductIdSchema,
   ReviewTaskUpdateStatusInputSchema,
@@ -148,7 +151,9 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
 
-  ipcMain.handle(IPC.audio.start, async () => {
+  ipcMain.handle(IPC.audio.start, async (_event, payload: unknown) => {
+    AudioStartInputSchema.parse(payload);
+    await appRepositories.organizations.assertPermission('recording:start');
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
@@ -197,36 +202,43 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     await sendAudioChunkToSTT({ ...chunk, speaker: 'self' });
   });
 
-  ipcMain.handle(IPC.call.list, () => appRepositories.calls.listCalls());
+  ipcMain.handle(IPC.call.list, async () => {
+    await appRepositories.organizations.assertPermission('calls:read');
+    return appRepositories.calls.listCalls();
+  });
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
-    const productId = ProductIdSchema.parse(payload);
+    const input = CallStartInputSchema.parse(payload);
+    const context = await appRepositories.organizations.assertPermission('recording:start');
     if (!preflightAudioCapturePermissions(windows)) {
       return;
     }
     audioCaptureStats = createInitialAudioCaptureStats();
     const startedAt = new Date();
-    const scope = await appRepositories.organizations.getDefaultScope();
     const call = await appRepositories.calls.createCall({
-      ...scope,
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
       source: 'zoom_desktop',
       industry: 'btob_sales',
-      productId,
-      recordingConsent: {
-        status: 'pending',
-        method: null,
-        capturedAt: null,
-        noticeVersion: 'local-v1',
-      },
+      productId: input.productId,
+      recordingConsent: input.consent,
       startedAt,
     });
     activeCallId = call.id;
-    callState = { status: 'in_call', productId, startedAt: startedAt.getTime() };
+    callState = { status: 'in_call', productId: input.productId, startedAt: startedAt.getTime() };
     await tryStartSTT(windows);
     await tryStartNativeAudioCapture(windows);
     setCallModeLogging(true);
     notifyCallState(windows);
     windows.getOverlayWindow()?.showInactive();
-    logger.info({ productId }, 'call started');
+    logger.info(
+      {
+        productId: input.productId,
+        tenantId: context.tenant.id,
+        organizationId: context.organization.id,
+        consentMethod: input.consent.method,
+      },
+      'call started',
+    );
   });
 
   ipcMain.handle(IPC.call.end, () => {
@@ -247,6 +259,41 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.transcripts.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
     return appRepositories.transcripts.listTranscripts(callId);
+  });
+
+  ipcMain.handle(IPC.organizations.currentContext, () =>
+    appRepositories.organizations.getCurrentContext(),
+  );
+  ipcMain.handle(IPC.organizations.list, async () => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    return appRepositories.organizations.listOrganizations(context.tenant.id);
+  });
+  ipcMain.handle(IPC.organizations.usersList, async () => {
+    const context = await appRepositories.organizations.assertPermission('organization:manage');
+    return appRepositories.organizations.listUsers(context.tenant.id);
+  });
+  ipcMain.handle(IPC.organizations.updateUserRole, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('organization:manage');
+    const input = OrganizationUserRoleUpdateInputSchema.parse(payload);
+    const users = await appRepositories.organizations.listUsers(context.tenant.id);
+    const target = users.find((user) => user.membershipId === input.membershipId);
+    if (!target) {
+      throw new Error('Organization user was not found');
+    }
+    if (
+      context.membership.role !== 'insurer_admin' &&
+      target.organizationId !== context.organization.id
+    ) {
+      throw new Error('Current user cannot manage users outside their organization');
+    }
+    if (context.membership.role !== 'insurer_admin' && input.role === 'insurer_admin') {
+      throw new Error('Only insurer administrators can assign insurer administrator role');
+    }
+    return appRepositories.organizations.updateUserRole(
+      context.tenant.id,
+      input.membershipId,
+      input.role,
+    );
   });
 
   ipcMain.handle(IPC.overlay.show, () => windows.getOverlayWindow()?.showInactive());
@@ -314,6 +361,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.reviews.list, () => appRepositories.reviews.listReviewTasks());
   ipcMain.handle(IPC.reviews.updateStatus, async (_event, payload: unknown) => {
+    await appRepositories.organizations.assertPermission('reviews:manage');
     const input = ReviewTaskUpdateStatusInputSchema.parse(payload);
     const task = await appRepositories.reviews.updateReviewTaskStatus(input.id, input.status);
     await appRepositories.auditLogs.appendAuditLogs([
@@ -328,11 +376,13 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.compliance.rulesList, () => appRepositories.complianceRules.listRules());
-  ipcMain.handle(IPC.compliance.rulesCreate, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.compliance.rulesCreate, async (_event, payload: unknown) => {
+    await appRepositories.organizations.assertPermission('rules:manage');
     const input = ComplianceRuleCreateInputSchema.parse(payload);
     return appRepositories.complianceRules.createRule(input);
   });
   ipcMain.handle(IPC.compliance.rulesDelete, async (_event, payload: unknown) => {
+    await appRepositories.organizations.assertPermission('rules:manage');
     const id = ComplianceRuleDeleteInputSchema.parse(payload);
     await appRepositories.complianceRules.deleteRule(id);
   });

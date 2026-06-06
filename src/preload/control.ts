@@ -24,6 +24,10 @@ import type {
   ReviewTask,
   ReviewTaskStatus,
   RecordingConsent,
+  CurrentUserContext,
+  Organization,
+  OrganizationRole,
+  OrganizationUser,
   TranscriptSegment,
 } from '@shared/types';
 
@@ -42,6 +46,12 @@ const IPC = {
     end: 'call:end',
     setProduct: 'call:set-product',
     onState: 'call:on-state',
+  },
+  organizations: {
+    currentContext: 'organizations:current-context',
+    list: 'organizations:list',
+    usersList: 'organizations:users-list',
+    updateUserRole: 'organizations:update-user-role',
   },
   transcripts: {
     list: 'transcripts:list',
@@ -141,7 +151,8 @@ const api: RendererApi = {
   },
   call: {
     list: (): Promise<CallSession[]> => ipcRenderer.invoke(IPC.call.list),
-    start: (productId: ProductId) => ipcRenderer.invoke(IPC.call.start, productId),
+    start: (productId: ProductId, consent: RecordingConsent) =>
+      ipcRenderer.invoke(IPC.call.start, { productId, consent }),
     end: () => ipcRenderer.invoke(IPC.call.end),
     setProduct: (productId: ProductId) => ipcRenderer.invoke(IPC.call.setProduct, productId),
     onState: (cb) => {
@@ -156,13 +167,21 @@ const api: RendererApi = {
   },
   audio: {
     getStatus: () => ipcRenderer.invoke(IPC.audio.status),
-    start: () => ipcRenderer.invoke(IPC.audio.start),
+    start: (consent: RecordingConsent) => ipcRenderer.invoke(IPC.audio.start, { consent }),
     stop: () => ipcRenderer.invoke(IPC.audio.stop),
     onError: (cb) => {
       const listener = (_: unknown, message: string) => cb(message);
       ipcRenderer.on(IPC.audio.onError, listener);
       return () => ipcRenderer.off(IPC.audio.onError, listener);
     },
+  },
+  organizations: {
+    getCurrentContext: (): Promise<CurrentUserContext> =>
+      ipcRenderer.invoke(IPC.organizations.currentContext),
+    list: (): Promise<Organization[]> => ipcRenderer.invoke(IPC.organizations.list),
+    listUsers: (): Promise<OrganizationUser[]> => ipcRenderer.invoke(IPC.organizations.usersList),
+    updateUserRole: (membershipId: string, role: OrganizationRole): Promise<OrganizationUser> =>
+      ipcRenderer.invoke(IPC.organizations.updateUserRole, { membershipId, role }),
   },
   audioAssets: {
     import: (productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null> =>

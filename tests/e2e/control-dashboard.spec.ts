@@ -7,6 +7,7 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
   await withSalesTalkApp(async ({ controlWindow }) => {
     await expect(controlWindow.getByText('音声 / STT 診断')).toBeVisible();
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
+    await expect(controlWindow.getByText(/顧客へ録音・文字起こし/)).toBeVisible();
     await expect(controlWindow.getByText('Deepgram API key が未設定です')).toBeVisible();
     await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
 
@@ -29,6 +30,13 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
     await controlWindow.getByRole('button', { name: 'ダッシュボード' }).click();
     await expect(controlWindow.getByText('Deepgram API key が未設定です')).toHaveCount(0);
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
+
+    await controlWindow.getByRole('button', { name: '設定' }).click();
+    await expect(controlWindow.getByRole('heading', { name: '組織・ユーザー権限' })).toBeVisible();
+    await expect(controlWindow.getByText('Local Insurance Company')).toBeVisible();
+    await expect(controlWindow.getByText('Agency Admin', { exact: true })).toBeVisible();
+    const auditorRole = controlWindow.getByLabel('Insurer Auditor role');
+    await expect(auditorRole).toBeDisabled();
   });
 });
 

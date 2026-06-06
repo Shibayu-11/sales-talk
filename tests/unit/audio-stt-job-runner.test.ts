@@ -127,6 +127,17 @@ function createRepositories(options: {
         tenantId: '00000000-0000-4000-8000-000000000001',
         organizationId: '00000000-0000-4000-8000-000000000002',
       })),
+      getCurrentContext: vi.fn(async () => {
+        throw new Error('not used');
+      }),
+      listOrganizations: vi.fn(async () => []),
+      listUsers: vi.fn(async () => []),
+      updateUserRole: vi.fn(async () => {
+        throw new Error('not used');
+      }),
+      assertPermission: vi.fn(async () => {
+        throw new Error('not used');
+      }),
     },
     calls: {
       createCall: vi.fn(),

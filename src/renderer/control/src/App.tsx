@@ -9,10 +9,14 @@ import type {
   CallSession,
   CallState,
   ConnectionState,
+  CurrentUserContext,
   DetectedObjection,
   KnowledgeEntry,
   MeetingMinute,
   ObjectionResponse,
+  Organization,
+  OrganizationRole,
+  OrganizationUser,
   PermissionState,
   ProductId,
   ReviewTask,
@@ -63,6 +67,10 @@ export function App(): JSX.Element {
   const [currentResponse, setCurrentResponse] = useState<ObjectionResponse | null>(null);
   const [objectionHistory, setObjectionHistory] = useState<ObjectionHistoryItem[]>([]);
   const [devToolsEnabled, setDevToolsEnabled] = useState(false);
+  const [recordingConsentGranted, setRecordingConsentGranted] = useState(false);
+  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [organizationUsers, setOrganizationUsers] = useState<OrganizationUser[]>([]);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
     (call.status === 'in_call' ||
@@ -76,6 +84,9 @@ export function App(): JSX.Element {
     void window.api.permissions.check().then(setPermissions);
     void refreshAudioStatus();
     void window.api.dev.isEnabled().then(setDevToolsEnabled);
+    void window.api.organizations.getCurrentContext().then(setCurrentUserContext);
+    void window.api.organizations.list().then(setOrganizations);
+    void window.api.organizations.listUsers().then(setOrganizationUsers);
     void window.api.settings.get().then((loadedSettings) => {
       setSettings(loadedSettings);
       if (loadedSettings.selectedProductId) setProductId(loadedSettings.selectedProductId);
@@ -145,14 +156,16 @@ export function App(): JSX.Element {
   const startCall = async (): Promise<void> => {
     setAudioError(null);
     setSttError(null);
-    await window.api.call.start(productId);
+    await window.api.call.start(productId, createRealtimeConsent());
+    setRecordingConsentGranted(false);
     await refreshAudioStatus();
   };
 
   const startAudioDiagnostic = async (): Promise<void> => {
     setAudioError(null);
     setSttError(null);
-    await window.api.audio.start();
+    await window.api.audio.start(createRealtimeConsent());
+    setRecordingConsentGranted(false);
     await refreshAudioStatus();
   };
 
@@ -232,6 +245,16 @@ export function App(): JSX.Element {
     await refreshSecretStatus();
   };
 
+  const updateOrganizationUserRole = async (
+    membershipId: string,
+    role: OrganizationRole,
+  ): Promise<void> => {
+    const updated = await window.api.organizations.updateUserRole(membershipId, role);
+    setOrganizationUsers((current) =>
+      current.map((user) => (user.membershipId === updated.membershipId ? updated : user)),
+    );
+  };
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
@@ -284,6 +307,8 @@ export function App(): JSX.Element {
               currentObjection={currentObjection}
               currentResponse={currentResponse}
               recentTranscripts={recentTranscripts}
+              recordingConsentGranted={recordingConsentGranted}
+              onRecordingConsentChange={setRecordingConsentGranted}
               sttError={sttError}
               sttState={sttState}
             />
@@ -304,6 +329,10 @@ export function App(): JSX.Element {
               secretInputs={secretInputs}
               secretStatus={secretStatus}
               settings={settings}
+              currentUserContext={currentUserContext}
+              organizations={organizations}
+              organizationUsers={organizationUsers}
+              onUpdateUserRole={updateOrganizationUserRole}
               onSecretInputChange={(key, value) =>
                 setSecretInputs((current) => ({ ...current, [key]: value }))
               }
@@ -339,6 +368,8 @@ function DashboardPanel(props: {
   currentObjection: DetectedObjection | null;
   currentResponse: ObjectionResponse | null;
   recentTranscripts: Transcript[];
+  recordingConsentGranted: boolean;
+  onRecordingConsentChange: (granted: boolean) => void;
   deepgramConfigured: boolean;
   devToolsEnabled: boolean;
   sttError: string | null;
@@ -355,7 +386,10 @@ function DashboardPanel(props: {
     props.sttState === 'connected' ||
     props.sttState === 'reconnecting';
   const canStartAudioDiagnostic = Boolean(
-    props.permissions?.screen && props.permissions?.microphone && !audioDiagnosticActive,
+    props.permissions?.screen &&
+      props.permissions?.microphone &&
+      props.recordingConsentGranted &&
+      !audioDiagnosticActive,
   );
 
   return (
@@ -392,6 +426,17 @@ function DashboardPanel(props: {
           onRequestMicrophonePermission={props.onRequestMicrophonePermission}
           onRequestScreenPermission={props.onRequestScreenPermission}
         />
+        <label className="mb-4 flex items-start gap-2 rounded border border-zinc-800 p-3 text-xs text-zinc-400">
+          <input
+            type="checkbox"
+            checked={props.recordingConsentGranted}
+            onChange={(event) => props.onRecordingConsentChange(event.currentTarget.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            顧客へ録音・文字起こし・コンプライアンス解析の目的を説明し、同意を取得しました。
+          </span>
+        </label>
         <div className="flex items-center gap-3">
           {props.call.status === 'in_call' ? (
             <button
@@ -406,7 +451,11 @@ function DashboardPanel(props: {
               type="button"
               onClick={() => void props.onStartCall()}
               className="rounded bg-overlay-success px-4 py-2 text-sm font-medium text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={!props.permissions?.screen || !props.permissions?.microphone}
+              disabled={
+                !props.permissions?.screen ||
+                !props.permissions?.microphone ||
+                !props.recordingConsentGranted
+              }
             >
               通話を開始
             </button>
@@ -777,16 +826,109 @@ function createUploadConsent(): RecordingConsent {
   };
 }
 
+function createRealtimeConsent(): RecordingConsent {
+  return {
+    status: 'granted',
+    method: 'verbal',
+    capturedAt: new Date().toISOString(),
+    noticeVersion: 'local-v1',
+  };
+}
+
 function SettingsPanel(props: {
   permissions: PermissionState | null;
   secretInputs: Record<string, string>;
   secretStatus: Record<string, boolean>;
   settings: AppSettings | null;
+  currentUserContext: CurrentUserContext | null;
+  organizations: Organization[];
+  organizationUsers: OrganizationUser[];
+  onUpdateUserRole: (membershipId: string, role: OrganizationRole) => Promise<void>;
   onSecretInputChange: (key: string, value: string) => void;
   onSaveSecret: (key: string) => Promise<void>;
 }): JSX.Element {
   return (
     <>
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">組織・ユーザー権限</h2>
+        <div className="grid gap-4 text-sm md:grid-cols-2">
+          <div className="rounded border border-zinc-800 p-3">
+            <div className="text-xs text-zinc-500">現在の利用者</div>
+            <div className="mt-1 font-medium">{props.currentUserContext?.user.displayName ?? '-'}</div>
+            <div className="text-xs text-zinc-500">
+              {props.currentUserContext?.organization.name ?? '-'} /{' '}
+              {props.currentUserContext?.membership.role ?? '-'}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {props.currentUserContext?.permissions.map((permission) => (
+                <span key={permission} className="rounded bg-zinc-800 px-2 py-0.5 text-[11px]">
+                  {permission}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="rounded border border-zinc-800 p-3">
+            <div className="text-xs text-zinc-500">会社階層</div>
+            <ul className="mt-2 space-y-2">
+              {props.organizations.map((organization) => (
+                <li key={organization.id}>
+                  <span className="font-medium">{organization.name}</span>
+                  <span className="ml-2 text-xs text-zinc-500">{organization.type}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded border border-zinc-800">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-zinc-900 text-zinc-500">
+              <tr>
+                <th className="px-3 py-2">ユーザー</th>
+                <th className="px-3 py-2">ロール</th>
+                <th className="px-3 py-2">組織</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.organizationUsers.map((user) => (
+                <tr key={user.membershipId} className="border-t border-zinc-800">
+                  <td className="px-3 py-2">
+                    {user.displayName}
+                    <div className="text-zinc-600">{user.email}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <select
+                      aria-label={`${user.displayName} role`}
+                      value={user.role}
+                      disabled={
+                        user.membershipId === props.currentUserContext?.membership.id ||
+                        (props.currentUserContext?.membership.role !== 'insurer_admin' &&
+                          user.organizationId !== props.currentUserContext?.organization.id)
+                      }
+                      onChange={(event) =>
+                        void props.onUpdateUserRole(
+                          user.membershipId,
+                          event.currentTarget.value as OrganizationRole,
+                        )
+                      }
+                      className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <option value="insurer_admin">insurer_admin</option>
+                      <option value="agency_admin">agency_admin</option>
+                      <option value="manager">manager</option>
+                      <option value="agent">agent</option>
+                      <option value="auditor">auditor</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-zinc-500">
+                    {user.organizationId.slice(0, 8)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="rounded-lg border border-zinc-800 p-5">
         <h2 className="mb-3 text-sm font-medium text-zinc-400">権限</h2>
         <div className="grid grid-cols-2 gap-3 text-sm">

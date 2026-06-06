@@ -14,6 +14,20 @@ export const MeetingSourceSchema = z.enum([
 ]);
 export const IndustrySchema = z.enum(['btob_sales', 'insurance']);
 export const OrganizationTypeSchema = z.enum(['insurer', 'agency', 'internal']);
+export const OrganizationRoleSchema = z.enum([
+  'insurer_admin',
+  'agency_admin',
+  'manager',
+  'agent',
+  'auditor',
+]);
+export const OrganizationPermissionSchema = z.enum([
+  'recording:start',
+  'calls:read',
+  'reviews:manage',
+  'rules:manage',
+  'organization:manage',
+]);
 export const RecordingConsentStatusSchema = z.enum([
   'pending',
   'granted',
@@ -351,11 +365,50 @@ export const OrganizationSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const AppUserSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  displayName: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const OrganizationMembershipSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  userId: z.string().uuid(),
+  role: OrganizationRoleSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const OrganizationUserRoleUpdateInputSchema = z.object({
+  membershipId: z.string().uuid(),
+  role: OrganizationRoleSchema,
+});
+
 export const RecordingConsentSchema = z.object({
   status: RecordingConsentStatusSchema,
   method: RecordingConsentMethodSchema.nullable(),
   capturedAt: z.string().nullable(),
   noticeVersion: z.string().min(1),
+});
+
+export const GrantedRecordingConsentSchema = RecordingConsentSchema.refine(
+  (consent) => consent.status === 'granted',
+  {
+    message: 'Recording consent must be granted before starting recording',
+  },
+);
+
+export const CallStartInputSchema = z.object({
+  productId: ProductIdSchema,
+  consent: GrantedRecordingConsentSchema,
+});
+
+export const AudioStartInputSchema = z.object({
+  consent: GrantedRecordingConsentSchema,
 });
 
 export const CallSessionSchema = z.object({
@@ -404,9 +457,7 @@ export const AudioAssetSchema = z.object({
 
 export const AudioImportInputSchema = z.object({
   productId: ProductIdSchema,
-  consent: RecordingConsentSchema.refine((consent) => consent.status === 'granted', {
-    message: 'Recording consent must be granted before importing audio',
-  }),
+  consent: GrantedRecordingConsentSchema,
 });
 
 export const AudioSttJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);

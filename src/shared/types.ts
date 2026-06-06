@@ -13,6 +13,13 @@ export type MeetingSource =
 
 export type Industry = 'btob_sales' | 'insurance';
 export type OrganizationType = 'insurer' | 'agency' | 'internal';
+export type OrganizationRole = 'insurer_admin' | 'agency_admin' | 'manager' | 'agent' | 'auditor';
+export type OrganizationPermission =
+  | 'recording:start'
+  | 'calls:read'
+  | 'reviews:manage'
+  | 'rules:manage'
+  | 'organization:manage';
 export type RecordingConsentStatus = 'pending' | 'granted' | 'declined' | 'not_required';
 export type RecordingConsentMethod =
   | 'verbal'
@@ -160,6 +167,40 @@ export interface Organization {
   name: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AppUser {
+  id: string;
+  email: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationMembership {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  userId: string;
+  role: OrganizationRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationUser extends AppUser {
+  membershipId: string;
+  tenantId: string;
+  organizationId: string;
+  role: OrganizationRole;
+  permissions: OrganizationPermission[];
+}
+
+export interface CurrentUserContext {
+  user: AppUser;
+  tenant: Tenant;
+  organization: Organization;
+  membership: OrganizationMembership;
+  permissions: OrganizationPermission[];
 }
 
 export interface RecordingConsent {
@@ -427,7 +468,7 @@ export interface RendererApi {
   };
   call: {
     list(): Promise<CallSession[]>;
-    start(productId: ProductId): Promise<void>;
+    start(productId: ProductId, consent: RecordingConsent): Promise<void>;
     end(): Promise<void>;
     setProduct(productId: ProductId): Promise<void>;
     onState(cb: (state: CallState) => void): () => void;
@@ -437,9 +478,15 @@ export interface RendererApi {
   };
   audio: {
     getStatus(): Promise<AudioCaptureStatus>;
-    start(): Promise<void>;
+    start(consent: RecordingConsent): Promise<void>;
     stop(): Promise<void>;
     onError(cb: (message: string) => void): () => void;
+  };
+  organizations: {
+    getCurrentContext(): Promise<CurrentUserContext>;
+    list(): Promise<Organization[]>;
+    listUsers(): Promise<OrganizationUser[]>;
+    updateUserRole(membershipId: string, role: OrganizationRole): Promise<OrganizationUser>;
   };
   audioAssets: {
     import(productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null>;

@@ -69,6 +69,13 @@ export const IPC = {
     onState: 'call:on-state',
   },
 
+  organizations: {
+    currentContext: 'organizations:current-context',
+    list: 'organizations:list',
+    usersList: 'organizations:users-list',
+    updateUserRole: 'organizations:update-user-role',
+  },
+
   // Transcript segments
   transcripts: {
     list: 'transcripts:list',

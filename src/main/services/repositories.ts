@@ -5,11 +5,16 @@ import type {
   AuditLogEntry,
   CallSession,
   ComplianceRule,
+  CurrentUserContext,
   Industry,
   KnowledgeEntry,
   MeetingMinute,
   ProductId,
   RecordingConsent,
+  Organization,
+  OrganizationPermission,
+  OrganizationRole,
+  OrganizationUser,
   ReviewTask,
   Transcript,
   TranscriptSegment,
@@ -47,6 +52,11 @@ export interface CallRepository {
 
 export interface OrganizationRepository {
   getDefaultScope(): Promise<{ tenantId: string; organizationId: string }>;
+  getCurrentContext(): Promise<CurrentUserContext>;
+  listOrganizations(tenantId: string): Promise<Organization[]>;
+  listUsers(tenantId: string): Promise<OrganizationUser[]>;
+  updateUserRole(tenantId: string, membershipId: string, role: OrganizationRole): Promise<OrganizationUser>;
+  assertPermission(permission: OrganizationPermission): Promise<CurrentUserContext>;
 }
 
 export interface TranscriptRepository {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AudioChunkSchema,
+  CallStartInputSchema,
   KnowledgeSearchInputSchema,
   OverlayLayerSchema,
   SecretSetInputSchema,
@@ -47,6 +48,20 @@ describe('shared schemas', () => {
         data: '',
         startMs: -1,
         durationMs: 0,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects realtime recording start without granted consent', () => {
+    expect(() =>
+      CallStartInputSchema.parse({
+        productId: 'real_estate',
+        consent: {
+          status: 'pending',
+          method: null,
+          capturedAt: null,
+          noticeVersion: 'local-v1',
+        },
       }),
     ).toThrow();
   });
