@@ -68,6 +68,13 @@ Cloudflare βでは、認証済みセッションで音声をWorkerへ送信し�
 
 API:
 
+- `POST /v1/audio-upload-urls`
+  - `Authorization: Bearer <SIGNED_SESSION>`
+  - body: `fileName`, `mimeType`, `sizeBytes`, `productId`
+  - returns: 15分有効・一回限りの `PUT uploadUrl`
+- `PUT /v1/audio-upload-urls/{token}`
+  - `Authorization` 不要。署名token、期限、D1の未使用状態、`content-length` 一致を検証
+  - 成功時にR2保存、D1メタデータ作成、Queue投入を行う
 - `POST /v1/audio-assets`
   - `Authorization: Bearer <SIGNED_SESSION>`
   - body: 音声バイナリ
@@ -78,4 +85,4 @@ API:
 - `GET /v1/calls/{id}/transcripts`
   - STT完了後のtranscript取得
 
-現在はWorker直アップロードです。大容量・スマホ本番UXでは、次段階でR2署名URL方式へ切り替えます。
+互換用にWorker直アップロードも残しています。スマホ・管理画面は署名URL方式を優先します。

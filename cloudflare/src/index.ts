@@ -1,6 +1,8 @@
 import {
   createPasswordCredential,
+  createSignedPayloadToken,
   createSessionToken,
+  verifySignedPayloadToken,
   verifyPassword,
   verifySessionToken,
   type PasswordCredential,
@@ -35,6 +37,38 @@ interface AudioUploadResult {
   audioAssetId: string;
   sttJobId: string;
   status: 'queued';
+}
+
+interface SignedAudioUploadResult {
+  uploadId: string;
+  callId: string;
+  audioAssetId: string;
+  sttJobId: string;
+  uploadUrl: string;
+  expiresAt: string;
+  method: 'PUT';
+  headers: {
+    'content-type': string;
+    'content-length': string;
+  };
+}
+
+interface AudioUploadMetadata {
+  callId: string;
+  audioAssetId: string;
+  sttJobId: string;
+  tenantId: string;
+  organizationId: string;
+  userId: string;
+  r2Key: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  productId: string;
+}
+
+interface SignedUploadPayload extends AudioUploadMetadata {
+  uploadId: string;
 }
 
 interface AuthUserRow {
@@ -75,6 +109,16 @@ export default {
           ),
         );
       }
+      if (request.method === 'PUT' && url.pathname.startsWith('/v1/audio-upload-urls/')) {
+        return json(
+          await consumeSignedAudioUpload(
+            request,
+            env,
+            pathId(url.pathname, '/v1/audio-upload-urls/'),
+          ),
+          201,
+        );
+      }
 
       const session = await assertSession(request, env.SESSION_SIGNING_KEY);
       const context = await resolveSessionContext(session, env.DB);
@@ -109,6 +153,9 @@ export default {
       }
       if (request.method === 'POST' && url.pathname === '/v1/audio-assets') {
         return json(await uploadAudioAsset(request, env, context), 201);
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/audio-upload-urls') {
+        return json(await createSignedAudioUploadUrl(request, env, context, url), 201);
       }
       if (request.method === 'GET' && url.pathname.startsWith('/v1/stt-jobs/')) {
         return json(await getSttJob(env.DB, context, pathId(url.pathname, '/v1/stt-jobs/')));
@@ -250,14 +297,169 @@ async function uploadAudioAsset(
     `${audioAssetId}-${fileName}`,
   ].join('/');
 
-  await env.AUDIO_BUCKET.put(r2Key, request.body, {
-    httpMetadata: { contentType: mimeType },
-    customMetadata: {
-      tenantId: context.tenantId,
-      organizationId: context.organizationId,
+  await persistAudioUpload(
+    env,
+    request.body,
+    {
       callId,
       audioAssetId,
-      uploadedByUserId: context.userId,
+      sttJobId,
+      tenantId: context.tenantId,
+      organizationId: context.organizationId,
+      userId: context.userId,
+      r2Key,
+      fileName,
+      mimeType,
+      sizeBytes: contentLength,
+      productId,
+    },
+    timestamp,
+  );
+  return { callId, audioAssetId, sttJobId, status: 'queued' };
+}
+
+async function createSignedAudioUploadUrl(
+  request: Request,
+  env: Env,
+  context: RequestContext,
+  url: URL,
+): Promise<SignedAudioUploadResult> {
+  const input = parseSignedAudioUploadInput(await request.json());
+  const timestamp = new Date().toISOString();
+  const uploadId = crypto.randomUUID();
+  const callId = crypto.randomUUID();
+  const audioAssetId = crypto.randomUUID();
+  const sttJobId = crypto.randomUUID();
+  const fileName = sanitizeFileName(input.fileName);
+  const r2Key = [
+    context.tenantId,
+    context.organizationId,
+    callId,
+    `${audioAssetId}-${fileName}`,
+  ].join('/');
+  const payload: SignedUploadPayload = {
+    uploadId,
+    callId,
+    audioAssetId,
+    sttJobId,
+    tenantId: context.tenantId,
+    organizationId: context.organizationId,
+    userId: context.userId,
+    r2Key,
+    fileName,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+    productId: input.productId,
+  };
+  const signed = await createSignedPayloadToken(
+    signedUploadPayloadRecord(payload),
+    requiredSecret(env.SESSION_SIGNING_KEY, 'session_signing_key_not_configured'),
+    15 * 60,
+  );
+  await env.DB.prepare(
+    `INSERT INTO pending_audio_uploads (
+      id, call_id, audio_asset_id, stt_job_id, tenant_id, organization_id, user_id, r2_key,
+      file_name, mime_type, size_bytes, product_id, status, expires_at, consumed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?, ?)`,
+  )
+    .bind(
+      uploadId,
+      callId,
+      audioAssetId,
+      sttJobId,
+      context.tenantId,
+      context.organizationId,
+      context.userId,
+      r2Key,
+      fileName,
+      input.mimeType,
+      input.sizeBytes,
+      input.productId,
+      signed.expiresAt,
+      timestamp,
+      timestamp,
+    )
+    .run();
+  return {
+    uploadId,
+    callId,
+    audioAssetId,
+    sttJobId,
+    uploadUrl: `${url.origin}/v1/audio-upload-urls/${encodeURIComponent(signed.token)}`,
+    expiresAt: signed.expiresAt,
+    method: 'PUT',
+    headers: {
+      'content-type': input.mimeType,
+      'content-length': String(input.sizeBytes),
+    },
+  };
+}
+
+async function consumeSignedAudioUpload(
+  request: Request,
+  env: Env,
+  token: string,
+): Promise<AudioUploadResult> {
+  const payload = await verifySignedPayloadToken(
+    decodeURIComponent(token),
+    requiredSecret(env.SESSION_SIGNING_KEY, 'session_signing_key_not_configured'),
+    parseSignedUploadPayload,
+  );
+  if (!payload) {
+    throw new HttpError(401, 'invalid_or_expired_upload_url');
+  }
+  const contentLength = parseContentLength(request.headers.get('content-length'));
+  if (contentLength !== payload.sizeBytes) {
+    throw new HttpError(400, 'audio_size_mismatch');
+  }
+  if (!request.body) {
+    throw new HttpError(400, 'missing_audio_body');
+  }
+  const pending = await env.DB.prepare(
+    `SELECT id, status, expires_at
+     FROM pending_audio_uploads
+     WHERE id = ? AND tenant_id = ? AND organization_id = ?`,
+  )
+    .bind(payload.uploadId, payload.tenantId, payload.organizationId)
+    .first<{ id: string; status: string; expires_at: string }>();
+  if (!pending || pending.status !== 'pending') {
+    throw new HttpError(409, 'upload_url_already_consumed');
+  }
+  if (Date.parse(pending.expires_at) <= Date.now()) {
+    await markPendingUpload(env.DB, payload.uploadId, 'expired');
+    throw new HttpError(401, 'upload_url_expired');
+  }
+  const timestamp = new Date().toISOString();
+  await persistAudioUpload(env, request.body, payload, timestamp);
+  await env.DB.prepare(
+    `UPDATE pending_audio_uploads
+     SET status = 'consumed', consumed_at = ?, updated_at = ?
+     WHERE id = ? AND status = 'pending'`,
+  )
+    .bind(timestamp, timestamp, payload.uploadId)
+    .run();
+  return {
+    callId: payload.callId,
+    audioAssetId: payload.audioAssetId,
+    sttJobId: payload.sttJobId,
+    status: 'queued',
+  };
+}
+
+async function persistAudioUpload(
+  env: Env,
+  body: ReadableStream,
+  metadata: AudioUploadMetadata,
+  timestamp: string,
+): Promise<void> {
+  await env.AUDIO_BUCKET.put(metadata.r2Key, body, {
+    httpMetadata: { contentType: metadata.mimeType },
+    customMetadata: {
+      tenantId: metadata.tenantId,
+      organizationId: metadata.organizationId,
+      callId: metadata.callId,
+      audioAssetId: metadata.audioAssetId,
+      uploadedByUserId: metadata.userId,
     },
   });
   await env.DB.batch([
@@ -268,10 +470,10 @@ async function uploadAudioAsset(
         status, started_at, ended_at, created_at, updated_at
       ) VALUES (?, ?, ?, 'mobile_recording', 'insurance', ?, 'granted', 'upload_attestation', ?, 'cloud-v1', 'ended', ?, ?, ?, ?)`,
     ).bind(
-      callId,
-      context.tenantId,
-      context.organizationId,
-      productId,
+      metadata.callId,
+      metadata.tenantId,
+      metadata.organizationId,
+      metadata.productId,
       timestamp,
       timestamp,
       timestamp,
@@ -283,14 +485,14 @@ async function uploadAudioAsset(
         id, call_id, tenant_id, organization_id, r2_key, file_name, mime_type, size_bytes, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      audioAssetId,
-      callId,
-      context.tenantId,
-      context.organizationId,
-      r2Key,
-      fileName,
-      mimeType,
-      contentLength,
+      metadata.audioAssetId,
+      metadata.callId,
+      metadata.tenantId,
+      metadata.organizationId,
+      metadata.r2Key,
+      metadata.fileName,
+      metadata.mimeType,
+      metadata.sizeBytes,
       timestamp,
     ),
     env.DB.prepare(
@@ -298,25 +500,35 @@ async function uploadAudioAsset(
         id, call_id, audio_asset_id, tenant_id, organization_id, provider, status, error_message, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, 'deepgram', 'queued', NULL, ?, ?)`,
     ).bind(
-      sttJobId,
-      callId,
-      audioAssetId,
-      context.tenantId,
-      context.organizationId,
+      metadata.sttJobId,
+      metadata.callId,
+      metadata.audioAssetId,
+      metadata.tenantId,
+      metadata.organizationId,
       timestamp,
       timestamp,
     ),
   ]);
   await env.STT_QUEUE.send({
-    jobId: sttJobId,
-    callId,
-    audioAssetId,
-    r2Key,
-    tenantId: context.tenantId,
-    organizationId: context.organizationId,
-    mimeType,
+    jobId: metadata.sttJobId,
+    callId: metadata.callId,
+    audioAssetId: metadata.audioAssetId,
+    r2Key: metadata.r2Key,
+    tenantId: metadata.tenantId,
+    organizationId: metadata.organizationId,
+    mimeType: metadata.mimeType,
   });
-  return { callId, audioAssetId, sttJobId, status: 'queued' };
+}
+
+async function markPendingUpload(
+  database: D1Database,
+  uploadId: string,
+  status: 'expired',
+): Promise<void> {
+  await database
+    .prepare('UPDATE pending_audio_uploads SET status = ?, updated_at = ? WHERE id = ?')
+    .bind(status, new Date().toISOString(), uploadId)
+    .run();
 }
 
 async function getSttJob(
@@ -689,6 +901,84 @@ function parsePasswordInput(value: unknown): string {
     throw new HttpError(400, 'invalid_password_input');
   }
   return value.password;
+}
+
+function parseSignedAudioUploadInput(value: unknown): {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  productId: string;
+} {
+  if (
+    !isRecord(value) ||
+    typeof value.fileName !== 'string' ||
+    value.fileName.trim().length === 0 ||
+    typeof value.mimeType !== 'string' ||
+    !value.mimeType.startsWith('audio/') ||
+    typeof value.sizeBytes !== 'number' ||
+    !Number.isInteger(value.sizeBytes) ||
+    value.sizeBytes <= 0 ||
+    value.sizeBytes > 100 * 1024 * 1024
+  ) {
+    throw new HttpError(400, 'invalid_audio_upload_input');
+  }
+  return {
+    fileName: value.fileName,
+    mimeType: value.mimeType,
+    sizeBytes: value.sizeBytes,
+    productId: typeof value.productId === 'string' && value.productId ? value.productId : 'real_estate',
+  };
+}
+
+function parseSignedUploadPayload(value: Record<string, unknown>): SignedUploadPayload | null {
+  if (
+    typeof value.uploadId !== 'string' ||
+    typeof value.callId !== 'string' ||
+    typeof value.audioAssetId !== 'string' ||
+    typeof value.sttJobId !== 'string' ||
+    typeof value.tenantId !== 'string' ||
+    typeof value.organizationId !== 'string' ||
+    typeof value.userId !== 'string' ||
+    typeof value.r2Key !== 'string' ||
+    typeof value.fileName !== 'string' ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.sizeBytes !== 'number' ||
+    !Number.isInteger(value.sizeBytes) ||
+    typeof value.productId !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    uploadId: value.uploadId,
+    callId: value.callId,
+    audioAssetId: value.audioAssetId,
+    sttJobId: value.sttJobId,
+    tenantId: value.tenantId,
+    organizationId: value.organizationId,
+    userId: value.userId,
+    r2Key: value.r2Key,
+    fileName: value.fileName,
+    mimeType: value.mimeType,
+    sizeBytes: value.sizeBytes,
+    productId: value.productId,
+  };
+}
+
+function signedUploadPayloadRecord(payload: SignedUploadPayload): Record<string, string | number> {
+  return {
+    uploadId: payload.uploadId,
+    callId: payload.callId,
+    audioAssetId: payload.audioAssetId,
+    sttJobId: payload.sttJobId,
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    userId: payload.userId,
+    r2Key: payload.r2Key,
+    fileName: payload.fileName,
+    mimeType: payload.mimeType,
+    sizeBytes: payload.sizeBytes,
+    productId: payload.productId,
+  };
 }
 
 function parseContentLength(value: string | null): number {

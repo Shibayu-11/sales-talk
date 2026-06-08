@@ -16,6 +16,8 @@ export interface PasswordCredential {
   algorithm: 'PBKDF2-SHA256';
 }
 
+export type SignedPayloadValue = string | number | boolean | null;
+
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 100_000;
 const BYTE_ARRAY_CHUNK_SIZE = 32_768;
@@ -86,6 +88,49 @@ export async function verifySessionToken(
   return payload;
 }
 
+export async function createSignedPayloadToken(
+  payload: Record<string, SignedPayloadValue>,
+  signingKey: string,
+  ttlSeconds: number,
+  now = new Date(),
+): Promise<{ token: string; expiresAt: string }> {
+  const issuedAtSeconds = Math.floor(now.getTime() / 1_000);
+  const fullPayload = {
+    ...payload,
+    iat: issuedAtSeconds,
+    exp: issuedAtSeconds + ttlSeconds,
+    nonce: base64UrlEncode(crypto.getRandomValues(new Uint8Array(16))),
+  };
+  const payloadPart = base64UrlEncode(new TextEncoder().encode(JSON.stringify(fullPayload)));
+  const signature = await signBytes(payloadPart, signingKey);
+  return {
+    token: `${payloadPart}.${base64UrlEncode(signature)}`,
+    expiresAt: new Date(fullPayload.exp * 1_000).toISOString(),
+  };
+}
+
+export async function verifySignedPayloadToken<T>(
+  token: string,
+  signingKey: string,
+  parsePayload: (payload: Record<string, unknown>) => T | null,
+  now = new Date(),
+): Promise<T | null> {
+  const parts = token.split('.');
+  const payloadPart = parts[0];
+  const signaturePart = parts[1];
+  if (!payloadPart || !signaturePart || parts.length !== 2) {
+    return null;
+  }
+  if (!(await verifySignature(payloadPart, base64UrlDecode(signaturePart), signingKey))) {
+    return null;
+  }
+  const parsed = parseJsonRecord(new TextDecoder().decode(base64UrlDecode(payloadPart)));
+  if (!parsed || typeof parsed.exp !== 'number' || parsed.exp <= Math.floor(now.getTime() / 1_000)) {
+    return null;
+  }
+  return parsePayload(parsed);
+}
+
 async function derivePasswordHash(
   password: string,
   salt: Uint8Array,
@@ -133,8 +178,8 @@ async function importSigningKey(signingKey: string): Promise<CryptoKey> {
 
 function parseSessionPayload(value: string): SessionPayload | null {
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed)) {
+    const parsed = parseJsonRecord(value);
+    if (!parsed) {
       return null;
     }
     if (
@@ -159,6 +204,15 @@ function parseSessionPayload(value: string): SessionPayload | null {
       exp: parsed.exp,
       nonce: parsed.nonce,
     };
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
