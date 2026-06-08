@@ -55,3 +55,27 @@ Workerは署名済みセッションとD1の `organization_memberships` を照�
 ## 外部API secrets
 
 - `DEEPGRAM_API_KEY`: 音声アップロード後のSTT worker / queue処理で使用します。Electron側にも同じkeyを `safeStorage` へ保存します。
+
+## 音声アップロード / STT Queue
+
+Cloudflare βでは、認証済みセッションで音声をWorkerへ送信し、WorkerがR2保存とD1メタデータ作成を行います。その後 `sales-talk-stt-jobs` QueueへSTT jobを投入し、consumerがDeepgram prerecorded STTを実行します。
+
+リソース:
+
+- R2 bucket: `sales-talk-audio-prod`
+- Queue: `sales-talk-stt-jobs`
+- D1 tables: `audio_assets`, `stt_jobs`, `transcript_segments`
+
+API:
+
+- `POST /v1/audio-assets`
+  - `Authorization: Bearer <SIGNED_SESSION>`
+  - body: 音声バイナリ
+  - headers: `content-type`, `content-length`, `x-file-name`, `x-product-id`
+  - returns: `callId`, `audioAssetId`, `sttJobId`, `status: queued`
+- `GET /v1/stt-jobs/{id}`
+  - STT jobの状態確認
+- `GET /v1/calls/{id}/transcripts`
+  - STT完了後のtranscript取得
+
+現在はWorker直アップロードです。大容量・スマホ本番UXでは、次段階でR2署名URL方式へ切り替えます。

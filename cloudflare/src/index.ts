@@ -6,6 +6,7 @@ import {
   type PasswordCredential,
   type SessionPayload,
 } from './auth';
+import { transcribeWithDeepgram, type SttQueueMessage, type TranscriptSegmentInput } from './stt';
 
 interface RequestContext {
   tenantId: string;
@@ -27,6 +28,13 @@ interface AuditLogInput {
   previousHash: string | null;
   hash: string;
   createdAt: string;
+}
+
+interface AudioUploadResult {
+  callId: string;
+  audioAssetId: string;
+  sttJobId: string;
+  status: 'queued';
 }
 
 interface AuthUserRow {
@@ -99,6 +107,18 @@ export default {
         await insertAuditLog(env.DB, context, input);
         return json({ ok: true }, 201);
       }
+      if (request.method === 'POST' && url.pathname === '/v1/audio-assets') {
+        return json(await uploadAudioAsset(request, env, context), 201);
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/v1/stt-jobs/')) {
+        return json(await getSttJob(env.DB, context, pathId(url.pathname, '/v1/stt-jobs/')));
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/v1/calls/')) {
+        const match = /^\/v1\/calls\/([^/]+)\/transcripts$/.exec(url.pathname);
+        if (match?.[1]) {
+          return json(await listTranscriptSegments(env.DB, context, match[1]));
+        }
+      }
 
       return json({ error: 'not_found' }, 404);
     } catch (error) {
@@ -106,7 +126,14 @@ export default {
       return json({ error: errorMessage(error) }, errorStatus(error));
     }
   },
-} satisfies ExportedHandler<Env>;
+
+  async queue(batch, env): Promise<void> {
+    for (const message of batch.messages) {
+      await processSttQueueMessage(env, message.body);
+      message.ack();
+    }
+  },
+} satisfies ExportedHandler<Env, SttQueueMessage>;
 
 async function resolveSessionContext(
   session: SessionPayload,
@@ -191,6 +218,213 @@ async function insertAuditLog(
       input.createdAt,
     )
     .run();
+}
+
+async function uploadAudioAsset(
+  request: Request,
+  env: Env,
+  context: RequestContext,
+): Promise<AudioUploadResult> {
+  const contentLength = parseContentLength(request.headers.get('content-length'));
+  if (contentLength <= 0) {
+    throw new HttpError(400, 'missing_audio_body');
+  }
+  if (contentLength > 100 * 1024 * 1024) {
+    throw new HttpError(413, 'audio_file_too_large');
+  }
+  if (!request.body) {
+    throw new HttpError(400, 'missing_audio_body');
+  }
+
+  const timestamp = new Date().toISOString();
+  const callId = crypto.randomUUID();
+  const audioAssetId = crypto.randomUUID();
+  const sttJobId = crypto.randomUUID();
+  const fileName = sanitizeFileName(request.headers.get('x-file-name') ?? 'upload.audio');
+  const mimeType = request.headers.get('content-type') ?? 'application/octet-stream';
+  const productId = request.headers.get('x-product-id') ?? 'real_estate';
+  const r2Key = [
+    context.tenantId,
+    context.organizationId,
+    callId,
+    `${audioAssetId}-${fileName}`,
+  ].join('/');
+
+  await env.AUDIO_BUCKET.put(r2Key, request.body, {
+    httpMetadata: { contentType: mimeType },
+    customMetadata: {
+      tenantId: context.tenantId,
+      organizationId: context.organizationId,
+      callId,
+      audioAssetId,
+      uploadedByUserId: context.userId,
+    },
+  });
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO calls (
+        id, tenant_id, organization_id, source, industry, product_id,
+        consent_status, consent_method, consent_captured_at, consent_notice_version,
+        status, started_at, ended_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'mobile_recording', 'insurance', ?, 'granted', 'upload_attestation', ?, 'cloud-v1', 'ended', ?, ?, ?, ?)`,
+    ).bind(
+      callId,
+      context.tenantId,
+      context.organizationId,
+      productId,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+    ),
+    env.DB.prepare(
+      `INSERT INTO audio_assets (
+        id, call_id, tenant_id, organization_id, r2_key, file_name, mime_type, size_bytes, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      audioAssetId,
+      callId,
+      context.tenantId,
+      context.organizationId,
+      r2Key,
+      fileName,
+      mimeType,
+      contentLength,
+      timestamp,
+    ),
+    env.DB.prepare(
+      `INSERT INTO stt_jobs (
+        id, call_id, audio_asset_id, tenant_id, organization_id, provider, status, error_message, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'deepgram', 'queued', NULL, ?, ?)`,
+    ).bind(
+      sttJobId,
+      callId,
+      audioAssetId,
+      context.tenantId,
+      context.organizationId,
+      timestamp,
+      timestamp,
+    ),
+  ]);
+  await env.STT_QUEUE.send({
+    jobId: sttJobId,
+    callId,
+    audioAssetId,
+    r2Key,
+    tenantId: context.tenantId,
+    organizationId: context.organizationId,
+    mimeType,
+  });
+  return { callId, audioAssetId, sttJobId, status: 'queued' };
+}
+
+async function getSttJob(
+  database: D1Database,
+  context: RequestContext,
+  jobId: string,
+): Promise<unknown> {
+  const row = await database
+    .prepare(
+      `SELECT *
+       FROM stt_jobs
+       WHERE id = ? AND tenant_id = ? AND organization_id = ?`,
+    )
+    .bind(jobId, context.tenantId, context.organizationId)
+    .first();
+  if (!row) {
+    throw new HttpError(404, 'stt_job_not_found');
+  }
+  return row;
+}
+
+async function listTranscriptSegments(
+  database: D1Database,
+  context: RequestContext,
+  callId: string,
+): Promise<unknown[]> {
+  const result = await database
+    .prepare(
+      `SELECT *
+       FROM transcript_segments
+       WHERE call_id = ? AND tenant_id = ? AND organization_id = ?
+       ORDER BY start_ms ASC`,
+    )
+    .bind(callId, context.tenantId, context.organizationId)
+    .all();
+  return result.results;
+}
+
+async function processSttQueueMessage(env: Env, message: SttQueueMessage): Promise<void> {
+  const timestamp = new Date().toISOString();
+  await env.DB.prepare('UPDATE stt_jobs SET status = ?, updated_at = ? WHERE id = ?')
+    .bind('running', timestamp, message.jobId)
+    .run();
+  try {
+    const audioObject = await env.AUDIO_BUCKET.get(message.r2Key);
+    if (!audioObject) {
+      throw new Error('audio_object_not_found');
+    }
+    const transcripts = await transcribeWithDeepgram({
+      apiKey: requiredSecret(env.DEEPGRAM_API_KEY, 'deepgram_api_key_not_configured'),
+      audio: await audioObject.arrayBuffer(),
+      mimeType: message.mimeType,
+    });
+    await insertTranscriptSegments(
+      env.DB,
+      transcripts.map((transcript) => ({
+        id: crypto.randomUUID(),
+        callId: message.callId,
+        tenantId: message.tenantId,
+        organizationId: message.organizationId,
+        speaker: 'counterpart',
+        text: transcript.text,
+        isFinal: true,
+        startMs: transcript.startMs,
+        endMs: transcript.endMs,
+        createdAt: new Date().toISOString(),
+      })),
+    );
+    await env.DB.prepare('UPDATE stt_jobs SET status = ?, error_message = NULL, updated_at = ? WHERE id = ?')
+      .bind('completed', new Date().toISOString(), message.jobId)
+      .run();
+  } catch (error) {
+    await env.DB.prepare('UPDATE stt_jobs SET status = ?, error_message = ?, updated_at = ? WHERE id = ?')
+      .bind('failed', errorMessage(error), new Date().toISOString(), message.jobId)
+      .run();
+    throw error;
+  }
+}
+
+async function insertTranscriptSegments(
+  database: D1Database,
+  transcripts: TranscriptSegmentInput[],
+): Promise<void> {
+  if (transcripts.length === 0) {
+    return;
+  }
+  await database.batch(
+    transcripts.map((transcript) =>
+      database
+        .prepare(
+          `INSERT INTO transcript_segments (
+            id, call_id, tenant_id, organization_id, speaker, text, is_final, start_ms, end_ms, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          transcript.id,
+          transcript.callId,
+          transcript.tenantId,
+          transcript.organizationId,
+          transcript.speaker,
+          transcript.text,
+          transcript.isFinal ? 1 : 0,
+          transcript.startMs,
+          transcript.endMs,
+          transcript.createdAt,
+        ),
+    ),
+  );
 }
 
 async function assertBootstrapToken(request: Request, expectedToken: string | undefined): Promise<void> {
@@ -455,6 +689,27 @@ function parsePasswordInput(value: unknown): string {
     throw new HttpError(400, 'invalid_password_input');
   }
   return value.password;
+}
+
+function parseContentLength(value: string | null): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function sanitizeFileName(value: string): string {
+  const sanitized = value.replaceAll(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  return sanitized || 'upload.audio';
+}
+
+function pathId(pathname: string, prefix: string): string {
+  const id = pathname.slice(prefix.length);
+  if (!id) {
+    throw new HttpError(400, 'missing_path_id');
+  }
+  return id;
 }
 
 function bearerToken(request: Request, missingError: string): string {

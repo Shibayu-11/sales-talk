@@ -15,5 +15,26 @@
       "database_id": "fe4a14d0-435b-49f1-abeb-2dcafd2f5e15",
       "migrations_dir": "cloudflare/migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AUDIO_BUCKET",
+      "bucket_name": "sales-talk-audio-prod"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "STT_QUEUE",
+        "queue": "sales-talk-stt-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "sales-talk-stt-jobs",
+        "max_batch_size": 1,
+        "max_retries": 3
+      }
+    ]
+  }
 }
