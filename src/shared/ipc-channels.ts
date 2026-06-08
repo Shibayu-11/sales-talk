@@ -15,6 +15,10 @@ export const IPC = {
 
   cloudflare: {
     status: 'cloudflare:status',
+    bootstrap: 'cloudflare:bootstrap',
+    login: 'cloudflare:login',
+    changePassword: 'cloudflare:change-password',
+    logout: 'cloudflare:logout',
   },
 
   // Permissions (macOS)

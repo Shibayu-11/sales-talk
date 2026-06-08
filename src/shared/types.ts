@@ -526,6 +526,10 @@ export interface RendererApi {
   };
   cloudflare: {
     getStatus(): Promise<CloudflareConnectionStatus>;
+    bootstrap(email: string, password: string): Promise<CloudflareConnectionStatus>;
+    login(email: string, password: string): Promise<CloudflareConnectionStatus>;
+    changePassword(password: string): Promise<CloudflareConnectionStatus>;
+    logout(): Promise<CloudflareConnectionStatus>;
   };
   permissions: {
     check(): Promise<PermissionState>;

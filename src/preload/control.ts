@@ -40,7 +40,13 @@ import type {
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
 const IPC = {
   app: { version: 'app:version' },
-  cloudflare: { status: 'cloudflare:status' },
+  cloudflare: {
+    status: 'cloudflare:status',
+    bootstrap: 'cloudflare:bootstrap',
+    login: 'cloudflare:login',
+    changePassword: 'cloudflare:change-password',
+    logout: 'cloudflare:logout',
+  },
   permissions: {
     check: 'permissions:check',
     requestScreen: 'permissions:request-screen',
@@ -161,6 +167,13 @@ const api: RendererApi = {
   },
   cloudflare: {
     getStatus: (): Promise<CloudflareConnectionStatus> => ipcRenderer.invoke(IPC.cloudflare.status),
+    bootstrap: (email: string, password: string): Promise<CloudflareConnectionStatus> =>
+      ipcRenderer.invoke(IPC.cloudflare.bootstrap, { email, password }),
+    login: (email: string, password: string): Promise<CloudflareConnectionStatus> =>
+      ipcRenderer.invoke(IPC.cloudflare.login, { email, password }),
+    changePassword: (password: string): Promise<CloudflareConnectionStatus> =>
+      ipcRenderer.invoke(IPC.cloudflare.changePassword, { password }),
+    logout: (): Promise<CloudflareConnectionStatus> => ipcRenderer.invoke(IPC.cloudflare.logout),
   },
   permissions: {
     check: () => ipcRenderer.invoke(IPC.permissions.check),

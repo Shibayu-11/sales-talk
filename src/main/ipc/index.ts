@@ -13,6 +13,7 @@ import {
   AudioSttJobRunInputSchema,
   CallIdInputSchema,
   CallStartInputSchema,
+  CloudflareCredentialInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
   ComplianceRuleUpdateInputSchema,
@@ -85,7 +86,13 @@ import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
 import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
 import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
-import { getCloudflareConnectionStatus } from '../services/cloudflare-api';
+import {
+  bootstrapCloudflareCredential,
+  changeCloudflarePassword,
+  getCloudflareConnectionStatus,
+  loginCloudflare,
+  logoutCloudflare,
+} from '../services/cloudflare-api';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -133,6 +140,19 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.app.version, () => app.getVersion());
   ipcMain.handle(IPC.cloudflare.status, () => getCloudflareConnectionStatus());
+  ipcMain.handle(IPC.cloudflare.bootstrap, async (_event, payload: unknown) => {
+    const input = CloudflareCredentialInputSchema.parse(payload);
+    return bootstrapCloudflareCredential(input);
+  });
+  ipcMain.handle(IPC.cloudflare.login, async (_event, payload: unknown) => {
+    const input = CloudflareCredentialInputSchema.parse(payload);
+    return loginCloudflare(input);
+  });
+  ipcMain.handle(IPC.cloudflare.changePassword, async (_event, payload: unknown) => {
+    const input = CloudflareCredentialInputSchema.pick({ password: true }).parse(payload);
+    return changeCloudflarePassword(input.password);
+  });
+  ipcMain.handle(IPC.cloudflare.logout, () => logoutCloudflare());
 
   ipcMain.handle(IPC.permissions.check, () => checkPermissions());
   ipcMain.handle(IPC.permissions.requestScreen, async () => {

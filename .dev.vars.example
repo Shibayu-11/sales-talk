@@ -1,1 +1,2 @@
 API_TOKEN=replace-with-a-local-development-token
+SESSION_SIGNING_KEY=replace-with-a-local-session-signing-key

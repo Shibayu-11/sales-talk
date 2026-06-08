@@ -58,7 +58,7 @@ const SECRET_KEYS = [
   { key: 'anthropic_api_key', label: 'Anthropic' },
   { key: 'cohere_api_key', label: 'Cohere' },
   { key: 'supabase_anon_key', label: 'Supabase anon' },
-  { key: 'cloudflare_api_token', label: 'Cloudflare API token' },
+  { key: 'cloudflare_api_token', label: 'Cloudflare bootstrap token' },
 ] as const;
 const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
 const AUDIT_ACTION_OPTIONS = [
@@ -381,6 +381,7 @@ export function App(): JSX.Element {
               organizationUsers={organizationUsers}
               cloudflareStatus={cloudflareStatus}
               onRefreshCloudflare={() => window.api.cloudflare.getStatus().then(setCloudflareStatus)}
+              onCloudflareStatusChange={setCloudflareStatus}
               onUpdateUserRole={updateOrganizationUserRole}
               onSecretInputChange={(key, value) =>
                 setSecretInputs((current) => ({ ...current, [key]: value }))
@@ -894,10 +895,27 @@ function SettingsPanel(props: {
   organizationUsers: OrganizationUser[];
   cloudflareStatus: CloudflareConnectionStatus | null;
   onRefreshCloudflare: () => Promise<void>;
+  onCloudflareStatusChange: (status: CloudflareConnectionStatus) => void;
   onUpdateUserRole: (membershipId: string, role: OrganizationRole) => Promise<void>;
   onSecretInputChange: (key: string, value: string) => void;
   onSaveSecret: (key: string) => Promise<void>;
 }): JSX.Element {
+  const [cloudflareEmail, setCloudflareEmail] = useState('agency-admin@example.local');
+  const [cloudflarePassword, setCloudflarePassword] = useState('');
+  const [cloudflareAuthPending, setCloudflareAuthPending] = useState(false);
+
+  const runCloudflareAuth = async (
+    action: (email: string, password: string) => Promise<CloudflareConnectionStatus>,
+  ): Promise<void> => {
+    setCloudflareAuthPending(true);
+    try {
+      props.onCloudflareStatusChange(await action(cloudflareEmail, cloudflarePassword));
+      setCloudflarePassword('');
+    } finally {
+      setCloudflareAuthPending(false);
+    }
+  };
+
   return (
     <>
       <div className="rounded-lg border border-zinc-800 p-5">
@@ -919,9 +937,74 @@ function SettingsPanel(props: {
             Worker: {props.cloudflareStatus?.healthy ? '接続済み' : '未接続'}
           </span>
           <span className={props.cloudflareStatus?.authenticated ? 'text-overlay-success' : 'text-zinc-500'}>
-            認証: {props.cloudflareStatus?.authenticated ? '接続済み' : 'トークン未接続'}
+            認証: {props.cloudflareStatus?.authenticated ? 'ログイン済み' : '未ログイン'}
           </span>
           {props.cloudflareStatus?.error && <span className="text-zinc-600">{props.cloudflareStatus.error}</span>}
+        </div>
+        <div className="mt-4 grid gap-3 border-t border-zinc-800 pt-4 md:grid-cols-2">
+          <label className="text-xs text-zinc-500">
+            メールアドレス
+            <input
+              type="email"
+              value={cloudflareEmail}
+              onChange={(event) => setCloudflareEmail(event.currentTarget.value)}
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-200"
+            />
+          </label>
+          <label className="text-xs text-zinc-500">
+            パスワード（12文字以上）
+            <input
+              type="password"
+              value={cloudflarePassword}
+              onChange={(event) => setCloudflarePassword(event.currentTarget.value)}
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-200"
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={cloudflareAuthPending || cloudflarePassword.length < 12}
+            onClick={() => void runCloudflareAuth(window.api.cloudflare.login)}
+            className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 disabled:opacity-40"
+          >
+            ログイン
+          </button>
+          <button
+            type="button"
+            disabled={cloudflareAuthPending || cloudflarePassword.length < 12}
+            onClick={() => void runCloudflareAuth(window.api.cloudflare.bootstrap)}
+            className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40"
+          >
+            初回資格情報設定
+          </button>
+          <button
+            type="button"
+            disabled={
+              cloudflareAuthPending ||
+              cloudflarePassword.length < 12 ||
+              !props.cloudflareStatus?.authenticated
+            }
+            onClick={() =>
+              void window.api.cloudflare
+                .changePassword(cloudflarePassword)
+                .then(props.onCloudflareStatusChange)
+                .then(() => setCloudflarePassword(''))
+            }
+            className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40"
+          >
+            パスワード更新
+          </button>
+          <button
+            type="button"
+            disabled={cloudflareAuthPending || !props.cloudflareStatus?.authenticated}
+            onClick={() =>
+              void window.api.cloudflare.logout().then(props.onCloudflareStatusChange)
+            }
+            className="rounded border border-zinc-700 px-3 py-2 text-xs disabled:opacity-40"
+          >
+            ログアウト
+          </button>
         </div>
       </div>
 

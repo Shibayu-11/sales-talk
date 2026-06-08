@@ -9,14 +9,17 @@ SalesTalk のマルチテナントクラウドAPIです。
 
 ## 初期設定
 
-保護APIを有効化するには、Cloudflare側とElectron設定画面へ同じAPIトークンを保存します。
+`API_TOKEN` は初回ユーザー資格情報設定専用です。通常APIはユーザーログインで発行される署名済みセッションだけを受け付けます。
 
 ```sh
 npx wrangler secret put API_TOKEN
+npx wrangler secret put SESSION_SIGNING_KEY
 ```
 
-トークンはコマンド引数やリポジトリへ保存せず、Wranglerの対話入力を使用してください。
-Electron側では設定画面の `Cloudflare API token` からmacOS Keychainへ保存します。
+秘密値はコマンド引数やリポジトリへ保存せず、Wranglerの対話入力を使用してください。
+Electron側では設定画面の `Cloudflare bootstrap token` を保存後、`初回資格情報設定` でユーザー別パスワードを登録します。
+ログイン後のセッショントークンは Main プロセスが `safeStorage` へ保存し、Renderer には公開しません。
+初回資格情報設定は未設定ユーザーに対して一度だけ実行できます。設定後の変更はログイン状態で `パスワード更新` を使用します。
 
 ## コマンド
 
@@ -31,11 +34,19 @@ npx wrangler deploy
 
 ## API認証
 
-保護APIは以下を要求します。
+初回資格情報設定:
 
 - `Authorization: Bearer <API_TOKEN>`
-- `x-tenant-id`
-- `x-organization-id`
-- `x-user-id`
+- `POST /v1/auth/bootstrap`
 
-WorkerはD1の `organization_memberships` を照合し、テナント・組織境界を強制します。
+通常ログイン:
+
+- `POST /v1/auth/login`
+- メールアドレスと12文字以上のパスワード
+
+保護API:
+
+- `Authorization: Bearer <SIGNED_SESSION>`
+
+Workerは署名済みセッションとD1の `organization_memberships` を照合し、リクエストヘッダーによるユーザー・テナント・組織のなりすましを拒否します。セッション有効期限は12時間です。
+パスワード更新とログアウト時はセッションバージョンを更新し、既存セッションを失効させます。

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AudioChunkSchema,
   CallStartInputSchema,
+  CloudflareCredentialInputSchema,
   KnowledgeSearchInputSchema,
   OverlayLayerSchema,
   SecretSetInputSchema,
@@ -14,6 +15,15 @@ describe('shared schemas', () => {
 
   it('rejects empty secret values', () => {
     expect(() => SecretSetInputSchema.parse({ key: 'deepgram_api_key', value: '' })).toThrow();
+  });
+
+  it('requires a strong enough Cloudflare login password', () => {
+    expect(() =>
+      CloudflareCredentialInputSchema.parse({
+        email: 'agency-admin@example.local',
+        password: 'short',
+      }),
+    ).toThrow();
   });
 
   it('normalizes knowledge search query limits', () => {

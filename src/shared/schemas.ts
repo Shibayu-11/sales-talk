@@ -574,9 +574,15 @@ export const SecretKeySchema = z.enum([
   'cohere_api_key',
   'supabase_anon_key',
   'cloudflare_api_token',
+  'cloudflare_session_token',
   'sentry_dsn',
   'posthog_key',
 ]);
+
+export const CloudflareCredentialInputSchema = z.object({
+  email: z.string().trim().email().max(320),
+  password: z.string().min(12).max(200),
+});
 
 export const SecretSetInputSchema = z.object({
   key: SecretKeySchema,
