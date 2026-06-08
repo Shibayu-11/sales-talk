@@ -26,6 +26,7 @@ export const OrganizationPermissionSchema = z.enum([
   'calls:read',
   'reviews:manage',
   'rules:manage',
+  'rules:approve',
   'organization:manage',
 ]);
 export const RecordingConsentStatusSchema = z.enum([
@@ -146,6 +147,13 @@ export const AuditActionSchema = z.enum([
   'organization.user_role_updated',
   'compliance.rule_set_created',
   'compliance.rule_set_active_updated',
+  'compliance.rule_created',
+  'compliance.rule_updated',
+  'compliance.rule_deleted',
+  'compliance.rule_set_submitted',
+  'compliance.rule_set_approved',
+  'compliance.rule_set_rejected',
+  'compliance.rule_set_revision_created',
   'minutes.generated',
   'compliance.finding_detected',
   'review_task.created',
@@ -167,6 +175,7 @@ export const ComplianceRuleSchema = z.object({
   pattern: z.string().min(1),
   reason: z.string().min(1),
   recommendedPhrase: z.string().min(1),
+  priority: z.number().int().min(0).max(1000).default(100),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -175,10 +184,15 @@ export const ComplianceRuleSetSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid(),
   organizationId: z.string().uuid(),
+  parentRuleSetId: z.string().uuid().nullable().default(null),
   name: z.string().min(1).max(120),
   productCategory: z.string().min(1).max(120),
   presetKey: z.string().min(1).max(120).nullable(),
   active: z.boolean(),
+  version: z.number().int().positive().default(1),
+  approvalStatus: z.enum(['draft', 'pending_review', 'approved', 'rejected']).default('approved'),
+  approvedAt: z.string().nullable().default(null),
+  approvedByUserId: z.string().uuid().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -303,9 +317,19 @@ export const ComplianceRuleCreateInputSchema = z.object({
   pattern: z.string().trim().min(1).max(500),
   reason: z.string().trim().min(1).max(1_000),
   recommendedPhrase: z.string().trim().min(1).max(1_000),
+  priority: z.number().int().min(0).max(1000).default(100),
 });
 
 export const ComplianceRuleDeleteInputSchema = z.string().uuid();
+export const ComplianceRuleUpdateInputSchema = z.object({
+  id: z.string().uuid(),
+  severity: ComplianceSeveritySchema,
+  ruleType: ComplianceRuleTypeSchema,
+  pattern: z.string().trim().min(1).max(500),
+  reason: z.string().trim().min(1).max(1_000),
+  recommendedPhrase: z.string().trim().min(1).max(1_000),
+  priority: z.number().int().min(0).max(1000),
+});
 export const ComplianceRuleSetCreateInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   productCategory: z.string().trim().min(1).max(120),
@@ -314,6 +338,11 @@ export const ComplianceRuleSetCreateInputSchema = z.object({
 export const ComplianceRuleSetActiveInputSchema = z.object({
   id: z.string().uuid(),
   active: z.boolean(),
+});
+export const ComplianceRuleSetIdInputSchema = z.string().uuid();
+export const ComplianceRuleSetReviewInputSchema = z.object({
+  id: z.string().uuid(),
+  approved: z.boolean(),
 });
 
 export const MeetingMinuteSchema = z.object({
@@ -608,5 +637,6 @@ export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchem
 export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
 export type KnowledgeCreateInput = z.infer<typeof KnowledgeCreateInputSchema>;
 export type ComplianceRuleCreateInput = z.infer<typeof ComplianceRuleCreateInputSchema>;
+export type ComplianceRuleUpdateInput = z.infer<typeof ComplianceRuleUpdateInputSchema>;
 export type ComplianceRuleSetCreateInput = z.infer<typeof ComplianceRuleSetCreateInputSchema>;
 export type ReviewTaskUpdateStatusInput = z.infer<typeof ReviewTaskUpdateStatusInputSchema>;

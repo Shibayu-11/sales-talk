@@ -6,6 +6,7 @@ const ROLE_PERMISSIONS: Record<OrganizationRole, OrganizationPermission[]> = {
     'calls:read',
     'reviews:manage',
     'rules:manage',
+    'rules:approve',
     'organization:manage',
   ],
   agency_admin: [
@@ -13,6 +14,7 @@ const ROLE_PERMISSIONS: Record<OrganizationRole, OrganizationPermission[]> = {
     'calls:read',
     'reviews:manage',
     'rules:manage',
+    'rules:approve',
     'organization:manage',
   ],
   manager: ['recording:start', 'calls:read', 'reviews:manage'],

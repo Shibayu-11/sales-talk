@@ -28,9 +28,52 @@ describe('LocalComplianceStore', () => {
         name: '不動産向け重点ルール',
         productCategory: 'real_estate',
       });
-      await expect(store.setRuleSetActive(agencySet.id, false)).resolves.toMatchObject({
-        active: false,
+      expect(agencySet).toMatchObject({ active: false, approvalStatus: 'draft', version: 1 });
+      const rule = await store.createRule({
+        ruleSetId: agencySet.id,
+        ...scope,
+        companyId: scope.organizationId,
+        industry: 'insurance',
+        productCategory: 'real_estate',
+        severity: 'high',
+        ruleType: 'prohibited_expression',
+        pattern: '絶対安全',
+        reason: '断定表現です。',
+        recommendedPhrase: 'リスクを説明します。',
+        priority: 20,
       });
+      await expect(store.updateRule({ ...rule, priority: 10 })).resolves.toMatchObject({
+        priority: 10,
+      });
+      await expect(store.submitRuleSet(agencySet.id)).resolves.toMatchObject({
+        approvalStatus: 'pending_review',
+      });
+      await expect(
+        store.reviewRuleSet(agencySet.id, true, '00000000-0000-4000-8000-000000000004'),
+      ).resolves.toMatchObject({
+        active: true,
+        approvalStatus: 'approved',
+        version: 1,
+      });
+      const revision = await store.createRuleSetRevision(agencySet.id);
+      expect(revision).toMatchObject({
+        active: false,
+        approvalStatus: 'draft',
+        version: 2,
+      });
+      await store.submitRuleSet(revision.id);
+      await store.reviewRuleSet(
+        revision.id,
+        true,
+        '00000000-0000-4000-8000-000000000004',
+      );
+      await expect(store.listRuleSets(scope)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: agencySet.id, active: false }),
+          expect.objectContaining({ id: revision.id, active: true, version: 2 }),
+        ]),
+      );
+      await expect(store.deleteRule(rule.id)).rejects.toThrow('Only draft or rejected');
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

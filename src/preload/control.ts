@@ -120,11 +120,16 @@ const IPC = {
   },
   compliance: {
     rulesList: 'compliance:rules-list',
+    rulesListForSet: 'compliance:rules-list-for-set',
     rulesCreate: 'compliance:rules-create',
+    rulesUpdate: 'compliance:rules-update',
     rulesDelete: 'compliance:rules-delete',
     ruleSetsList: 'compliance:rule-sets-list',
     ruleSetsCreate: 'compliance:rule-sets-create',
     ruleSetsSetActive: 'compliance:rule-sets-set-active',
+    ruleSetsSubmit: 'compliance:rule-sets-submit',
+    ruleSetsReview: 'compliance:rule-sets-review',
+    ruleSetsCreateRevision: 'compliance:rule-sets-create-revision',
   },
   settings: {
     get: 'settings:get',
@@ -300,12 +305,20 @@ const api: RendererApi = {
   },
   compliance: {
     listRules: (): Promise<ComplianceRule[]> => ipcRenderer.invoke(IPC.compliance.rulesList),
+    listRulesForSet: (ruleSetId: string): Promise<ComplianceRule[]> =>
+      ipcRenderer.invoke(IPC.compliance.rulesListForSet, ruleSetId),
     listRuleSets: (): Promise<ComplianceRuleSet[]> =>
       ipcRenderer.invoke(IPC.compliance.ruleSetsList),
     createRuleSet: (input): Promise<ComplianceRuleSet> =>
       ipcRenderer.invoke(IPC.compliance.ruleSetsCreate, input),
     setRuleSetActive: (id: string, active: boolean): Promise<ComplianceRuleSet> =>
       ipcRenderer.invoke(IPC.compliance.ruleSetsSetActive, { id, active }),
+    submitRuleSet: (id: string): Promise<ComplianceRuleSet> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsSubmit, id),
+    reviewRuleSet: (id: string, approved: boolean): Promise<ComplianceRuleSet> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsReview, { id, approved }),
+    createRuleSetRevision: (id: string): Promise<ComplianceRuleSet> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsCreateRevision, id),
     createRule: (input: {
       ruleSetId: string;
       companyId: string;
@@ -316,7 +329,10 @@ const api: RendererApi = {
       pattern: string;
       reason: string;
       recommendedPhrase: string;
+      priority: number;
     }): Promise<ComplianceRule> => ipcRenderer.invoke(IPC.compliance.rulesCreate, input),
+    updateRule: (input): Promise<ComplianceRule> =>
+      ipcRenderer.invoke(IPC.compliance.rulesUpdate, input),
     deleteRule: (id: string): Promise<void> => ipcRenderer.invoke(IPC.compliance.rulesDelete, id),
   },
   settings: {

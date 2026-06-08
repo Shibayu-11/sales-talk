@@ -15,8 +15,11 @@ import {
   CallStartInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
+  ComplianceRuleUpdateInputSchema,
   ComplianceRuleSetActiveInputSchema,
   ComplianceRuleSetCreateInputSchema,
+  ComplianceRuleSetIdInputSchema,
+  ComplianceRuleSetReviewInputSchema,
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeCreateInputSchema,
@@ -44,6 +47,8 @@ import type {
   AudioSttJob,
   CallSession,
   CallState,
+  ComplianceRule,
+  ComplianceRuleSet,
   CurrentUserContext,
   MeetingMinute,
   PermissionState,
@@ -440,6 +445,12 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
       organizationId: context.organization.id,
     });
   });
+  ipcMain.handle(IPC.compliance.rulesListForSet, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    const ruleSetId = ComplianceRuleSetIdInputSchema.parse(payload);
+    await assertManageableRuleSet(context, ruleSetId, false);
+    return appRepositories.complianceRules.listRulesForSet(ruleSetId);
+  });
   ipcMain.handle(IPC.compliance.ruleSetsList, async () => {
     const context = await appRepositories.organizations.getCurrentContext();
     return appRepositories.complianceRules.listRuleSets({
@@ -496,15 +507,80 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     ]);
     return updated;
   });
+  ipcMain.handle(IPC.compliance.ruleSetsSubmit, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
+    const id = ComplianceRuleSetIdInputSchema.parse(payload);
+    await assertManageableRuleSet(context, id, true);
+    const updated = await appRepositories.complianceRules.submitRuleSet(id);
+    await appendRuleSetAudit(context, updated, 'compliance.rule_set_submitted');
+    return updated;
+  });
+  ipcMain.handle(IPC.compliance.ruleSetsReview, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:approve');
+    const input = ComplianceRuleSetReviewInputSchema.parse(payload);
+    await assertManageableRuleSet(context, input.id, true);
+    const updated = await appRepositories.complianceRules.reviewRuleSet(
+      input.id,
+      input.approved,
+      context.user.id,
+    );
+    await appendRuleSetAudit(
+      context,
+      updated,
+      input.approved ? 'compliance.rule_set_approved' : 'compliance.rule_set_rejected',
+    );
+    return updated;
+  });
+  ipcMain.handle(IPC.compliance.ruleSetsCreateRevision, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
+    const id = ComplianceRuleSetIdInputSchema.parse(payload);
+    await assertManageableRuleSet(context, id, true);
+    const revision = await appRepositories.complianceRules.createRuleSetRevision(id);
+    await appendRuleSetAudit(context, revision, 'compliance.rule_set_revision_created');
+    return revision;
+  });
   ipcMain.handle(IPC.compliance.rulesCreate, async (_event, payload: unknown) => {
-    await appRepositories.organizations.assertPermission('rules:manage');
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
     const input = ComplianceRuleCreateInputSchema.parse(payload);
-    return appRepositories.complianceRules.createRule(input);
+    const ruleSet = await assertManageableRuleSet(context, input.ruleSetId, true);
+    const rule = await appRepositories.complianceRules.createRule({
+      ...input,
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+      companyId: context.organization.id,
+      productCategory: ruleSet.productCategory,
+    });
+    await appendRuleAudit(context, rule, 'compliance.rule_created');
+    return rule;
+  });
+  ipcMain.handle(IPC.compliance.rulesUpdate, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
+    const input = ComplianceRuleUpdateInputSchema.parse(payload);
+    const existing = (await appRepositories.complianceRules.listRuleSets({
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+    }));
+    const rules = await Promise.all(existing.map((ruleSet) => appRepositories.complianceRules.listRulesForSet(ruleSet.id)));
+    const current = rules.flat().find((rule) => rule.id === input.id);
+    if (!current) throw new Error('Compliance rule was not found');
+    await assertManageableRuleSet(context, current.ruleSetId, true);
+    const updated = await appRepositories.complianceRules.updateRule(input);
+    await appendRuleAudit(context, updated, 'compliance.rule_updated');
+    return updated;
   });
   ipcMain.handle(IPC.compliance.rulesDelete, async (_event, payload: unknown) => {
-    await appRepositories.organizations.assertPermission('rules:manage');
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
     const id = ComplianceRuleDeleteInputSchema.parse(payload);
+    const ruleSets = await appRepositories.complianceRules.listRuleSets({
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+    });
+    const rules = await Promise.all(ruleSets.map((ruleSet) => appRepositories.complianceRules.listRulesForSet(ruleSet.id)));
+    const current = rules.flat().find((rule) => rule.id === id);
+    if (!current) throw new Error('Compliance rule was not found');
+    await assertManageableRuleSet(context, current.ruleSetId, true);
     await appRepositories.complianceRules.deleteRule(id);
+    await appendRuleAudit(context, current, 'compliance.rule_deleted');
   });
 
   ipcMain.handle(IPC.objection.feedback, (_event, payload: unknown) => {
@@ -1051,6 +1127,62 @@ function auditLogScope(context: CurrentUserContext): {
     organizationId:
       context.membership.role === 'insurer_admin' ? undefined : context.organization.id,
   };
+}
+
+async function assertManageableRuleSet(
+  context: CurrentUserContext,
+  ruleSetId: string,
+  requireOwner: boolean,
+): Promise<ComplianceRuleSet> {
+  const ruleSets = await appRepositories.complianceRules.listRuleSets({
+    tenantId: context.tenant.id,
+    organizationId: context.organization.id,
+  });
+  const ruleSet = ruleSets.find((candidate) => candidate.id === ruleSetId);
+  if (!ruleSet || (requireOwner && ruleSet.organizationId !== context.organization.id)) {
+    throw new Error('Compliance rule set cannot be managed by this organization');
+  }
+  return ruleSet;
+}
+
+async function appendRuleSetAudit(
+  context: CurrentUserContext,
+  ruleSet: ComplianceRuleSet,
+  action: AuditLogEntry['action'],
+): Promise<void> {
+  await appRepositories.auditLogs.appendAuditLogs([
+    createUserAuditLogEntry(context, {
+      action,
+      targetType: 'compliance_rule_set',
+      targetId: ruleSet.id,
+      metadata: {
+        name: ruleSet.name,
+        version: ruleSet.version,
+        approvalStatus: ruleSet.approvalStatus,
+        active: ruleSet.active,
+      },
+    }),
+  ]);
+}
+
+async function appendRuleAudit(
+  context: CurrentUserContext,
+  rule: ComplianceRule,
+  action: AuditLogEntry['action'],
+): Promise<void> {
+  await appRepositories.auditLogs.appendAuditLogs([
+    createUserAuditLogEntry(context, {
+      action,
+      targetType: 'compliance_rule',
+      targetId: rule.id,
+      metadata: {
+        ruleSetId: rule.ruleSetId,
+        priority: rule.priority,
+        severity: rule.severity,
+        ruleType: rule.ruleType,
+      },
+    }),
+  ]);
 }
 
 function extractNumbers(text: string): MeetingMinute['numbers'] {

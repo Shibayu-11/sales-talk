@@ -64,7 +64,36 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
     await controlWindow.getByLabel('ルールセット名').fill('不動産向け重点ルール');
     await controlWindow.getByLabel('ルールセット商品').selectOption('real_estate');
     await controlWindow.getByRole('button', { name: 'セット作成' }).click();
-    await expect(controlWindow.getByText('不動産向け重点ルール')).toBeVisible();
+    await expect(controlWindow.getByText('不動産向け重点ルール', { exact: true })).toBeVisible();
+    await controlWindow.getByLabel('ルール検知表現').fill('絶対安全');
+    await controlWindow.getByLabel('ルール理由').fill('断定表現です。');
+    await controlWindow.getByLabel('ルール推奨表現').fill('リスクを説明します。');
+    await controlWindow.getByLabel('ルール優先度').fill('20');
+    await controlWindow.getByRole('button', { name: 'ルール追加' }).click();
+    await expect(controlWindow.getByText('絶対安全')).toBeVisible();
+    await controlWindow.getByRole('button', { name: '優先度↑' }).click();
+    await expect(controlWindow.getByText(/優先度 10/)).toBeVisible();
+    await controlWindow
+      .getByText('不動産向け重点ルール', { exact: true })
+      .locator('..')
+      .locator('..')
+      .getByRole('button', { name: '承認申請' })
+      .click();
+    await expect(
+      controlWindow.getByText('商品: real_estate / 自社ルール / v1 / pending_review'),
+    ).toBeVisible();
+    await controlWindow.getByRole('button', { name: '承認' }).click();
+    const approvedRuleSetCard = controlWindow
+      .getByText('不動産向け重点ルール', { exact: true })
+      .locator('..')
+      .locator('..');
+    await expect(approvedRuleSetCard.getByText(/v1 \/ approved/)).toBeVisible();
+    await approvedRuleSetCard
+      .getByRole('button', { name: '新版作成' })
+      .click();
+    await expect(
+      controlWindow.getByText('不動産向け重点ルール v2', { exact: true }),
+    ).toBeVisible();
   });
 });
 

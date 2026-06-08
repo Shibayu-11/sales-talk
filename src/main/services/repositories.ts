@@ -24,6 +24,7 @@ import type {
 } from '@shared/types';
 import type {
   ComplianceRuleCreateInput,
+  ComplianceRuleUpdateInput,
   ComplianceRuleSetCreateInput,
   KnowledgeCreateInput,
 } from '@shared/schemas';
@@ -127,12 +128,17 @@ export interface ComplianceRuleRepository {
     productCategory?: string,
   ): Promise<ComplianceRule[]>;
   listRuleSets(scope: { tenantId: string; organizationId: string }): Promise<ComplianceRuleSet[]>;
+  listRulesForSet(ruleSetId: string): Promise<ComplianceRule[]>;
   createRuleSet(
     scope: { tenantId: string; organizationId: string },
     input: ComplianceRuleSetCreateInput,
   ): Promise<ComplianceRuleSet>;
   setRuleSetActive(id: string, active: boolean): Promise<ComplianceRuleSet>;
+  submitRuleSet(id: string): Promise<ComplianceRuleSet>;
+  reviewRuleSet(id: string, approved: boolean, approvedByUserId: string): Promise<ComplianceRuleSet>;
+  createRuleSetRevision(id: string): Promise<ComplianceRuleSet>;
   createRule(input: ComplianceRuleCreateInput): Promise<ComplianceRule>;
+  updateRule(input: ComplianceRuleUpdateInput): Promise<ComplianceRule>;
   deleteRule(id: string): Promise<void>;
 }
 

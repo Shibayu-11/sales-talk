@@ -19,6 +19,7 @@ export type OrganizationPermission =
   | 'calls:read'
   | 'reviews:manage'
   | 'rules:manage'
+  | 'rules:approve'
   | 'organization:manage';
 export type RecordingConsentStatus = 'pending' | 'granted' | 'declined' | 'not_required';
 export type RecordingConsentMethod =
@@ -305,6 +306,7 @@ export type ComplianceRuleType =
   | 'caution_expression'
   | 'required_disclosure';
 export type ComplianceReviewStatus = 'unreviewed' | 'approved' | 'dismissed' | 'escalated';
+export type ComplianceRuleSetApprovalStatus = 'draft' | 'pending_review' | 'approved' | 'rejected';
 export type ReviewTaskStatus =
   | 'open'
   | 'approved'
@@ -318,6 +320,13 @@ export type AuditAction =
   | 'organization.user_role_updated'
   | 'compliance.rule_set_created'
   | 'compliance.rule_set_active_updated'
+  | 'compliance.rule_created'
+  | 'compliance.rule_updated'
+  | 'compliance.rule_deleted'
+  | 'compliance.rule_set_submitted'
+  | 'compliance.rule_set_approved'
+  | 'compliance.rule_set_rejected'
+  | 'compliance.rule_set_revision_created'
   | 'minutes.generated'
   | 'compliance.finding_detected'
   | 'review_task.created'
@@ -339,6 +348,7 @@ export interface ComplianceRule {
   pattern: string;
   reason: string;
   recommendedPhrase: string;
+  priority: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -347,10 +357,15 @@ export interface ComplianceRuleSet {
   id: string;
   tenantId: string;
   organizationId: string;
+  parentRuleSetId: string | null;
   name: string;
   productCategory: string;
   presetKey: string | null;
   active: boolean;
+  version: number;
+  approvalStatus: ComplianceRuleSetApprovalStatus;
+  approvedAt: string | null;
+  approvedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -598,6 +613,7 @@ export interface RendererApi {
   };
   compliance: {
     listRules(): Promise<ComplianceRule[]>;
+    listRulesForSet(ruleSetId: string): Promise<ComplianceRule[]>;
     listRuleSets(): Promise<ComplianceRuleSet[]>;
     createRuleSet(input: {
       name: string;
@@ -605,6 +621,9 @@ export interface RendererApi {
       presetKey?: string | undefined;
     }): Promise<ComplianceRuleSet>;
     setRuleSetActive(id: string, active: boolean): Promise<ComplianceRuleSet>;
+    submitRuleSet(id: string): Promise<ComplianceRuleSet>;
+    reviewRuleSet(id: string, approved: boolean): Promise<ComplianceRuleSet>;
+    createRuleSetRevision(id: string): Promise<ComplianceRuleSet>;
     createRule(input: {
       ruleSetId: string;
       companyId: string;
@@ -615,6 +634,16 @@ export interface RendererApi {
       pattern: string;
       reason: string;
       recommendedPhrase: string;
+      priority: number;
+    }): Promise<ComplianceRule>;
+    updateRule(input: {
+      id: string;
+      severity: ComplianceSeverity;
+      ruleType: ComplianceRuleType;
+      pattern: string;
+      reason: string;
+      recommendedPhrase: string;
+      priority: number;
     }): Promise<ComplianceRule>;
     deleteRule(id: string): Promise<void>;
   };

@@ -12,6 +12,9 @@ import type {
   CallSession,
   CallState,
   ConnectionState,
+  ComplianceRule,
+  ComplianceRuleType,
+  ComplianceSeverity,
   ComplianceRuleSet,
   CurrentUserContext,
   DetectedObjection,
@@ -62,6 +65,13 @@ const AUDIT_ACTION_OPTIONS = [
   'organization.user_role_updated',
   'compliance.rule_set_created',
   'compliance.rule_set_active_updated',
+  'compliance.rule_created',
+  'compliance.rule_updated',
+  'compliance.rule_deleted',
+  'compliance.rule_set_submitted',
+  'compliance.rule_set_approved',
+  'compliance.rule_set_rejected',
+  'compliance.rule_set_revision_created',
   'minutes.generated',
   'compliance.finding_detected',
   'review_task.created',
@@ -1166,6 +1176,14 @@ function ComplianceRuleSetsPanel(props: {
   const [ruleSets, setRuleSets] = useState<ComplianceRuleSet[]>([]);
   const [name, setName] = useState('');
   const [productCategory, setProductCategory] = useState<string>(props.productId);
+  const [selectedRuleSetId, setSelectedRuleSetId] = useState<string | null>(null);
+  const [rules, setRules] = useState<ComplianceRule[]>([]);
+  const [pattern, setPattern] = useState('');
+  const [reason, setReason] = useState('');
+  const [recommendedPhrase, setRecommendedPhrase] = useState('');
+  const [severity, setSeverity] = useState<ComplianceSeverity>('medium');
+  const [ruleType, setRuleType] = useState<ComplianceRuleType>('caution_expression');
+  const [priority, setPriority] = useState(100);
 
   const refresh = async (): Promise<void> => {
     setRuleSets(await window.api.compliance.listRuleSets());
@@ -1176,9 +1194,40 @@ function ComplianceRuleSetsPanel(props: {
   }, []);
 
   const createRuleSet = async (): Promise<void> => {
-    await window.api.compliance.createRuleSet({ name, productCategory });
+    const created = await window.api.compliance.createRuleSet({ name, productCategory });
     setName('');
     await refresh();
+    setSelectedRuleSetId(created.id);
+    setRules([]);
+  };
+
+  const selectedRuleSet = ruleSets.find((ruleSet) => ruleSet.id === selectedRuleSetId) ?? null;
+  const selectRuleSet = async (id: string): Promise<void> => {
+    setSelectedRuleSetId(id);
+    setRules(await window.api.compliance.listRulesForSet(id));
+  };
+  const createRule = async (): Promise<void> => {
+    if (!selectedRuleSet) return;
+    await window.api.compliance.createRule({
+      ruleSetId: selectedRuleSet.id,
+      companyId: selectedRuleSet.organizationId,
+      industry: 'insurance',
+      productCategory: selectedRuleSet.productCategory,
+      severity,
+      ruleType,
+      pattern,
+      reason,
+      recommendedPhrase,
+      priority,
+    });
+    setPattern('');
+    setReason('');
+    setRecommendedPhrase('');
+    await selectRuleSet(selectedRuleSet.id);
+  };
+  const updatePriority = async (rule: ComplianceRule, nextPriority: number): Promise<void> => {
+    await window.api.compliance.updateRule({ ...rule, priority: nextPriority });
+    await selectRuleSet(rule.ruleSetId);
   };
 
   return (
@@ -1229,26 +1278,74 @@ function ComplianceRuleSetsPanel(props: {
                   <div className="font-medium">{ruleSet.name}</div>
                   <div className="mt-1 text-xs text-zinc-500">
                     商品: {ruleSet.productCategory} / {inherited ? '保険会社プリセット' : '自社ルール'}
-                    {ruleSet.presetKey ? ` / ${ruleSet.presetKey}` : ''}
+                    {ruleSet.presetKey ? ` / ${ruleSet.presetKey}` : ''} / v{ruleSet.version} /{' '}
+                    {ruleSet.approvalStatus}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  disabled={inherited}
-                  onClick={() =>
-                    void window.api.compliance
-                      .setRuleSetActive(ruleSet.id, !ruleSet.active)
-                      .then(refresh)
-                  }
-                  className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {ruleSet.active ? '有効' : '無効'}
-                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => void selectRuleSet(ruleSet.id)} className="rounded bg-zinc-800 px-3 py-2 text-xs">
+                    ルール管理
+                  </button>
+                  {ruleSet.approvalStatus === 'draft' || ruleSet.approvalStatus === 'rejected' ? (
+                    <button type="button" disabled={inherited} onClick={() => void window.api.compliance.submitRuleSet(ruleSet.id).then(refresh)} className="rounded bg-zinc-100 px-3 py-2 text-xs text-zinc-900 disabled:opacity-40">
+                      承認申請
+                    </button>
+                  ) : ruleSet.approvalStatus === 'pending_review' ? (
+                    <>
+                      <button type="button" disabled={inherited} onClick={() => void window.api.compliance.reviewRuleSet(ruleSet.id, true).then(refresh)} className="rounded bg-overlay-success px-3 py-2 text-xs text-zinc-900 disabled:opacity-40">承認</button>
+                      <button type="button" disabled={inherited} onClick={() => void window.api.compliance.reviewRuleSet(ruleSet.id, false).then(refresh)} className="rounded bg-overlay-objection px-3 py-2 text-xs text-white disabled:opacity-40">却下</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" disabled={inherited} onClick={() => void window.api.compliance.createRuleSetRevision(ruleSet.id).then(refresh)} className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40">新版作成</button>
+                      <button type="button" disabled={inherited} onClick={() => void window.api.compliance.setRuleSetActive(ruleSet.id, !ruleSet.active).then(refresh)} className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40">
+                        {ruleSet.active ? '有効' : '無効'}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
+      {selectedRuleSet && (
+        <div className="rounded-lg border border-zinc-800 p-5">
+          <h3 className="text-sm font-medium">{selectedRuleSet.name} のルール</h3>
+          {!['draft', 'rejected'].includes(selectedRuleSet.approvalStatus) ? (
+            <p className="mt-2 text-xs text-zinc-500">承認申請後のルールは編集できません。</p>
+          ) : (
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
+              <input aria-label="ルール検知表現" value={pattern} onChange={(event) => setPattern(event.currentTarget.value)} className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="検知表現" />
+              <input aria-label="ルール理由" value={reason} onChange={(event) => setReason(event.currentTarget.value)} className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="理由" />
+              <input aria-label="ルール推奨表現" value={recommendedPhrase} onChange={(event) => setRecommendedPhrase(event.currentTarget.value)} className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="推奨表現" />
+              <div className="flex gap-2">
+                <select aria-label="ルール重大度" value={severity} onChange={(event) => setSeverity(event.currentTarget.value as ComplianceSeverity)} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm">
+                  {(['critical', 'high', 'medium', 'low'] as const).map((value) => <option key={value}>{value}</option>)}
+                </select>
+                <select aria-label="ルール種別" value={ruleType} onChange={(event) => setRuleType(event.currentTarget.value as ComplianceRuleType)} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm">
+                  {(['prohibited_expression', 'caution_expression', 'required_disclosure'] as const).map((value) => <option key={value}>{value}</option>)}
+                </select>
+                <input aria-label="ルール優先度" type="number" value={priority} onChange={(event) => setPriority(Number(event.currentTarget.value))} className="w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm" />
+                <button type="button" disabled={!pattern.trim() || !reason.trim() || !recommendedPhrase.trim()} onClick={() => void createRule()} className="rounded bg-zinc-100 px-3 py-2 text-xs text-zinc-900 disabled:opacity-40">ルール追加</button>
+              </div>
+            </div>
+          )}
+          <ul className="mt-4 space-y-2">
+            {rules.map((rule) => (
+              <li key={rule.id} className="flex items-center justify-between rounded border border-zinc-800 p-3 text-xs">
+                <div><span className="font-medium">{rule.pattern}</span><span className="ml-2 text-zinc-500">優先度 {rule.priority} / {rule.severity}</span></div>
+                {['draft', 'rejected'].includes(selectedRuleSet.approvalStatus) && (
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => void updatePriority(rule, Math.max(0, rule.priority - 10))} className="rounded bg-zinc-800 px-2 py-1">優先度↑</button>
+                    <button type="button" onClick={() => void window.api.compliance.deleteRule(rule.id).then(() => selectRuleSet(rule.ruleSetId))} className="rounded bg-overlay-objection px-2 py-1 text-white">削除</button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

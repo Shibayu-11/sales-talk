@@ -130,11 +130,16 @@ export const IPC = {
   // Compliance review (two-track plan)
   compliance: {
     rulesList: 'compliance:rules-list',
+    rulesListForSet: 'compliance:rules-list-for-set',
     rulesCreate: 'compliance:rules-create',
+    rulesUpdate: 'compliance:rules-update',
     rulesDelete: 'compliance:rules-delete',
     ruleSetsList: 'compliance:rule-sets-list',
     ruleSetsCreate: 'compliance:rule-sets-create',
     ruleSetsSetActive: 'compliance:rule-sets-set-active',
+    ruleSetsSubmit: 'compliance:rule-sets-submit',
+    ruleSetsReview: 'compliance:rule-sets-review',
+    ruleSetsCreateRevision: 'compliance:rule-sets-create-revision',
   },
 
   // Settings

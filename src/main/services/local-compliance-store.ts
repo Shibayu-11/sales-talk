@@ -7,6 +7,7 @@ import {
   ComplianceRuleSchema,
   ComplianceRuleSetSchema,
   type ComplianceRuleCreateInput,
+  type ComplianceRuleUpdateInput,
   type ComplianceRuleSetCreateInput,
 } from '@shared/schemas';
 import {
@@ -40,20 +41,24 @@ export class LocalComplianceStore {
   ): Promise<ComplianceRule[]> {
     const data = await this.get();
     const activeRuleSetIds = new Set(
-      data.ruleSets.filter((ruleSet) => ruleSet.active).map((ruleSet) => ruleSet.id),
+      data.ruleSets
+        .filter((ruleSet) => ruleSet.active && ruleSet.approvalStatus === 'approved')
+        .map((ruleSet) => ruleSet.id),
     );
-    return data.rules.filter(
-      (rule) =>
-        activeRuleSetIds.has(rule.ruleSetId) &&
-        (!industry || rule.industry === industry) &&
-        (!productCategory ||
-          rule.productCategory === productCategory ||
-          rule.productCategory === 'insurance_general') &&
-        (!scope ||
-          (rule.tenantId === scope.tenantId &&
-            (rule.organizationId === scope.organizationId ||
-              rule.organizationId === '00000000-0000-4000-8000-000000000003'))),
-    );
+    return data.rules
+      .filter(
+        (rule) =>
+          activeRuleSetIds.has(rule.ruleSetId) &&
+          (!industry || rule.industry === industry) &&
+          (!productCategory ||
+            rule.productCategory === productCategory ||
+            rule.productCategory === 'insurance_general') &&
+          (!scope ||
+            (rule.tenantId === scope.tenantId &&
+              (rule.organizationId === scope.organizationId ||
+                rule.organizationId === DEFAULT_PARENT_ORGANIZATION_ID))),
+      )
+      .sort((left, right) => left.priority - right.priority);
   }
 
   async createRule(input: ComplianceRuleCreateInput): Promise<ComplianceRule> {
@@ -71,10 +76,12 @@ export class LocalComplianceStore {
       pattern: input.pattern,
       reason: input.reason,
       recommendedPhrase: input.recommendedPhrase,
+      priority: input.priority,
       createdAt: now,
       updatedAt: now,
     };
     const data = await this.get();
+    this.assertRuleSetEditable(data, input.ruleSetId);
     const next = { ...data, rules: [rule, ...data.rules] };
     this.cache = next;
     await this.persist(next);
@@ -91,6 +98,12 @@ export class LocalComplianceStore {
     );
   }
 
+  async listRulesForSet(ruleSetId: string): Promise<ComplianceRule[]> {
+    return (await this.get()).rules
+      .filter((rule) => rule.ruleSetId === ruleSetId)
+      .sort((left, right) => left.priority - right.priority);
+  }
+
   async createRuleSet(
     scope: { tenantId: string; organizationId: string },
     input: ComplianceRuleSetCreateInput,
@@ -100,10 +113,15 @@ export class LocalComplianceStore {
       id: randomUUID(),
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
+      parentRuleSetId: null,
       name: input.name,
       productCategory: input.productCategory,
       presetKey: input.presetKey ?? null,
-      active: true,
+      active: false,
+      version: 1,
+      approvalStatus: 'draft',
+      approvedAt: null,
+      approvedByUserId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -120,6 +138,9 @@ export class LocalComplianceStore {
     if (!current) {
       throw new Error('Compliance rule set was not found');
     }
+    if (active && current.approvalStatus !== 'approved') {
+      throw new Error('Only approved compliance rule sets can be activated');
+    }
     const updated = { ...current, active, updatedAt: new Date().toISOString() };
     const next = {
       ...data,
@@ -130,11 +151,139 @@ export class LocalComplianceStore {
     return updated;
   }
 
+  async submitRuleSet(id: string): Promise<ComplianceRuleSet> {
+    return this.updateRuleSetStatus(id, 'pending_review', null);
+  }
+
+  async reviewRuleSet(
+    id: string,
+    approved: boolean,
+    approvedByUserId: string,
+  ): Promise<ComplianceRuleSet> {
+    return this.updateRuleSetStatus(id, approved ? 'approved' : 'rejected', approvedByUserId);
+  }
+
+  async createRuleSetRevision(id: string): Promise<ComplianceRuleSet> {
+    const data = await this.get();
+    const current = data.ruleSets.find((ruleSet) => ruleSet.id === id);
+    if (!current || current.approvalStatus !== 'approved') {
+      throw new Error('Only approved rule sets can create a new revision');
+    }
+    const now = new Date().toISOString();
+    const revision: ComplianceRuleSet = {
+      ...current,
+      id: randomUUID(),
+      parentRuleSetId: current.parentRuleSetId ?? current.id,
+      name: `${current.name} v${current.version + 1}`,
+      presetKey: null,
+      active: false,
+      version: current.version + 1,
+      approvalStatus: 'draft',
+      approvedAt: null,
+      approvedByUserId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const clonedRules = data.rules
+      .filter((rule) => rule.ruleSetId === current.id)
+      .map((rule) => ({
+        ...rule,
+        id: randomUUID(),
+        ruleSetId: revision.id,
+        createdAt: now,
+        updatedAt: now,
+      }));
+    const next = {
+      rules: [...clonedRules, ...data.rules],
+      ruleSets: [revision, ...data.ruleSets],
+    };
+    this.cache = next;
+    await this.persist(next);
+    return revision;
+  }
+
+  async updateRule(input: ComplianceRuleUpdateInput): Promise<ComplianceRule> {
+    const data = await this.get();
+    const current = data.rules.find((rule) => rule.id === input.id);
+    if (!current) {
+      throw new Error('Compliance rule was not found');
+    }
+    this.assertRuleSetEditable(data, current.ruleSetId);
+    const updated = { ...current, ...input, updatedAt: new Date().toISOString() };
+    const next = {
+      ...data,
+      rules: data.rules.map((rule) => (rule.id === input.id ? updated : rule)),
+    };
+    this.cache = next;
+    await this.persist(next);
+    return updated;
+  }
+
   async deleteRule(id: string): Promise<void> {
     const data = await this.get();
+    const current = data.rules.find((rule) => rule.id === id);
+    if (!current) {
+      throw new Error('Compliance rule was not found');
+    }
+    this.assertRuleSetEditable(data, current.ruleSetId);
     const next = { ...data, rules: data.rules.filter((rule) => rule.id !== id) };
     this.cache = next;
     await this.persist(next);
+  }
+
+  private async updateRuleSetStatus(
+    id: string,
+    approvalStatus: ComplianceRuleSet['approvalStatus'],
+    approvedByUserId: string | null,
+  ): Promise<ComplianceRuleSet> {
+    const data = await this.get();
+    const current = data.ruleSets.find((ruleSet) => ruleSet.id === id);
+    if (!current) {
+      throw new Error('Compliance rule set was not found');
+    }
+    if (approvalStatus === 'pending_review' && !['draft', 'rejected'].includes(current.approvalStatus)) {
+      throw new Error('Only draft or rejected rule sets can be submitted');
+    }
+    if (
+      approvalStatus === 'pending_review' &&
+      !data.rules.some((rule) => rule.ruleSetId === current.id)
+    ) {
+      throw new Error('Rule set must contain at least one rule before submission');
+    }
+    if (['approved', 'rejected'].includes(approvalStatus) && current.approvalStatus !== 'pending_review') {
+      throw new Error('Only pending rule sets can be reviewed');
+    }
+    const now = new Date().toISOString();
+    const updated: ComplianceRuleSet = {
+      ...current,
+      active: approvalStatus === 'approved',
+      version: current.version,
+      approvalStatus,
+      approvedAt: approvalStatus === 'approved' ? now : null,
+      approvedByUserId: approvalStatus === 'approved' ? approvedByUserId : null,
+      updatedAt: now,
+    };
+    const revisionRootId = current.parentRuleSetId ?? current.id;
+    const next = {
+      ...data,
+      ruleSets: data.ruleSets.map((ruleSet) => {
+        if (ruleSet.id === id) return updated;
+        const candidateRootId = ruleSet.parentRuleSetId ?? ruleSet.id;
+        return approvalStatus === 'approved' && candidateRootId === revisionRootId
+          ? { ...ruleSet, active: false, updatedAt: now }
+          : ruleSet;
+      }),
+    };
+    this.cache = next;
+    await this.persist(next);
+    return updated;
+  }
+
+  private assertRuleSetEditable(data: LocalComplianceData, ruleSetId: string): void {
+    const ruleSet = data.ruleSets.find((candidate) => candidate.id === ruleSetId);
+    if (!ruleSet || !['draft', 'rejected'].includes(ruleSet.approvalStatus)) {
+      throw new Error('Only draft or rejected rule sets can be edited');
+    }
   }
 
   private async get(): Promise<LocalComplianceData> {
@@ -225,6 +374,7 @@ function buildDefaultRule(input: {
     pattern: input.pattern,
     reason: input.reason,
     recommendedPhrase: input.recommendedPhrase,
+    priority: 100,
     createdAt: input.now,
     updatedAt: input.now,
   };
@@ -237,10 +387,15 @@ function createDefaultRuleSets(): ComplianceRuleSet[] {
       id: DEFAULT_INSURANCE_PRESET_RULE_SET_ID,
       tenantId: DEFAULT_TENANT_ID,
       organizationId: DEFAULT_PARENT_ORGANIZATION_ID,
+      parentRuleSetId: null,
       name: '保険会社標準コンプライアンス',
       productCategory: 'insurance_general',
       presetKey: 'insurance_standard_v1',
       active: true,
+      version: 1,
+      approvalStatus: 'approved',
+      approvedAt: now,
+      approvedByUserId: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -248,10 +403,15 @@ function createDefaultRuleSets(): ComplianceRuleSet[] {
       id: DEFAULT_AGENCY_RULE_SET_ID,
       tenantId: DEFAULT_TENANT_ID,
       organizationId: DEFAULT_ORGANIZATION_ID,
+      parentRuleSetId: null,
       name: '代理店独自ルール',
       productCategory: 'real_estate',
       presetKey: null,
       active: true,
+      version: 1,
+      approvalStatus: 'approved',
+      approvedAt: now,
+      approvedByUserId: null,
       createdAt: now,
       updatedAt: now,
     },
