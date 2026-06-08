@@ -14,6 +14,7 @@ SalesTalk のマルチテナントクラウドAPIです。
 ```sh
 npx wrangler secret put API_TOKEN
 npx wrangler secret put SESSION_SIGNING_KEY
+npx wrangler secret put DEEPGRAM_API_KEY
 ```
 
 秘密値はコマンド引数やリポジトリへ保存せず、Wranglerの対話入力を使用してください。
@@ -50,3 +51,7 @@ npx wrangler deploy
 
 Workerは署名済みセッションとD1の `organization_memberships` を照合し、リクエストヘッダーによるユーザー・テナント・組織のなりすましを拒否します。セッション有効期限は12時間です。
 パスワード更新とログアウト時はセッションバージョンを更新し、既存セッションを失効させます。
+
+## 外部API secrets
+
+- `DEEPGRAM_API_KEY`: 音声アップロード後のSTT worker / queue処理で使用します。Electron側にも同じkeyを `safeStorage` へ保存します。
