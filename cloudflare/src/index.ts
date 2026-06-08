@@ -45,7 +45,7 @@ export default {
 
       return json({ error: 'not_found' }, 404);
     } catch (error) {
-      console.error(JSON.stringify({ message: 'request_failed', error: errorMessage(error) }));
+      logRequestFailure(error);
       return json({ error: errorMessage(error) }, errorStatus(error));
     }
   },
@@ -130,7 +130,7 @@ async function insertAuditLog(
 
 async function assertApiToken(request: Request, expectedToken: string | undefined): Promise<void> {
   if (!expectedToken) {
-    throw new HttpError(503, 'api_token_not_configured');
+    throw new HttpError(401, 'api_token_not_configured');
   }
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer ')) {
@@ -209,6 +209,20 @@ function errorMessage(error: unknown): string {
 
 function errorStatus(error: unknown): number {
   return error instanceof HttpError ? error.status : 500;
+}
+
+function logRequestFailure(error: unknown): void {
+  const status = errorStatus(error);
+  const payload = JSON.stringify({
+    message: status >= 500 ? 'request_failed' : 'request_rejected',
+    error: errorMessage(error),
+    status,
+  });
+  if (status >= 500) {
+    console.error(payload);
+    return;
+  }
+  console.warn(payload);
 }
 
 class HttpError extends Error {
