@@ -34,6 +34,7 @@ import type {
   Transcript,
   TranscriptSegment,
 } from '@shared/types';
+import { UiIcon, type UiIconName } from './components/UiIcon';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'real_estate', label: '不動産' },
@@ -41,17 +42,25 @@ const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'hojokin', label: '補助金助成金' },
 ];
 
-const NAV_ITEMS = [
-  'ダッシュボード',
-  '商談履歴',
-  'レビュー',
-  '監査ログ',
-  'ルール設定',
-  'ナレッジ',
-  'タスク',
-  '設定',
-] as const;
-type NavItem = (typeof NAV_ITEMS)[number];
+const NAV_ITEMS: Array<{ label: NavItem; icon: UiIconName }> = [
+  { label: 'ダッシュボード', icon: 'dashboard' },
+  { label: '商談履歴', icon: 'history' },
+  { label: 'レビュー', icon: 'review' },
+  { label: '監査ログ', icon: 'audit' },
+  { label: 'ルール設定', icon: 'rules' },
+  { label: 'ナレッジ', icon: 'knowledge' },
+  { label: 'タスク', icon: 'tasks' },
+  { label: '設定', icon: 'settings' },
+];
+type NavItem =
+  | 'ダッシュボード'
+  | '商談履歴'
+  | 'レビュー'
+  | '監査ログ'
+  | 'ルール設定'
+  | 'ナレッジ'
+  | 'タスク'
+  | '設定';
 
 const SECRET_KEYS = [
   { key: 'deepgram_api_key', label: 'Deepgram' },
@@ -305,16 +314,17 @@ export function App(): JSX.Element {
       <main className="grid flex-1 grid-cols-[260px_1fr]">
         <nav className="border-r border-zinc-800 p-4 text-sm">
           <ul className="space-y-1">
-            {NAV_ITEMS.map((label) => (
+            {NAV_ITEMS.map((item) => (
               <button
-                key={label}
+                key={item.label}
                 type="button"
-                onClick={() => setActiveNav(label)}
-                className={`w-full rounded px-3 py-2 text-left ${
-                  activeNav === label ? 'bg-zinc-800 text-zinc-100' : 'hover:bg-zinc-800/60'
+                onClick={() => setActiveNav(item.label)}
+                className={`flex w-full items-center gap-2 rounded px-3 py-2 text-left ${
+                  activeNav === item.label ? 'bg-zinc-800 text-zinc-100' : 'hover:bg-zinc-800/60'
                 }`}
               >
-                {label}
+                <UiIcon name={item.icon} className="h-4 w-4 shrink-0 text-zinc-500" />
+                <span>{item.label}</span>
               </button>
             ))}
           </ul>
