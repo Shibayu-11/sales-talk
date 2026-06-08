@@ -31,7 +31,7 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
     await expect(controlWindow.getByText('Deepgram API key が未設定です')).toHaveCount(0);
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
 
-    await controlWindow.getByRole('button', { name: '設定' }).click();
+    await controlWindow.getByRole('button', { name: '設定', exact: true }).click();
     await expect(controlWindow.getByRole('heading', { name: '組織・ユーザー権限' })).toBeVisible();
     await expect(controlWindow.getByText('Local Insurance Company')).toBeVisible();
     await expect(controlWindow.getByText('Agency Admin', { exact: true })).toBeVisible();
@@ -55,6 +55,16 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
     await controlWindow.getByLabel('監査ログ操作種別').selectOption('recording.started');
     await controlWindow.getByRole('button', { name: '適用' }).click();
     await expect(controlWindow.getByText('監査ログはまだありません。')).toBeVisible();
+
+    await controlWindow.getByRole('button', { name: 'ルール設定' }).click();
+    await expect(
+      controlWindow.getByRole('heading', { name: '会社別プリセット・商品別ルールセット' }),
+    ).toBeVisible();
+    await expect(controlWindow.getByText('保険会社標準コンプライアンス')).toBeVisible();
+    await controlWindow.getByLabel('ルールセット名').fill('不動産向け重点ルール');
+    await controlWindow.getByLabel('ルールセット商品').selectOption('real_estate');
+    await controlWindow.getByRole('button', { name: 'セット作成' }).click();
+    await expect(controlWindow.getByText('不動産向け重点ルール')).toBeVisible();
   });
 });
 

@@ -178,6 +178,9 @@ function createRepositories(options: {
     },
     complianceRules: {
       listRules: vi.fn(),
+      listRuleSets: vi.fn(),
+      createRuleSet: vi.fn(),
+      setRuleSetActive: vi.fn(),
       createRule: vi.fn(),
       deleteRule: vi.fn(),
     },

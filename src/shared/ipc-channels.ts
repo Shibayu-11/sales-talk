@@ -132,6 +132,9 @@ export const IPC = {
     rulesList: 'compliance:rules-list',
     rulesCreate: 'compliance:rules-create',
     rulesDelete: 'compliance:rules-delete',
+    ruleSetsList: 'compliance:rule-sets-list',
+    ruleSetsCreate: 'compliance:rule-sets-create',
+    ruleSetsSetActive: 'compliance:rule-sets-set-active',
   },
 
   // Settings

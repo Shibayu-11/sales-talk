@@ -12,6 +12,7 @@ import type {
   CallSession,
   CallState,
   ConnectionState,
+  ComplianceRuleSet,
   CurrentUserContext,
   DetectedObjection,
   KnowledgeEntry,
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   '商談履歴',
   'レビュー',
   '監査ログ',
+  'ルール設定',
   'ナレッジ',
   'タスク',
   '設定',
@@ -58,6 +60,8 @@ const AUDIT_ACTION_OPTIONS = [
   'recording.started',
   'recording.consent_captured',
   'organization.user_role_updated',
+  'compliance.rule_set_created',
+  'compliance.rule_set_active_updated',
   'minutes.generated',
   'compliance.finding_detected',
   'review_task.created',
@@ -344,6 +348,12 @@ export function App(): JSX.Element {
           )}
           {activeNav === 'レビュー' && <ReviewPanel />}
           {activeNav === '監査ログ' && <AuditLogPanel />}
+          {activeNav === 'ルール設定' && (
+            <ComplianceRuleSetsPanel
+              currentUserContext={currentUserContext}
+              productId={productId}
+            />
+          )}
           {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
           {activeNav === 'タスク' && <TasksPanel />}
           {activeNav === '設定' && (
@@ -1145,6 +1155,100 @@ function AuditLogPanel(): JSX.Element {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function ComplianceRuleSetsPanel(props: {
+  currentUserContext: CurrentUserContext | null;
+  productId: ProductId;
+}): JSX.Element {
+  const [ruleSets, setRuleSets] = useState<ComplianceRuleSet[]>([]);
+  const [name, setName] = useState('');
+  const [productCategory, setProductCategory] = useState<string>(props.productId);
+
+  const refresh = async (): Promise<void> => {
+    setRuleSets(await window.api.compliance.listRuleSets());
+  };
+
+  useEffect(() => {
+    void window.api.compliance.listRuleSets().then(setRuleSets);
+  }, []);
+
+  const createRuleSet = async (): Promise<void> => {
+    await window.api.compliance.createRuleSet({ name, productCategory });
+    setName('');
+    await refresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="text-sm font-medium text-zinc-400">会社別プリセット・商品別ルールセット</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          保険会社プリセットは継承専用です。代理店独自セットは商品単位で有効化できます。
+        </p>
+        <div className="mt-4 grid gap-2 md:grid-cols-[1fr_200px_auto]">
+          <input
+            aria-label="ルールセット名"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
+            className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+            placeholder="例: 医療保険の重点確認"
+          />
+          <select
+            aria-label="ルールセット商品"
+            value={productCategory}
+            onChange={(event) => setProductCategory(event.currentTarget.value)}
+            className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+          >
+            <option value="insurance_general">保険共通</option>
+            {PRODUCTS.map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={!name.trim()}
+            onClick={() => void createRuleSet()}
+            className="rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900 disabled:opacity-40"
+          >
+            セット作成
+          </button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {ruleSets.map((ruleSet) => {
+          const inherited = ruleSet.organizationId !== props.currentUserContext?.organization.id;
+          return (
+            <div key={ruleSet.id} className="rounded border border-zinc-800 p-4 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="font-medium">{ruleSet.name}</div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    商品: {ruleSet.productCategory} / {inherited ? '保険会社プリセット' : '自社ルール'}
+                    {ruleSet.presetKey ? ` / ${ruleSet.presetKey}` : ''}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={inherited}
+                  onClick={() =>
+                    void window.api.compliance
+                      .setRuleSetActive(ruleSet.id, !ruleSet.active)
+                      .then(refresh)
+                  }
+                  className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {ruleSet.active ? '有効' : '無効'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

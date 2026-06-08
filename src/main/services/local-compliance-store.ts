@@ -5,16 +5,27 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
   ComplianceRuleSchema,
+  ComplianceRuleSetSchema,
   type ComplianceRuleCreateInput,
+  type ComplianceRuleSetCreateInput,
 } from '@shared/schemas';
-import type { ComplianceRule, Industry } from '@shared/types';
+import {
+  DEFAULT_AGENCY_RULE_SET_ID,
+  DEFAULT_INSURANCE_PRESET_RULE_SET_ID,
+  DEFAULT_ORGANIZATION_ID,
+  DEFAULT_PARENT_ORGANIZATION_ID,
+  DEFAULT_TENANT_ID,
+} from '@shared/organization-constants';
+import type { ComplianceRule, ComplianceRuleSet, Industry } from '@shared/types';
 
 const LocalComplianceDataSchema = z.object({
   rules: z.array(ComplianceRuleSchema),
+  ruleSets: z.array(ComplianceRuleSetSchema).default([]),
 });
 
 interface LocalComplianceData {
   rules: ComplianceRule[];
+  ruleSets: ComplianceRuleSet[];
 }
 
 export class LocalComplianceStore {
@@ -25,11 +36,19 @@ export class LocalComplianceStore {
   async listRules(
     industry?: Industry,
     scope?: { tenantId: string; organizationId: string },
+    productCategory?: string,
   ): Promise<ComplianceRule[]> {
     const data = await this.get();
+    const activeRuleSetIds = new Set(
+      data.ruleSets.filter((ruleSet) => ruleSet.active).map((ruleSet) => ruleSet.id),
+    );
     return data.rules.filter(
       (rule) =>
+        activeRuleSetIds.has(rule.ruleSetId) &&
         (!industry || rule.industry === industry) &&
+        (!productCategory ||
+          rule.productCategory === productCategory ||
+          rule.productCategory === 'insurance_general') &&
         (!scope ||
           (rule.tenantId === scope.tenantId &&
             (rule.organizationId === scope.organizationId ||
@@ -41,6 +60,7 @@ export class LocalComplianceStore {
     const now = new Date().toISOString();
     const rule: ComplianceRule = {
       id: randomUUID(),
+      ruleSetId: input.ruleSetId,
       tenantId: input.tenantId,
       organizationId: input.organizationId,
       companyId: input.companyId,
@@ -55,15 +75,64 @@ export class LocalComplianceStore {
       updatedAt: now,
     };
     const data = await this.get();
-    const next = { rules: [rule, ...data.rules] };
+    const next = { ...data, rules: [rule, ...data.rules] };
     this.cache = next;
     await this.persist(next);
     return rule;
   }
 
+  async listRuleSets(scope: { tenantId: string; organizationId: string }): Promise<ComplianceRuleSet[]> {
+    const data = await this.get();
+    return data.ruleSets.filter(
+      (ruleSet) =>
+        ruleSet.tenantId === scope.tenantId &&
+        (ruleSet.organizationId === scope.organizationId ||
+          ruleSet.organizationId === DEFAULT_PARENT_ORGANIZATION_ID),
+    );
+  }
+
+  async createRuleSet(
+    scope: { tenantId: string; organizationId: string },
+    input: ComplianceRuleSetCreateInput,
+  ): Promise<ComplianceRuleSet> {
+    const now = new Date().toISOString();
+    const ruleSet: ComplianceRuleSet = {
+      id: randomUUID(),
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      name: input.name,
+      productCategory: input.productCategory,
+      presetKey: input.presetKey ?? null,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const data = await this.get();
+    const next = { ...data, ruleSets: [ruleSet, ...data.ruleSets] };
+    this.cache = next;
+    await this.persist(next);
+    return ruleSet;
+  }
+
+  async setRuleSetActive(id: string, active: boolean): Promise<ComplianceRuleSet> {
+    const data = await this.get();
+    const current = data.ruleSets.find((ruleSet) => ruleSet.id === id);
+    if (!current) {
+      throw new Error('Compliance rule set was not found');
+    }
+    const updated = { ...current, active, updatedAt: new Date().toISOString() };
+    const next = {
+      ...data,
+      ruleSets: data.ruleSets.map((ruleSet) => (ruleSet.id === id ? updated : ruleSet)),
+    };
+    this.cache = next;
+    await this.persist(next);
+    return updated;
+  }
+
   async deleteRule(id: string): Promise<void> {
     const data = await this.get();
-    const next = { rules: data.rules.filter((rule) => rule.id !== id) };
+    const next = { ...data, rules: data.rules.filter((rule) => rule.id !== id) };
     this.cache = next;
     await this.persist(next);
   }
@@ -75,10 +144,15 @@ export class LocalComplianceStore {
 
     try {
       const raw = await readFile(this.filePath, 'utf8');
-      this.cache = LocalComplianceDataSchema.parse(JSON.parse(raw));
+      const parsed = LocalComplianceDataSchema.parse(JSON.parse(raw));
+      if (parsed.ruleSets.length === 0) {
+        parsed.ruleSets = createDefaultRuleSets();
+        await this.persist(parsed);
+      }
+      this.cache = parsed;
       return this.cache;
     } catch {
-      this.cache = { rules: createDefaultInsuranceRules() };
+      this.cache = { rules: createDefaultInsuranceRules(), ruleSets: createDefaultRuleSets() };
       await this.persist(this.cache);
       return this.cache;
     }
@@ -140,8 +214,9 @@ function buildDefaultRule(input: {
 }): ComplianceRule {
   return {
     id: randomUUID(),
-    tenantId: '00000000-0000-4000-8000-000000000001',
-    organizationId: '00000000-0000-4000-8000-000000000002',
+    ruleSetId: DEFAULT_INSURANCE_PRESET_RULE_SET_ID,
+    tenantId: DEFAULT_TENANT_ID,
+    organizationId: DEFAULT_PARENT_ORGANIZATION_ID,
     companyId: 'default',
     industry: 'insurance',
     productCategory: 'insurance_general',
@@ -153,6 +228,34 @@ function buildDefaultRule(input: {
     createdAt: input.now,
     updatedAt: input.now,
   };
+}
+
+function createDefaultRuleSets(): ComplianceRuleSet[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: DEFAULT_INSURANCE_PRESET_RULE_SET_ID,
+      tenantId: DEFAULT_TENANT_ID,
+      organizationId: DEFAULT_PARENT_ORGANIZATION_ID,
+      name: '保険会社標準コンプライアンス',
+      productCategory: 'insurance_general',
+      presetKey: 'insurance_standard_v1',
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: DEFAULT_AGENCY_RULE_SET_ID,
+      tenantId: DEFAULT_TENANT_ID,
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      name: '代理店独自ルール',
+      productCategory: 'real_estate',
+      presetKey: null,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 }
 
 function defaultUserDataPath(): string {

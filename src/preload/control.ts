@@ -22,6 +22,7 @@ import type {
   TaskOwner,
   MeetingSource,
   ComplianceRule,
+  ComplianceRuleSet,
   Industry,
   ComplianceSeverity,
   ComplianceRuleType,
@@ -121,6 +122,9 @@ const IPC = {
     rulesList: 'compliance:rules-list',
     rulesCreate: 'compliance:rules-create',
     rulesDelete: 'compliance:rules-delete',
+    ruleSetsList: 'compliance:rule-sets-list',
+    ruleSetsCreate: 'compliance:rule-sets-create',
+    ruleSetsSetActive: 'compliance:rule-sets-set-active',
   },
   settings: {
     get: 'settings:get',
@@ -296,7 +300,14 @@ const api: RendererApi = {
   },
   compliance: {
     listRules: (): Promise<ComplianceRule[]> => ipcRenderer.invoke(IPC.compliance.rulesList),
+    listRuleSets: (): Promise<ComplianceRuleSet[]> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsList),
+    createRuleSet: (input): Promise<ComplianceRuleSet> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsCreate, input),
+    setRuleSetActive: (id: string, active: boolean): Promise<ComplianceRuleSet> =>
+      ipcRenderer.invoke(IPC.compliance.ruleSetsSetActive, { id, active }),
     createRule: (input: {
+      ruleSetId: string;
       companyId: string;
       industry: Industry;
       productCategory: string;

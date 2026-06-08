@@ -144,6 +144,8 @@ export const AuditActionSchema = z.enum([
   'recording.started',
   'recording.consent_captured',
   'organization.user_role_updated',
+  'compliance.rule_set_created',
+  'compliance.rule_set_active_updated',
   'minutes.generated',
   'compliance.finding_detected',
   'review_task.created',
@@ -154,6 +156,7 @@ export const AuditActionSchema = z.enum([
 
 export const ComplianceRuleSchema = z.object({
   id: z.string().uuid(),
+  ruleSetId: z.string().uuid().default('00000000-0000-4000-8000-000000000010'),
   tenantId: z.string().uuid().default('00000000-0000-4000-8000-000000000001'),
   organizationId: z.string().uuid().default('00000000-0000-4000-8000-000000000002'),
   companyId: z.string().min(1),
@@ -164,6 +167,18 @@ export const ComplianceRuleSchema = z.object({
   pattern: z.string().min(1),
   reason: z.string().min(1),
   recommendedPhrase: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const ComplianceRuleSetSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  productCategory: z.string().min(1).max(120),
+  presetKey: z.string().min(1).max(120).nullable(),
+  active: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -277,6 +292,7 @@ export const PresentationBlockSchema = z.discriminatedUnion('type', [
 ]);
 
 export const ComplianceRuleCreateInputSchema = z.object({
+  ruleSetId: z.string().uuid().default('00000000-0000-4000-8000-000000000010'),
   tenantId: z.string().uuid().default('00000000-0000-4000-8000-000000000001'),
   organizationId: z.string().uuid().default('00000000-0000-4000-8000-000000000002'),
   companyId: z.string().trim().min(1).max(120),
@@ -290,6 +306,15 @@ export const ComplianceRuleCreateInputSchema = z.object({
 });
 
 export const ComplianceRuleDeleteInputSchema = z.string().uuid();
+export const ComplianceRuleSetCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  productCategory: z.string().trim().min(1).max(120),
+  presetKey: z.string().trim().min(1).max(120).optional(),
+});
+export const ComplianceRuleSetActiveInputSchema = z.object({
+  id: z.string().uuid(),
+  active: z.boolean(),
+});
 
 export const MeetingMinuteSchema = z.object({
   id: z.string().uuid(),
@@ -583,4 +608,5 @@ export type HaikuDetectionOutputInput = z.infer<typeof HaikuDetectionOutputSchem
 export type SonnetResponseOutputInput = z.infer<typeof SonnetResponseOutputSchema>;
 export type KnowledgeCreateInput = z.infer<typeof KnowledgeCreateInputSchema>;
 export type ComplianceRuleCreateInput = z.infer<typeof ComplianceRuleCreateInputSchema>;
+export type ComplianceRuleSetCreateInput = z.infer<typeof ComplianceRuleSetCreateInputSchema>;
 export type ReviewTaskUpdateStatusInput = z.infer<typeof ReviewTaskUpdateStatusInputSchema>;

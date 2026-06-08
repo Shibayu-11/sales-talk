@@ -15,6 +15,8 @@ import {
   CallStartInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
+  ComplianceRuleSetActiveInputSchema,
+  ComplianceRuleSetCreateInputSchema,
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeCreateInputSchema,
@@ -431,7 +433,69 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     return task;
   });
 
-  ipcMain.handle(IPC.compliance.rulesList, () => appRepositories.complianceRules.listRules());
+  ipcMain.handle(IPC.compliance.rulesList, async () => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    return appRepositories.complianceRules.listRules('insurance', {
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+    });
+  });
+  ipcMain.handle(IPC.compliance.ruleSetsList, async () => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    return appRepositories.complianceRules.listRuleSets({
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+    });
+  });
+  ipcMain.handle(IPC.compliance.ruleSetsCreate, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
+    const input = ComplianceRuleSetCreateInputSchema.parse(payload);
+    if (input.presetKey && context.membership.role !== 'insurer_admin') {
+      throw new Error('Only insurer administrators can create company presets');
+    }
+    const ruleSet = await appRepositories.complianceRules.createRuleSet(
+      { tenantId: context.tenant.id, organizationId: context.organization.id },
+      input,
+    );
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'compliance.rule_set_created',
+        targetType: 'compliance_rule_set',
+        targetId: ruleSet.id,
+        metadata: {
+          name: ruleSet.name,
+          productCategory: ruleSet.productCategory,
+          presetKey: ruleSet.presetKey,
+        },
+      }),
+    ]);
+    return ruleSet;
+  });
+  ipcMain.handle(IPC.compliance.ruleSetsSetActive, async (_event, payload: unknown) => {
+    const context = await appRepositories.organizations.assertPermission('rules:manage');
+    const input = ComplianceRuleSetActiveInputSchema.parse(payload);
+    const ruleSets = await appRepositories.complianceRules.listRuleSets({
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+    });
+    const target = ruleSets.find((ruleSet) => ruleSet.id === input.id);
+    if (!target || target.organizationId !== context.organization.id) {
+      throw new Error('Inherited compliance presets cannot be changed by this organization');
+    }
+    const updated = await appRepositories.complianceRules.setRuleSetActive(input.id, input.active);
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'compliance.rule_set_active_updated',
+        targetType: 'compliance_rule_set',
+        targetId: updated.id,
+        metadata: {
+          active: updated.active,
+          productCategory: updated.productCategory,
+        },
+      }),
+    ]);
+    return updated;
+  });
   ipcMain.handle(IPC.compliance.rulesCreate, async (_event, payload: unknown) => {
     await appRepositories.organizations.assertPermission('rules:manage');
     const input = ComplianceRuleCreateInputSchema.parse(payload);
@@ -778,6 +842,7 @@ async function generateMeetingMinuteForCall(input: {
   const rules = await appRepositories.complianceRules.listRules(
     'insurance',
     call ? { tenantId: call.tenantId, organizationId: call.organizationId } : undefined,
+    call?.productId,
   );
 
   const meetingMinute: MeetingMinute = {

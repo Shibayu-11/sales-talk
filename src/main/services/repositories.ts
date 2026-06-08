@@ -7,6 +7,7 @@ import type {
   AuditIntegrityResult,
   CallSession,
   ComplianceRule,
+  ComplianceRuleSet,
   CurrentUserContext,
   Industry,
   KnowledgeEntry,
@@ -21,7 +22,11 @@ import type {
   Transcript,
   TranscriptSegment,
 } from '@shared/types';
-import type { ComplianceRuleCreateInput, KnowledgeCreateInput } from '@shared/schemas';
+import type {
+  ComplianceRuleCreateInput,
+  ComplianceRuleSetCreateInput,
+  KnowledgeCreateInput,
+} from '@shared/schemas';
 import { localActivityStore } from './local-activity-store';
 import { localAudioAssetStore } from './local-audio-asset-store';
 import { localCallStore } from './local-call-store';
@@ -119,7 +124,14 @@ export interface ComplianceRuleRepository {
   listRules(
     industry?: Industry,
     scope?: { tenantId: string; organizationId: string },
+    productCategory?: string,
   ): Promise<ComplianceRule[]>;
+  listRuleSets(scope: { tenantId: string; organizationId: string }): Promise<ComplianceRuleSet[]>;
+  createRuleSet(
+    scope: { tenantId: string; organizationId: string },
+    input: ComplianceRuleSetCreateInput,
+  ): Promise<ComplianceRuleSet>;
+  setRuleSetActive(id: string, active: boolean): Promise<ComplianceRuleSet>;
   createRule(input: ComplianceRuleCreateInput): Promise<ComplianceRule>;
   deleteRule(id: string): Promise<void>;
 }

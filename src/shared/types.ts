@@ -316,6 +316,8 @@ export type AuditAction =
   | 'recording.started'
   | 'recording.consent_captured'
   | 'organization.user_role_updated'
+  | 'compliance.rule_set_created'
+  | 'compliance.rule_set_active_updated'
   | 'minutes.generated'
   | 'compliance.finding_detected'
   | 'review_task.created'
@@ -325,6 +327,7 @@ export type AuditAction =
 
 export interface ComplianceRule {
   id: string;
+  ruleSetId: string;
   tenantId: string;
   organizationId: string;
   /** Deprecated compatibility alias. Use organizationId. */
@@ -336,6 +339,18 @@ export interface ComplianceRule {
   pattern: string;
   reason: string;
   recommendedPhrase: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplianceRuleSet {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  name: string;
+  productCategory: string;
+  presetKey: string | null;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -583,7 +598,15 @@ export interface RendererApi {
   };
   compliance: {
     listRules(): Promise<ComplianceRule[]>;
+    listRuleSets(): Promise<ComplianceRuleSet[]>;
+    createRuleSet(input: {
+      name: string;
+      productCategory: string;
+      presetKey?: string | undefined;
+    }): Promise<ComplianceRuleSet>;
+    setRuleSetActive(id: string, active: boolean): Promise<ComplianceRuleSet>;
     createRule(input: {
+      ruleSetId: string;
       companyId: string;
       industry: Industry;
       productCategory: string;
