@@ -1,0 +1,13 @@
+INSERT INTO tenants (id, name, created_at, updated_at)
+VALUES ('00000000-0000-4000-8000-000000000001', 'Local Insurance Group', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+INSERT INTO organizations (id, tenant_id, parent_organization_id, type, name, created_at, updated_at)
+VALUES
+  ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001', NULL, 'insurer', 'Local Insurance Company', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003', 'agency', 'Local Insurance Agency', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+INSERT INTO users (id, email, display_name, created_at, updated_at)
+VALUES ('00000000-0000-4000-8000-000000000004', 'agency-admin@example.local', 'Agency Admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+INSERT INTO organization_memberships (id, tenant_id, organization_id, user_id, role, created_at, updated_at)
+VALUES ('00000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000004', 'agency_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);

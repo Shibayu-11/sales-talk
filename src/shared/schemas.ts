@@ -573,6 +573,7 @@ export const SecretKeySchema = z.enum([
   'anthropic_api_key',
   'cohere_api_key',
   'supabase_anon_key',
+  'cloudflare_api_token',
   'sentry_dsn',
   'posthog_key',
 ]);

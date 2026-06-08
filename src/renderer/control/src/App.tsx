@@ -11,6 +11,7 @@ import type {
   AudioSttJob,
   CallSession,
   CallState,
+  CloudflareConnectionStatus,
   ConnectionState,
   ComplianceRule,
   ComplianceRuleType,
@@ -57,6 +58,7 @@ const SECRET_KEYS = [
   { key: 'anthropic_api_key', label: 'Anthropic' },
   { key: 'cohere_api_key', label: 'Cohere' },
   { key: 'supabase_anon_key', label: 'Supabase anon' },
+  { key: 'cloudflare_api_token', label: 'Cloudflare API token' },
 ] as const;
 const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
 const AUDIT_ACTION_OPTIONS = [
@@ -107,6 +109,7 @@ export function App(): JSX.Element {
   const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationUsers, setOrganizationUsers] = useState<OrganizationUser[]>([]);
+  const [cloudflareStatus, setCloudflareStatus] = useState<CloudflareConnectionStatus | null>(null);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
     (call.status === 'in_call' ||
@@ -123,6 +126,7 @@ export function App(): JSX.Element {
     void window.api.organizations.getCurrentContext().then(setCurrentUserContext);
     void window.api.organizations.list().then(setOrganizations);
     void window.api.organizations.listUsers().then(setOrganizationUsers);
+    void window.api.cloudflare.getStatus().then(setCloudflareStatus);
     void window.api.settings.get().then((loadedSettings) => {
       setSettings(loadedSettings);
       if (loadedSettings.selectedProductId) setProductId(loadedSettings.selectedProductId);
@@ -375,6 +379,8 @@ export function App(): JSX.Element {
               currentUserContext={currentUserContext}
               organizations={organizations}
               organizationUsers={organizationUsers}
+              cloudflareStatus={cloudflareStatus}
+              onRefreshCloudflare={() => window.api.cloudflare.getStatus().then(setCloudflareStatus)}
               onUpdateUserRole={updateOrganizationUserRole}
               onSecretInputChange={(key, value) =>
                 setSecretInputs((current) => ({ ...current, [key]: value }))
@@ -886,12 +892,39 @@ function SettingsPanel(props: {
   currentUserContext: CurrentUserContext | null;
   organizations: Organization[];
   organizationUsers: OrganizationUser[];
+  cloudflareStatus: CloudflareConnectionStatus | null;
+  onRefreshCloudflare: () => Promise<void>;
   onUpdateUserRole: (membershipId: string, role: OrganizationRole) => Promise<void>;
   onSecretInputChange: (key: string, value: string) => void;
   onSaveSecret: (key: string) => Promise<void>;
 }): JSX.Element {
   return (
     <>
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-zinc-400">Cloudflare接続</h2>
+            <div className="mt-2 text-xs text-zinc-500">{props.cloudflareStatus?.apiUrl ?? '-'}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void props.onRefreshCloudflare()}
+            className="rounded bg-zinc-800 px-3 py-2 text-xs"
+          >
+            接続確認
+          </button>
+        </div>
+        <div className="mt-3 flex gap-2 text-xs">
+          <span className={props.cloudflareStatus?.healthy ? 'text-overlay-success' : 'text-overlay-objection'}>
+            Worker: {props.cloudflareStatus?.healthy ? '接続済み' : '未接続'}
+          </span>
+          <span className={props.cloudflareStatus?.authenticated ? 'text-overlay-success' : 'text-zinc-500'}>
+            認証: {props.cloudflareStatus?.authenticated ? '接続済み' : 'トークン未接続'}
+          </span>
+          {props.cloudflareStatus?.error && <span className="text-zinc-600">{props.cloudflareStatus.error}</span>}
+        </div>
+      </div>
+
       <div className="rounded-lg border border-zinc-800 p-5">
         <h2 className="mb-3 text-sm font-medium text-zinc-400">組織・ユーザー権限</h2>
         <div className="grid gap-4 text-sm md:grid-cols-2">

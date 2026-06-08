@@ -13,6 +13,10 @@ export const IPC = {
     version: 'app:version',
   },
 
+  cloudflare: {
+    status: 'cloudflare:status',
+  },
+
   // Permissions (macOS)
   permissions: {
     check: 'permissions:check', // → { screen: bool, microphone: bool }

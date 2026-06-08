@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sales-talk-api",
+  "main": "cloudflare/src/index.ts",
+  "compatibility_date": "2026-06-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sales-talk-prod",
+      "database_id": "fe4a14d0-435b-49f1-abeb-2dcafd2f5e15",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ]
+}

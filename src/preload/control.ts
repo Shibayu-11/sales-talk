@@ -5,6 +5,7 @@ import type {
   CallState,
   AppSettings,
   CallSession,
+  CloudflareConnectionStatus,
   ProductId,
   KnowledgeEntry,
   Transcript,
@@ -39,6 +40,7 @@ import type {
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
 const IPC = {
   app: { version: 'app:version' },
+  cloudflare: { status: 'cloudflare:status' },
   permissions: {
     check: 'permissions:check',
     requestScreen: 'permissions:request-screen',
@@ -156,6 +158,9 @@ const IPC = {
 const api: RendererApi = {
   app: {
     getVersion: () => ipcRenderer.invoke(IPC.app.version),
+  },
+  cloudflare: {
+    getStatus: (): Promise<CloudflareConnectionStatus> => ipcRenderer.invoke(IPC.cloudflare.status),
   },
   permissions: {
     check: () => ipcRenderer.invoke(IPC.permissions.check),

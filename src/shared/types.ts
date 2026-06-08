@@ -137,6 +137,13 @@ export interface AppInfo {
   iconBase64?: string;
 }
 
+export interface CloudflareConnectionStatus {
+  apiUrl: string;
+  healthy: boolean;
+  authenticated: boolean;
+  error: string | null;
+}
+
 export interface PermissionState {
   screen: boolean;
   microphone: boolean;
@@ -516,6 +523,9 @@ export interface AppError {
 export interface RendererApi {
   app: {
     getVersion(): Promise<string>;
+  };
+  cloudflare: {
+    getStatus(): Promise<CloudflareConnectionStatus>;
   };
   permissions: {
     check(): Promise<PermissionState>;
