@@ -11,6 +11,7 @@ import type {
   AudioSttJob,
   CallSession,
   CallState,
+  CloudAudioUploadProcessResult,
   CloudflareConnectionStatus,
   ConnectionState,
   ComplianceRule,
@@ -1494,6 +1495,9 @@ function HistoryPanel(props: {
   const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
   const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
   const [processingAudio, setProcessingAudio] = useState(false);
+  const [cloudUploading, setCloudUploading] = useState(false);
+  const [cloudUploadResult, setCloudUploadResult] =
+    useState<CloudAudioUploadProcessResult | null>(null);
   const [uploadConsentGranted, setUploadConsentGranted] = useState(false);
 
   useEffect(() => {
@@ -1554,6 +1558,23 @@ function HistoryPanel(props: {
     }
   };
 
+  const cloudUploadAndProcessAudio = async (): Promise<void> => {
+    setCloudUploading(true);
+    try {
+      const result = await window.api.audioAssets.cloudUploadAndProcess(
+        props.productId,
+        createUploadConsent(),
+      );
+      if (!result) {
+        return;
+      }
+
+      setCloudUploadResult(result);
+    } finally {
+      setCloudUploading(false);
+    }
+  };
+
   const createSttJob = async (audioAssetId: string): Promise<void> => {
     const job = await window.api.sttJobs.create(audioAssetId);
     setSttJobs((current) => [job, ...current]);
@@ -1588,6 +1609,14 @@ function HistoryPanel(props: {
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-zinc-400">ローカル議事録</h2>
           <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={cloudUploading || !uploadConsentGranted}
+              onClick={() => void cloudUploadAndProcessAudio()}
+              className="rounded bg-sky-400 px-3 py-2 text-xs font-medium text-zinc-950 hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
+            >
+              {cloudUploading ? 'Cloud処理中…' : 'Cloudへアップロード'}
+            </button>
             <button
               type="button"
               disabled={processingAudio || !uploadConsentGranted}
@@ -1625,6 +1654,24 @@ function HistoryPanel(props: {
             call に保存されます。
           </span>
         </label>
+        {cloudUploadResult && (
+          <div className="mb-4 rounded border border-sky-900/70 bg-sky-950/30 p-3 text-xs text-sky-100">
+            <div className="mb-2 font-medium">Cloud STT job</div>
+            <div className="grid gap-2 md:grid-cols-4">
+              <span>call {cloudUploadResult.callId.slice(0, 8)}</span>
+              <span>asset {cloudUploadResult.audioAssetId.slice(0, 8)}</span>
+              <span>job {cloudUploadResult.sttJobId.slice(0, 8)}</span>
+              <span>
+                {cloudUploadResult.status} / transcript {cloudUploadResult.transcriptCount}
+              </span>
+            </div>
+            {cloudUploadResult.job.errorMessage && (
+              <div className="mt-2 text-overlay-objection">
+                {cloudUploadResult.job.errorMessage}
+              </div>
+            )}
+          </div>
+        )}
         {meetingMinute ? (
           <div className="space-y-3">
             <p className="rounded border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-300">

@@ -19,6 +19,7 @@ import type {
   AudioAsset,
   AudioImportResult,
   AudioImportProcessResult,
+  CloudAudioUploadProcessResult,
   AudioSttJob,
   TaskOwner,
   MeetingSource,
@@ -83,6 +84,7 @@ const IPC = {
   audioAssets: {
     import: 'audio-assets:import',
     importAndProcess: 'audio-assets:import-and-process',
+    cloudUploadAndProcess: 'audio-assets:cloud-upload-and-process',
     list: 'audio-assets:list',
   },
   sttJobs: {
@@ -234,6 +236,11 @@ const api: RendererApi = {
       consent: RecordingConsent,
     ): Promise<AudioImportProcessResult | null> =>
       ipcRenderer.invoke(IPC.audioAssets.importAndProcess, { productId, consent }),
+    cloudUploadAndProcess: (
+      productId: ProductId,
+      consent: RecordingConsent,
+    ): Promise<CloudAudioUploadProcessResult | null> =>
+      ipcRenderer.invoke(IPC.audioAssets.cloudUploadAndProcess, { productId, consent }),
     list: (callId: string): Promise<AudioAsset[]> =>
       ipcRenderer.invoke(IPC.audioAssets.list, callId),
   },

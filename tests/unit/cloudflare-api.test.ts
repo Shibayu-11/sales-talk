@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bootstrapCloudflareCredential,
@@ -5,6 +8,7 @@ import {
   getCloudflareConnectionStatus,
   loginCloudflare,
   logoutCloudflare,
+  uploadAudioToCloudAndProcess,
 } from '../../src/main/services/cloudflare-api';
 
 describe('getCloudflareConnectionStatus', () => {
@@ -118,5 +122,94 @@ describe('getCloudflareConnectionStatus', () => {
       }),
     );
     expect(deleteSessionToken).toHaveBeenCalledOnce();
+  });
+
+  it('uploads audio with a signed URL and polls the queued STT job', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'sales-talk-cloud-upload-'));
+    const audioPath = join(tempDir, 'meeting.mp3');
+    await writeFile(audioPath, Buffer.from('audio-bytes'));
+    const requests: { input: string | URL | Request; init: RequestInit | undefined }[] = [];
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ input, init });
+      const url = String(input);
+      if (url.endsWith('/v1/audio-upload-urls')) {
+        return Response.json(
+          {
+            uploadId: 'upload-id',
+            callId: 'call-id',
+            audioAssetId: 'audio-asset-id',
+            sttJobId: 'stt-job-id',
+            uploadUrl: 'https://upload.example/audio-token',
+            expiresAt: new Date().toISOString(),
+            method: 'PUT',
+            headers: {
+              'content-type': 'audio/mpeg',
+              'content-length': '11',
+            },
+          },
+          { status: 201 },
+        );
+      }
+      if (url === 'https://upload.example/audio-token') {
+        return Response.json(
+          { callId: 'call-id', audioAssetId: 'audio-asset-id', sttJobId: 'stt-job-id' },
+          { status: 201 },
+        );
+      }
+      if (url.endsWith('/v1/stt-jobs/stt-job-id')) {
+        return Response.json({
+          id: 'stt-job-id',
+          call_id: 'call-id',
+          audio_asset_id: 'audio-asset-id',
+          provider: 'deepgram',
+          status: 'completed',
+          error_message: null,
+          created_at: '2026-06-08T00:00:00.000Z',
+          updated_at: '2026-06-08T00:00:01.000Z',
+        });
+      }
+      if (url.endsWith('/v1/calls/call-id/transcripts')) {
+        return Response.json([{ id: 'segment-1' }, { id: 'segment-2' }]);
+      }
+      return Response.json({ error: 'unexpected' }, { status: 500 });
+    });
+
+    try {
+      await expect(
+        uploadAudioToCloudAndProcess(
+          { filePath: audioPath, productId: 'kenko_keiei' },
+          {
+            apiUrl: 'https://example.workers.dev',
+            fetch: request,
+            getSessionToken: async () => 'signed-session',
+            pollIntervalMs: 0,
+          },
+        ),
+      ).resolves.toMatchObject({
+        callId: 'call-id',
+        audioAssetId: 'audio-asset-id',
+        sttJobId: 'stt-job-id',
+        status: 'completed',
+        transcriptCount: 2,
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(requests[0]?.init?.headers).toMatchObject({
+      authorization: 'Bearer signed-session',
+      'content-type': 'application/json',
+    });
+    expect(requests[1]).toMatchObject({
+      input: 'https://upload.example/audio-token',
+      init: expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({
+          'content-type': 'audio/mpeg',
+          'content-length': '11',
+        }),
+      }),
+    });
+    expect(String(requests[2]?.input)).toBe('https://example.workers.dev/v1/stt-jobs/stt-job-id');
   });
 });

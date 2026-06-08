@@ -45,6 +45,7 @@ import type {
   AudioCaptureStatus,
   AudioImportResult,
   AudioImportProcessResult,
+  CloudAudioUploadProcessResult,
   AudioSttJob,
   CallSession,
   CallState,
@@ -92,6 +93,7 @@ import {
   getCloudflareConnectionStatus,
   loginCloudflare,
   logoutCloudflare,
+  uploadAudioToCloudAndProcess,
 } from '../services/cloudflare-api';
 
 /**
@@ -210,6 +212,10 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.audioAssets.importAndProcess, async (_event, payload: unknown) => {
     const input = AudioImportInputSchema.parse(payload);
     return importAndProcessAudioAsset(windows, input.productId, input.consent);
+  });
+  ipcMain.handle(IPC.audioAssets.cloudUploadAndProcess, async (_event, payload: unknown) => {
+    const input = AudioImportInputSchema.parse(payload);
+    return cloudUploadAndProcessAudioAsset(windows, input.productId, input.consent);
   });
   ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
@@ -756,22 +762,8 @@ async function importAudioAsset(
   productId: AudioImportResult['call']['productId'],
   recordingConsent: AudioImportResult['call']['recordingConsent'],
 ): Promise<AudioImportResult | null> {
-  const dialogOptions = {
-    title: '音声ファイルを取り込む',
-    properties: ['openFile'],
-    filters: [
-      {
-        name: 'Audio',
-        extensions: ['m4a', 'mp3', 'wav', 'aac', 'mp4', 'webm'],
-      },
-    ],
-  } satisfies Electron.OpenDialogOptions;
-  const controlWindow = windows.getControlWindow();
-  const dialogResult = controlWindow
-    ? await dialog.showOpenDialog(controlWindow, dialogOptions)
-    : await dialog.showOpenDialog(dialogOptions);
-
-  if (dialogResult.canceled || !dialogResult.filePaths[0]) {
+  const filePath = await selectAudioFile(windows);
+  if (!filePath) {
     return null;
   }
 
@@ -789,7 +781,7 @@ async function importAudioAsset(
   await appRepositories.calls.endCall(call.id, startedAt);
   const asset = await appRepositories.audioAssets.importAudioFile({
     callId: call.id,
-    filePath: dialogResult.filePaths[0],
+    filePath,
   });
   await appRepositories.auditLogs.appendAuditLogs([
     createUserAuditLogEntry(context, {
@@ -817,6 +809,66 @@ async function importAudioAsset(
   ]);
 
   return { call: { ...call, status: 'ended', endedAt: startedAt.toISOString() }, asset };
+}
+
+async function cloudUploadAndProcessAudioAsset(
+  windows: IpcWindowAccessors,
+  productId: AudioImportResult['call']['productId'],
+  recordingConsent: AudioImportResult['call']['recordingConsent'],
+): Promise<CloudAudioUploadProcessResult | null> {
+  const filePath = await selectAudioFile(windows);
+  if (!filePath) {
+    return null;
+  }
+
+  const context = await appRepositories.organizations.assertPermission('recording:start');
+  const result = await uploadAudioToCloudAndProcess({ filePath, productId });
+  await appRepositories.auditLogs.appendAuditLogs([
+    createUserAuditLogEntry(context, {
+      action: 'call.audio_imported',
+      targetType: 'cloud_audio_asset',
+      targetId: result.audioAssetId,
+      metadata: {
+        callId: result.callId,
+        audioAssetId: result.audioAssetId,
+        sttJobId: result.sttJobId,
+        provider: result.job.provider,
+        status: result.status,
+        productId,
+        consentStatus: recordingConsent.status,
+        consentMethod: recordingConsent.method ?? 'unknown',
+        consentCapturedAt: recordingConsent.capturedAt ?? 'unknown',
+        consentNoticeVersion: recordingConsent.noticeVersion,
+      },
+    }),
+    createUserAuditLogEntry(context, {
+      action: 'recording.consent_captured',
+      targetType: 'cloud_call',
+      targetId: result.callId,
+      metadata: recordingConsentMetadata(recordingConsent, 'uploaded_audio'),
+    }),
+  ]);
+
+  return result;
+}
+
+async function selectAudioFile(windows: IpcWindowAccessors): Promise<string | null> {
+  const dialogOptions = {
+    title: '音声ファイルを取り込む',
+    properties: ['openFile'],
+    filters: [
+      {
+        name: 'Audio',
+        extensions: ['m4a', 'mp3', 'wav', 'aac', 'mp4', 'webm'],
+      },
+    ],
+  } satisfies Electron.OpenDialogOptions;
+  const controlWindow = windows.getControlWindow();
+  const dialogResult = controlWindow
+    ? await dialog.showOpenDialog(controlWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  return dialogResult.canceled ? null : (dialogResult.filePaths[0] ?? null);
 }
 
 async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {

@@ -265,6 +265,15 @@ export interface AudioImportProcessResult extends AudioImportResult {
   meetingMinute: MeetingMinute | null;
 }
 
+export interface CloudAudioUploadProcessResult {
+  callId: string;
+  audioAssetId: string;
+  sttJobId: string;
+  status: AudioSttJobStatus;
+  job: AudioSttJob;
+  transcriptCount: number;
+}
+
 export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type AudioSttProvider = 'deepgram';
 
@@ -570,6 +579,10 @@ export interface RendererApi {
       productId: ProductId,
       consent: RecordingConsent,
     ): Promise<AudioImportProcessResult | null>;
+    cloudUploadAndProcess(
+      productId: ProductId,
+      consent: RecordingConsent,
+    ): Promise<CloudAudioUploadProcessResult | null>;
     list(callId: string): Promise<AudioAsset[]>;
   };
   sttJobs: {
