@@ -63,6 +63,8 @@ describe('LocalActivityStore', () => {
           targetType: 'call',
           targetId: minute.callId,
           metadata: { consentMethod: 'verbal' },
+          previousHash: null,
+          hash: null,
           createdAt: '2026-05-18T00:00:00.000Z',
         },
       ]);

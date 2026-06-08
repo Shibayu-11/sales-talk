@@ -213,8 +213,12 @@ export const AuditLogEntrySchema = z.object({
   targetType: z.string().min(1).max(120),
   targetId: z.string().min(1).max(120),
   metadata: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  previousHash: z.string().length(64).nullable().default(null),
+  hash: z.string().length(64).nullable().default(null),
   createdAt: z.string(),
 });
+
+export const AuditExportFormatSchema = z.enum(['csv', 'pdf']);
 
 export const PresentationRiskLevelSchema = z.enum(['none', 'low', 'medium', 'high', 'critical']);
 export const PresentationBlockSchema = z.discriminatedUnion('type', [

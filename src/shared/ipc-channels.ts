@@ -78,6 +78,8 @@ export const IPC = {
 
   auditLogs: {
     list: 'audit-logs:list',
+    verify: 'audit-logs:verify',
+    export: 'audit-logs:export',
   },
 
   // Transcript segments

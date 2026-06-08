@@ -380,8 +380,18 @@ export interface AuditLogEntry {
   targetType: string;
   targetId: string;
   metadata: Record<string, string | number | boolean | null>;
+  previousHash: string | null;
+  hash: string | null;
   createdAt: string;
 }
+
+export interface AuditIntegrityResult {
+  valid: boolean;
+  checkedEntries: number;
+  invalidEntryId: string | null;
+}
+
+export type AuditExportFormat = 'csv' | 'pdf';
 
 export type PresentationRiskLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -499,6 +509,8 @@ export interface RendererApi {
   };
   auditLogs: {
     list(): Promise<AuditLogEntry[]>;
+    verify(): Promise<AuditIntegrityResult>;
+    export(format: AuditExportFormat): Promise<string | null>;
   };
   audioAssets: {
     import(productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null>;

@@ -4,6 +4,7 @@ import type {
   AppSettings,
   ActionItemTask,
   AuditLogEntry,
+  AuditIntegrityResult,
   AudioAsset,
   AudioCaptureStatus,
   AudioSttJob,
@@ -996,17 +997,45 @@ function SettingsPanel(props: {
 
 function AuditLogPanel(): JSX.Element {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [integrity, setIntegrity] = useState<AuditIntegrityResult | null>(null);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
 
   useEffect(() => {
     void window.api.auditLogs.list().then(setAuditLogs);
+    void window.api.auditLogs.verify().then(setIntegrity);
   }, []);
 
   return (
     <div className="rounded-lg border border-zinc-800 p-5">
-      <h2 className="mb-1 text-sm font-medium text-zinc-400">監査ログ</h2>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="mb-1 text-sm font-medium text-zinc-400">監査ログ</h2>
+          <div
+            className={`text-xs ${integrity?.valid ? 'text-overlay-success' : 'text-overlay-objection'}`}
+          >
+            ハッシュチェーン: {integrity?.valid ? 'VALID' : integrity ? 'INVALID' : '検証中'} /{' '}
+            {integrity?.checkedEntries ?? 0}件
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {(['csv', 'pdf'] as const).map((format) => (
+            <button
+              key={format}
+              type="button"
+              onClick={() =>
+                void window.api.auditLogs.export(format).then((path) => setExportedPath(path))
+              }
+              className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium uppercase text-zinc-900"
+            >
+              {format}出力
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         録音開始・同意取得・ユーザーロール変更の実行者と組織スコープを記録します。
       </p>
+      {exportedPath && <div className="mb-4 text-xs text-overlay-success">出力先: {exportedPath}</div>}
       {auditLogs.length === 0 ? (
         <div className="rounded border border-zinc-800 p-4 text-sm text-zinc-600">
           監査ログはまだありません。
@@ -1027,6 +1056,9 @@ function AuditLogPanel(): JSX.Element {
               <div className="mt-1 font-mono text-zinc-600">
                 tenant {entry.tenantId?.slice(0, 8) ?? '-'} / org{' '}
                 {entry.organizationId?.slice(0, 8) ?? '-'} / target {entry.targetType}
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-zinc-700">
+                sha256: {entry.hash ?? 'unsigned'}
               </div>
             </li>
           ))}

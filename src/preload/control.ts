@@ -12,6 +12,8 @@ import type {
   MeetingMinute,
   ActionItemTask,
   AuditLogEntry,
+  AuditExportFormat,
+  AuditIntegrityResult,
   AudioAsset,
   AudioImportResult,
   AudioImportProcessResult,
@@ -56,6 +58,8 @@ const IPC = {
   },
   auditLogs: {
     list: 'audit-logs:list',
+    verify: 'audit-logs:verify',
+    export: 'audit-logs:export',
   },
   transcripts: {
     list: 'transcripts:list',
@@ -189,6 +193,9 @@ const api: RendererApi = {
   },
   auditLogs: {
     list: (): Promise<AuditLogEntry[]> => ipcRenderer.invoke(IPC.auditLogs.list),
+    verify: (): Promise<AuditIntegrityResult> => ipcRenderer.invoke(IPC.auditLogs.verify),
+    export: (format: AuditExportFormat): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.auditLogs.export, format),
   },
   audioAssets: {
     import: (productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null> =>

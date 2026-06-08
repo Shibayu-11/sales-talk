@@ -170,6 +170,11 @@ function createRepositories(options: {
     auditLogs: {
       appendAuditLogs: vi.fn(),
       listAuditLogs: vi.fn(async () => []),
+      verifyAuditLogs: vi.fn(async () => ({
+        valid: true,
+        checkedEntries: 0,
+        invalidEntryId: null,
+      })),
     },
     complianceRules: {
       listRules: vi.fn(),

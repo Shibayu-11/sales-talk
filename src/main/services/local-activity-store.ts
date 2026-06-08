@@ -9,6 +9,7 @@ import {
   ReviewTaskSchema,
 } from '@shared/schemas';
 import type { ActionItemTask, AuditLogEntry, MeetingMinute, ReviewTask } from '@shared/types';
+import { signAuditLogEntries, verifyAuditLogChain } from './audit-integrity';
 
 const LocalActivityDataSchema = z.object({
   latestMeetingMinute: MeetingMinuteSchema.nullable(),
@@ -118,10 +119,12 @@ export class LocalActivityStore {
     }
 
     const data = await this.get();
-    const next = { ...data, auditLogs: [...entries, ...data.auditLogs].slice(0, 1_000) };
+    const previousHash = data.auditLogs[0]?.hash ?? null;
+    const signedEntries = signAuditLogEntries(entries, previousHash);
+    const next = { ...data, auditLogs: [...signedEntries.reverse(), ...data.auditLogs] };
     this.cache = next;
     await this.persist(next);
-    return entries;
+    return signedEntries;
   }
 
   async listAuditLogs(scope: {
@@ -135,6 +138,13 @@ export class LocalActivityStore {
     );
   }
 
+  async verifyAuditLogs(scope: {
+    tenantId: string;
+    organizationId?: string | undefined;
+  }): Promise<ReturnType<typeof verifyAuditLogChain>> {
+    return verifyAuditLogChain(await this.listAuditLogs(scope));
+  }
+
   private async get(): Promise<LocalActivityData> {
     if (this.cache) {
       return this.cache;
@@ -142,7 +152,12 @@ export class LocalActivityStore {
 
     try {
       const raw = await readFile(this.filePath, 'utf8');
-      this.cache = LocalActivityDataSchema.parse(JSON.parse(raw));
+      const parsed = LocalActivityDataSchema.parse(JSON.parse(raw));
+      if (parsed.auditLogs.some((entry) => entry.hash === null)) {
+        parsed.auditLogs = signAuditLogEntries([...parsed.auditLogs].reverse(), null).reverse();
+        await this.persist(parsed);
+      }
+      this.cache = parsed;
       return this.cache;
     } catch {
       this.cache = DEFAULT_ACTIVITY_DATA;

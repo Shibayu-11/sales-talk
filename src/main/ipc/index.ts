@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
+  AuditExportFormatSchema,
   AudioStartInputSchema,
   AudioImportInputSchema,
   AudioChunkSchema,
@@ -74,6 +76,7 @@ import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
 import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
+import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -317,10 +320,31 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.auditLogs.list, async () => {
     const context = await appRepositories.organizations.getCurrentContext();
-    return appRepositories.auditLogs.listAuditLogs({
-      tenantId: context.tenant.id,
-      organizationId: context.membership.role === 'insurer_admin' ? undefined : context.organization.id,
+    return appRepositories.auditLogs.listAuditLogs(auditLogScope(context));
+  });
+  ipcMain.handle(IPC.auditLogs.verify, async () => {
+    const context = await appRepositories.organizations.getCurrentContext();
+    return appRepositories.auditLogs.verifyAuditLogs({ tenantId: context.tenant.id });
+  });
+  ipcMain.handle(IPC.auditLogs.export, async (_event, payload: unknown) => {
+    const format = AuditExportFormatSchema.parse(payload);
+    const context = await appRepositories.organizations.getCurrentContext();
+    const entries = await appRepositories.auditLogs.listAuditLogs(auditLogScope(context));
+    const integrity = await appRepositories.auditLogs.verifyAuditLogs({ tenantId: context.tenant.id });
+    const result = await dialog.showSaveDialog({
+      title: '監査ログをエクスポート',
+      defaultPath: `audit-log-${new Date().toISOString().slice(0, 10)}.${format}`,
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
     });
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+    if (format === 'csv') {
+      await writeFile(result.filePath, createAuditCsv(entries, integrity), 'utf8');
+    } else {
+      await writeAuditPdf(result.filePath, entries, integrity);
+    }
+    return result.filePath;
   });
 
   ipcMain.handle(IPC.overlay.show, () => windows.getOverlayWindow()?.showInactive());
@@ -879,6 +903,8 @@ function createAuditLogEntry(input: {
     targetType: input.targetType,
     targetId: input.targetId,
     metadata: input.metadata,
+    previousHash: null,
+    hash: null,
     createdAt: new Date().toISOString(),
   };
 }
@@ -905,6 +931,8 @@ function createUserAuditLogEntry(
     targetType: input.targetType,
     targetId: input.targetId,
     metadata: input.metadata,
+    previousHash: null,
+    hash: null,
     createdAt: new Date().toISOString(),
   };
 }
@@ -941,6 +969,17 @@ function recordingConsentMetadata(
     consentMethod: consent.method,
     consentCapturedAt: consent.capturedAt,
     consentNoticeVersion: consent.noticeVersion,
+  };
+}
+
+function auditLogScope(context: CurrentUserContext): {
+  tenantId: string;
+  organizationId?: string | undefined;
+} {
+  return {
+    tenantId: context.tenant.id,
+    organizationId:
+      context.membership.role === 'insurer_admin' ? undefined : context.organization.id,
   };
 }
 
