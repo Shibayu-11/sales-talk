@@ -393,6 +393,14 @@ export interface AuditIntegrityResult {
 
 export type AuditExportFormat = 'csv' | 'pdf';
 
+export interface AuditLogFilter {
+  query?: string | undefined;
+  dateFrom?: string | undefined;
+  dateTo?: string | undefined;
+  action?: AuditAction | undefined;
+  actor?: string | undefined;
+}
+
 export type PresentationRiskLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
 
 export type PresentationBlock =
@@ -508,9 +516,9 @@ export interface RendererApi {
     updateUserRole(membershipId: string, role: OrganizationRole): Promise<OrganizationUser>;
   };
   auditLogs: {
-    list(): Promise<AuditLogEntry[]>;
+    list(filter?: AuditLogFilter): Promise<AuditLogEntry[]>;
     verify(): Promise<AuditIntegrityResult>;
-    export(format: AuditExportFormat): Promise<string | null>;
+    export(format: AuditExportFormat, filter?: AuditLogFilter): Promise<string | null>;
   };
   audioAssets: {
     import(productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null>;

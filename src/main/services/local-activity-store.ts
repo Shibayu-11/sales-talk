@@ -8,7 +8,13 @@ import {
   MeetingMinuteSchema,
   ReviewTaskSchema,
 } from '@shared/schemas';
-import type { ActionItemTask, AuditLogEntry, MeetingMinute, ReviewTask } from '@shared/types';
+import type {
+  ActionItemTask,
+  AuditLogEntry,
+  AuditLogFilter,
+  MeetingMinute,
+  ReviewTask,
+} from '@shared/types';
 import { signAuditLogEntries, verifyAuditLogChain } from './audit-integrity';
 
 const LocalActivityDataSchema = z.object({
@@ -127,14 +133,18 @@ export class LocalActivityStore {
     return signedEntries;
   }
 
-  async listAuditLogs(scope: {
-    tenantId: string;
-    organizationId?: string | undefined;
-  }): Promise<AuditLogEntry[]> {
+  async listAuditLogs(
+    scope: {
+      tenantId: string;
+      organizationId?: string | undefined;
+    },
+    filter: AuditLogFilter = {},
+  ): Promise<AuditLogEntry[]> {
     return (await this.get()).auditLogs.filter(
       (entry) =>
         entry.tenantId === scope.tenantId &&
-        (scope.organizationId === undefined || entry.organizationId === scope.organizationId),
+        (scope.organizationId === undefined || entry.organizationId === scope.organizationId) &&
+        matchesAuditLogFilter(entry, filter),
     );
   }
 
@@ -176,4 +186,44 @@ export const localActivityStore = new LocalActivityStore();
 
 function defaultUserDataPath(): string {
   return process.env.SALES_TALK_USER_DATA_PATH ?? app?.getPath?.('userData') ?? process.cwd();
+}
+
+function matchesAuditLogFilter(entry: AuditLogEntry, filter: AuditLogFilter): boolean {
+  if (filter.action && entry.action !== filter.action) {
+    return false;
+  }
+  if (filter.actor && !contains(entry.actorDisplayName ?? entry.actorType, filter.actor)) {
+    return false;
+  }
+  if (filter.dateFrom && entry.createdAt < startOfDayIso(filter.dateFrom)) {
+    return false;
+  }
+  if (filter.dateTo && entry.createdAt > endOfDayIso(filter.dateTo)) {
+    return false;
+  }
+  if (filter.query) {
+    const haystack = [
+      entry.action,
+      entry.targetType,
+      entry.targetId,
+      entry.actorDisplayName ?? '',
+      entry.actorRole ?? '',
+      JSON.stringify(entry.metadata),
+      entry.hash ?? '',
+    ].join('\n');
+    return contains(haystack, filter.query);
+  }
+  return true;
+}
+
+function contains(value: string, query: string): boolean {
+  return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
+}
+
+function startOfDayIso(date: string): string {
+  return `${date.slice(0, 10)}T00:00:00.000Z`;
+}
+
+function endOfDayIso(date: string): string {
+  return `${date.slice(0, 10)}T23:59:59.999Z`;
 }

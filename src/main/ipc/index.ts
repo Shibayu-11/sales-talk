@@ -4,7 +4,8 @@ import { writeFile } from 'node:fs/promises';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
-  AuditExportFormatSchema,
+  AuditLogExportInputSchema,
+  AuditLogFilterSchema,
   AudioStartInputSchema,
   AudioImportInputSchema,
   AudioChunkSchema,
@@ -318,28 +319,32 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     return updated;
   });
 
-  ipcMain.handle(IPC.auditLogs.list, async () => {
+  ipcMain.handle(IPC.auditLogs.list, async (_event, payload: unknown) => {
+    const filter = AuditLogFilterSchema.optional().parse(payload);
     const context = await appRepositories.organizations.getCurrentContext();
-    return appRepositories.auditLogs.listAuditLogs(auditLogScope(context));
+    return appRepositories.auditLogs.listAuditLogs(auditLogScope(context), filter);
   });
   ipcMain.handle(IPC.auditLogs.verify, async () => {
     const context = await appRepositories.organizations.getCurrentContext();
     return appRepositories.auditLogs.verifyAuditLogs({ tenantId: context.tenant.id });
   });
   ipcMain.handle(IPC.auditLogs.export, async (_event, payload: unknown) => {
-    const format = AuditExportFormatSchema.parse(payload);
+    const input = AuditLogExportInputSchema.parse(payload);
     const context = await appRepositories.organizations.getCurrentContext();
-    const entries = await appRepositories.auditLogs.listAuditLogs(auditLogScope(context));
+    const entries = await appRepositories.auditLogs.listAuditLogs(
+      auditLogScope(context),
+      input.filter,
+    );
     const integrity = await appRepositories.auditLogs.verifyAuditLogs({ tenantId: context.tenant.id });
     const result = await dialog.showSaveDialog({
       title: '監査ログをエクスポート',
-      defaultPath: `audit-log-${new Date().toISOString().slice(0, 10)}.${format}`,
-      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      defaultPath: `audit-log-${new Date().toISOString().slice(0, 10)}.${input.format}`,
+      filters: [{ name: input.format.toUpperCase(), extensions: [input.format] }],
     });
     if (result.canceled || !result.filePath) {
       return null;
     }
-    if (format === 'csv') {
+    if (input.format === 'csv') {
       await writeFile(result.filePath, createAuditCsv(entries, integrity), 'utf8');
     } else {
       await writeAuditPdf(result.filePath, entries, integrity);

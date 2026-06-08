@@ -3,6 +3,7 @@ import type {
   AudioAsset,
   AudioSttJob,
   AuditLogEntry,
+  AuditLogFilter,
   AuditIntegrityResult,
   CallSession,
   ComplianceRule,
@@ -104,7 +105,10 @@ export interface ReviewTaskRepository {
 
 export interface AuditLogRepository {
   appendAuditLogs(entries: AuditLogEntry[]): Promise<AuditLogEntry[]>;
-  listAuditLogs(scope: { tenantId: string; organizationId?: string | undefined }): Promise<AuditLogEntry[]>;
+  listAuditLogs(
+    scope: { tenantId: string; organizationId?: string | undefined },
+    filter?: AuditLogFilter | undefined,
+  ): Promise<AuditLogEntry[]>;
   verifyAuditLogs(scope: {
     tenantId: string;
     organizationId?: string | undefined;

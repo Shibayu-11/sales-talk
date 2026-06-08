@@ -14,6 +14,7 @@ import type {
   AuditLogEntry,
   AuditExportFormat,
   AuditIntegrityResult,
+  AuditLogFilter,
   AudioAsset,
   AudioImportResult,
   AudioImportProcessResult,
@@ -192,10 +193,11 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.organizations.updateUserRole, { membershipId, role }),
   },
   auditLogs: {
-    list: (): Promise<AuditLogEntry[]> => ipcRenderer.invoke(IPC.auditLogs.list),
+    list: (filter?: AuditLogFilter): Promise<AuditLogEntry[]> =>
+      ipcRenderer.invoke(IPC.auditLogs.list, filter),
     verify: (): Promise<AuditIntegrityResult> => ipcRenderer.invoke(IPC.auditLogs.verify),
-    export: (format: AuditExportFormat): Promise<string | null> =>
-      ipcRenderer.invoke(IPC.auditLogs.export, format),
+    export: (format: AuditExportFormat, filter?: AuditLogFilter): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.auditLogs.export, { format, filter }),
   },
   audioAssets: {
     import: (productId: ProductId, consent: RecordingConsent): Promise<AudioImportResult | null> =>

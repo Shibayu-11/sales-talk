@@ -43,8 +43,18 @@ test('saving a Deepgram key clears the dashboard setup warning', async () => {
 
     await controlWindow.getByRole('button', { name: '監査ログ' }).click();
     await expect(controlWindow.getByRole('heading', { name: '監査ログ' })).toBeVisible();
-    await expect(controlWindow.getByText('organization.user_role_updated')).toBeVisible();
+    await expect(
+      controlWindow.getByRole('listitem').filter({ hasText: 'organization.user_role_updated' }),
+    ).toBeVisible();
     await expect(controlWindow.getByText(/actor: Agency Admin/)).toBeVisible();
+    await controlWindow.getByLabel('監査ログ検索').fill('user_role_updated');
+    await controlWindow.getByRole('button', { name: '適用' }).click();
+    await expect(
+      controlWindow.getByRole('listitem').filter({ hasText: 'organization.user_role_updated' }),
+    ).toBeVisible();
+    await controlWindow.getByLabel('監査ログ操作種別').selectOption('recording.started');
+    await controlWindow.getByRole('button', { name: '適用' }).click();
+    await expect(controlWindow.getByText('監査ログはまだありません。')).toBeVisible();
   });
 });
 

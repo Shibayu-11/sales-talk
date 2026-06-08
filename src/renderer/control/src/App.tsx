@@ -5,6 +5,7 @@ import type {
   ActionItemTask,
   AuditLogEntry,
   AuditIntegrityResult,
+  AuditLogFilter,
   AudioAsset,
   AudioCaptureStatus,
   AudioSttJob,
@@ -53,6 +54,17 @@ const SECRET_KEYS = [
   { key: 'supabase_anon_key', label: 'Supabase anon' },
 ] as const;
 const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
+const AUDIT_ACTION_OPTIONS = [
+  'recording.started',
+  'recording.consent_captured',
+  'organization.user_role_updated',
+  'minutes.generated',
+  'compliance.finding_detected',
+  'review_task.created',
+  'review_task.status_updated',
+  'call.audio_imported',
+  'stt_job.created',
+] as const;
 
 interface ObjectionHistoryItem {
   objection: DetectedObjection;
@@ -999,11 +1011,20 @@ function AuditLogPanel(): JSX.Element {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [integrity, setIntegrity] = useState<AuditIntegrityResult | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
+  const [filter, setFilter] = useState<AuditLogFilter>({});
 
   useEffect(() => {
     void window.api.auditLogs.list().then(setAuditLogs);
     void window.api.auditLogs.verify().then(setIntegrity);
   }, []);
+
+  const refreshAuditLogs = async (nextFilter: AuditLogFilter): Promise<void> => {
+    setAuditLogs(await window.api.auditLogs.list(cleanAuditFilter(nextFilter)));
+  };
+
+  const updateFilter = (patch: AuditLogFilter): void => {
+    setFilter((current) => ({ ...current, ...patch }));
+  };
 
   return (
     <div className="rounded-lg border border-zinc-800 p-5">
@@ -1023,7 +1044,9 @@ function AuditLogPanel(): JSX.Element {
               key={format}
               type="button"
               onClick={() =>
-                void window.api.auditLogs.export(format).then((path) => setExportedPath(path))
+                void window.api.auditLogs
+                  .export(format, cleanAuditFilter(filter))
+                  .then((path) => setExportedPath(path))
               }
               className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium uppercase text-zinc-900"
             >
@@ -1035,6 +1058,64 @@ function AuditLogPanel(): JSX.Element {
       <p className="mb-4 text-xs text-zinc-500">
         録音開始・同意取得・ユーザーロール変更の実行者と組織スコープを記録します。
       </p>
+      <div className="mb-4 grid gap-3 rounded border border-zinc-800 p-3 text-xs md:grid-cols-5">
+        <input
+          aria-label="監査ログ検索"
+          value={filter.query ?? ''}
+          onChange={(event) => updateFilter({ query: event.currentTarget.value })}
+          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 outline-none focus:border-zinc-400"
+          placeholder="検索語 / target / hash"
+        />
+        <input
+          aria-label="監査ログ開始日"
+          type="date"
+          value={filter.dateFrom ?? ''}
+          onChange={(event) => updateFilter({ dateFrom: event.currentTarget.value })}
+          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 outline-none focus:border-zinc-400"
+        />
+        <input
+          aria-label="監査ログ終了日"
+          type="date"
+          value={filter.dateTo ?? ''}
+          onChange={(event) => updateFilter({ dateTo: event.currentTarget.value })}
+          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 outline-none focus:border-zinc-400"
+        />
+        <select
+          aria-label="監査ログ操作種別"
+          value={filter.action ?? ''}
+          onChange={(event) =>
+            updateFilter({
+              action: event.currentTarget.value
+                ? (event.currentTarget.value as AuditLogFilter['action'])
+                : undefined,
+            })
+          }
+          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 outline-none focus:border-zinc-400"
+        >
+          <option value="">全操作</option>
+          {AUDIT_ACTION_OPTIONS.map((action) => (
+            <option key={action} value={action}>
+              {action}
+            </option>
+          ))}
+        </select>
+        <div className="flex gap-2">
+          <input
+            aria-label="監査ログ実行者"
+            value={filter.actor ?? ''}
+            onChange={(event) => updateFilter({ actor: event.currentTarget.value })}
+            className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-2 outline-none focus:border-zinc-400"
+            placeholder="実行者"
+          />
+          <button
+            type="button"
+            onClick={() => void refreshAuditLogs(filter)}
+            className="rounded bg-zinc-800 px-3 py-2 hover:bg-zinc-700"
+          >
+            適用
+          </button>
+        </div>
+      </div>
       {exportedPath && <div className="mb-4 text-xs text-overlay-success">出力先: {exportedPath}</div>}
       {auditLogs.length === 0 ? (
         <div className="rounded border border-zinc-800 p-4 text-sm text-zinc-600">
@@ -1065,6 +1146,12 @@ function AuditLogPanel(): JSX.Element {
         </ul>
       )}
     </div>
+  );
+}
+
+function cleanAuditFilter(filter: AuditLogFilter): AuditLogFilter {
+  return Object.fromEntries(
+    Object.entries(filter).filter(([, value]) => typeof value === 'string' && value.trim()),
   );
 }
 

@@ -220,6 +220,19 @@ export const AuditLogEntrySchema = z.object({
 
 export const AuditExportFormatSchema = z.enum(['csv', 'pdf']);
 
+export const AuditLogFilterSchema = z.object({
+  query: z.string().trim().max(200).optional(),
+  dateFrom: z.string().trim().optional(),
+  dateTo: z.string().trim().optional(),
+  action: AuditActionSchema.optional(),
+  actor: z.string().trim().max(120).optional(),
+});
+
+export const AuditLogExportInputSchema = z.object({
+  format: AuditExportFormatSchema,
+  filter: AuditLogFilterSchema.optional(),
+});
+
 export const PresentationRiskLevelSchema = z.enum(['none', 'low', 'medium', 'high', 'critical']);
 export const PresentationBlockSchema = z.discriminatedUnion('type', [
   z.object({

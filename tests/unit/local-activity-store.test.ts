@@ -96,6 +96,18 @@ describe('LocalActivityStore', () => {
           actorRole: 'agency_admin',
         },
       ]);
+      await expect(
+        restored.listAuditLogs(
+          { tenantId: '00000000-0000-4000-8000-000000000001' },
+          { query: 'Agency Admin', action: 'recording.started', actor: 'Agency' },
+        ),
+      ).resolves.toHaveLength(1);
+      await expect(
+        restored.listAuditLogs(
+          { tenantId: '00000000-0000-4000-8000-000000000001' },
+          { query: 'missing' },
+        ),
+      ).resolves.toHaveLength(0);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
