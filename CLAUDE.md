@@ -43,7 +43,7 @@ Codex の担当(TS/React/DB)とは AGENTS.md で分担明記。
 | 音声(システム) | **ScreenCaptureKit**(macOS 13+) | BlackHole 等の仮想デバイス**禁止** |
 | 音声(マイク) | **AVAudioEngine**(voiceProcessing 有効) | 内蔵 AEC 利用 |
 | ネイティブ橋渡し | Swift 5.9+ + Node-API(NAPI) | Napi::ThreadSafeFunction 必須 |
-| STT(リアルタイム) | **Deepgram Nova-3**(`language=ja`) | `v1/listen`、両ストリーミング |
+| STT(リアルタイム) | **Apple SpeechAnalyzer** | ローカル文字起こし、Deepgram は fallback |
 | VAD | Silero VAD(自分側発話検知用) | ライセンス要確認(GPL/AGPL なら却下) |
 | LLM 検知 | Claude Haiku 4.5 | $1/$5 per MTok |
 | LLM 生成 | Claude Sonnet 4.6 | $3/$15 per MTok、プロンプトキャッシュ必須(min 4K tokens) |
@@ -205,7 +205,8 @@ sales-talk/
 - 2026-04-23: AI エージェント実装に転換、Swift 含む全実装を本人 + Claude Code/Codex で
 - 2026-04-25: ScreenCaptureKit プロトタイプ検証を Week 1 Day 1-2 に必須化
 - 2026-04-25: Deepgram Nova-3 日本語実測を Week 1 Day 3-5 に必須化
-- 2026-04-27: VibeVoice-ASR は Phase 2 検討候補(MVP は Deepgram 維持)
+- 2026-04-27: 当時判断として VibeVoice-ASR は Phase 2 検討候補(MVP は Deepgram 維持)
+- 2026-06-10: Mac MVP の STT 第一候補を Apple SpeechAnalyzer へ変更。音声を外部送信しない価値を優先し、Deepgram は fallback / Cloud β 用に降格。
 
 ## 12. 困ったとき
 

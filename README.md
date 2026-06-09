@@ -5,6 +5,7 @@ Zoomビデオ商談中にリアルタイムで反論ハンドリングを支援�
 詳細設計: [sales-assistant-prd.md](./sales-assistant-prd.md)
 2軸開発計画: [docs/two-track-development-plan.md](./docs/two-track-development-plan.md)
 セルログ AI-Native 計画: [docs/selllog-ai-native-plan.md](./docs/selllog-ai-native-plan.md)
+ローカルSTT移行計画: [docs/apple-speechanalyzer-stt-plan.md](./docs/apple-speechanalyzer-stt-plan.md)
 エージェント協働: [CLAUDE.md](./CLAUDE.md) (Swift/macOS) / [AGENTS.md](./AGENTS.md) (TS/React/DB)
 
 ## クイックスタート
@@ -28,7 +29,7 @@ npm run dev
 | `npm run test:e2e` | Playwright(E2E) |
 | `npm run native:audio:build` | macOS native audio capture addon をビルド |
 | `npm run native:audio:smoke -- --duration-ms 5000` | 実機で microphone/system audio chunk 到達を診断 |
-| `DEEPGRAM_API_KEY=... npm run native:audio:stt-smoke -- --duration-ms 8000` | 実機 audio chunk を Deepgram へ送信して STT 疎通確認 |
+| `DEEPGRAM_API_KEY=... npm run native:audio:stt-smoke -- --duration-ms 8000` | fallback 用に実機 audio chunk を Deepgram へ送信して STT 疎通確認 |
 | `npm run package:mac` | macOS DMG ビルド(universal) |
 
 ### Native audio smoke test

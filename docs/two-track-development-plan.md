@@ -1,10 +1,11 @@
 # SalesTalk / セルログ 2軸開発計画
 
 作成日: 2026-05-25
-更新日: 2026-05-26
+更新日: 2026-06-10
 目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ業務API基盤で進める。
 
 中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
+STT 方針は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
 
 ## 1. 方針
 
@@ -36,10 +37,12 @@ flowchart LR
 現行 SalesTalk の継続線。
 
 - Zoom 音声を取得
-- Deepgram でリアルタイム文字起こし
+- Apple SpeechAnalyzer でローカル文字起こし
 - 反論検知
 - Overlay で切り返し候補を表示
 - 商談後に議事録、タスク、ナレッジ化
+
+Deepgram は主力ではなく、Apple SpeechAnalyzer 非対応端末・クラウド許容顧客・Cloudflare β の fallback として残す。
 
 ### Track B: 保険営業コンプラ支援
 
@@ -145,6 +148,21 @@ Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise 
 
 実装では `Repository` interface を先に切り、`local` / `cloudflare` / `aws` adapter を差し替え可能にする。
 
+### 3.5 STT 方針
+
+Mac MVP の文字起こしは local-first に変更する。
+
+| provider | 位置付け | 用途 |
+|---|---|---|
+| Apple SpeechAnalyzer | 第一候補 | Mac / Apple Silicon のリアルタイム文字起こし |
+| Deepgram streaming | fallback | SpeechAnalyzer 非対応、顧客がクラウドSTTを許容する場合 |
+| Deepgram prerecorded | batch fallback | アップロード音声の非同期処理 |
+| manual transcript | 開発・デモ | keyなし検証、議事録/コンプラ下流確認 |
+
+売り方は「音声を外部サーバーに預けない」「会議Bot不要」を前面に出す。
+
+ただし Anthropic で議事録・カンペを生成する場合、transcript テキストは外部APIへ送る。この点は設定画面・同意文言で分けて説明する。
+
 ## 4. 保険営業向けユースケース
 
 ### 4.1 現場営業
@@ -211,7 +229,7 @@ Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise 
 目的: スマホアプリ前に、訪問商談の検証を始める。
 
 - `.m4a` / `.mp3` / `.wav` import
-- Deepgram batch / streaming どちらでも処理できる抽象化
+- Apple SpeechAnalyzer / Deepgram batch / Deepgram streaming を切り替えられる抽象化
 - transcript を meeting session に紐付け
 - コンプラ議事録生成
 
@@ -312,7 +330,8 @@ Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise 
 期間目安: 並行継続
 
 - 実 Zoom audio smoke
-- Deepgram 実 key 疎通
+- Apple SpeechAnalyzer 実機 smoke
+- Deepgram fallback 疎通
 - Anthropic 本番回答生成
 - Cohere / Cloudflare or local RAG
 - Overlay UX 改善
@@ -329,9 +348,10 @@ Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise 
 6. 管理者レビュー UI
 7. ReviewTask / AuditLog / PresentationBlock
 8. 音声ファイル import UI
-9. STT job abstraction
-10. Cloudflare Workers / D1 / R2 β
-11. iOS recorder PoC
+9. Apple SpeechAnalyzer STT provider
+10. STT job abstraction
+11. Cloudflare Workers / D1 / R2 β
+12. iOS recorder PoC
 
 ## 8. あなたがやる必要がある作業
 
@@ -341,7 +361,8 @@ Supabase 前提は外す。MVP は local-first、β は Cloudflare、Enterprise 
 - 会社別に「禁止」「注意」「必須説明」のサンプルを10〜30件作る
 - 録音同意の運用方針を決める
 - 保険募集コンプラに詳しい人へ初期レビュー依頼
-- Deepgram / Anthropic key 発行
+- Anthropic key 発行
+- Deepgram key 発行はfallback検証用
 - Cloudflare アカウントと Workers / D1 / R2 利用方針
 - iOS 配布するなら Apple Developer Program
 - 実際の訪問商談録音サンプルを用意

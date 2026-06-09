@@ -1,6 +1,7 @@
 # セルログ AI-Native 業務API 計画
 
 作成日: 2026-05-26
+更新日: 2026-06-10
 目的: SalesTalk を「Mac商談支援」だけでなく、保険営業向けの `セルログ` として成立する AI-Native 業務システムへ再設計する。
 
 ## 1. 結論
@@ -228,10 +229,21 @@ Supabase 前提は外す。Repository interface を先に切る。
 
 | 用途 | 第一候補 | 備考 |
 |---|---|---|
-| STT | Deepgram | 現行実装と相性が良い |
+| STT | Apple SpeechAnalyzer | Mac / Apple Silicon では音声を外部送信しない方針を優先 |
 | 議事録・要約 | Anthropic | ガードレール通過後にUI表示 |
 | structured output / tool use | Anthropic or OpenAI | API tool 呼び出し設計に合わせる |
 | embedding | Cohere | ナレッジ検索が必要になった段階 |
+
+2026-06-10 方針変更:
+
+| 用途 | 第一候補 | fallback | 備考 |
+|---|---|---|---|
+| Mac realtime STT | Apple SpeechAnalyzer | Deepgram streaming | 音声を外部送信しない価値を優先 |
+| uploaded audio STT | Apple SpeechAnalyzer | Deepgram prerecorded / Cloudflare Queue | local-first、Cloud β はfallback |
+| mobile STT | Apple SpeechAnalyzer / platform local STT | Deepgram prerecorded | iOS優先、Androidは別途検討 |
+| 議事録・カンペ | Anthropic | local LLM 検討 | transcriptのみ送信、音声は送信しない |
+
+詳細は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
 
 ### 8.5 Security / Compliance
 
@@ -310,7 +322,8 @@ Cloudflare はセルログの β 版に向いている。
 
 - audio upload/import UI
 - audio metadata
-- STT job abstraction
+- Apple SpeechAnalyzer local STT
+- Deepgram fallback を含む STT job abstraction
 - transcript 保存
 - compliance analyze job
 - minutes generation job
@@ -375,7 +388,8 @@ Cloudflare はセルログの β 版に向いている。
 4. local adapter へ整理
 5. Supabase 直接依存を optional / legacy 扱いにする
 6. upload transcript / audio import の入口
-7. STT job abstraction
+7. Apple SpeechAnalyzer STT provider
+8. STT job abstraction
 
 ### P2: β化
 
@@ -383,9 +397,10 @@ Cloudflare はセルログの β 版に向いている。
 2. D1 migrations
 3. R2 upload signed URL
 4. Queue job worker
-5. tenant / company / user role model
-6. audit logs
-7. admin web app 分離
+5. Deepgram fallback worker
+6. tenant / company / user role model
+7. audit logs
+8. admin web app 分離
 
 ## 12. やらないこと
 
@@ -408,7 +423,8 @@ Cloudflare はセルログの β 版に向いている。
 - 録音同意の文言案
 - 実録音または疑似録音サンプル
 - 保険代理店の管理者ヒアリング
-- Deepgram / Anthropic key
+- Anthropic key
+- Deepgram key はfallback検証用
 - Cloudflare アカウントと Workers / D1 / R2 利用方針
 
 ## 14. 現時点の判断

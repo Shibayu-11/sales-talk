@@ -16,7 +16,7 @@
 - **React レンダラ**: Overlay ウィンドウ / Control ウィンドウ
 - **Tailwind CSS スタイリング**(オーバーレイデザイン §12.3 準拠)
 - **Supabase スキーマ**(マイグレーション、RLS、PGroonga インデックス)
-- **API クライアント**: Deepgram / Anthropic / Cohere ラッパ(レジリエンシー含む)
+- **API クライアント**: Apple SpeechAnalyzer provider 境界 / Deepgram fallback / Anthropic / Cohere ラッパ(レジリエンシー含む)
 - **テスト生成**: Vitest 単体 / Playwright 統合 / プロンプト評価データセット
 - **繰り返し処理**: フォームバリデーション、CRUD UI、設定画面、エラーモーダル
 - **ロギング・観測**: Pino 設定、Sentry 連携、PostHog イベント発火
@@ -33,7 +33,7 @@ Claude Code の担当(Swift/macOS)とは CLAUDE.md で分担明記。
 | 状態管理 | XState v5(`setup` API) |
 | バリデーション | zod(IPC 入出力 + フォーム両用) |
 | HTTP | undici(Node)/ fetch(Renderer は最小限) |
-| WebSocket | `ws`(Deepgram Nova-3 ストリーミング) |
+| WebSocket | `ws`(Deepgram fallback ストリーミング) |
 | ロギング | Pino(JSON Lines、PII マスキングミドルウェア) |
 | 監視 | Sentry(`@sentry/electron`)+ PostHog Cloud |
 | DB クライアント | `@supabase/supabase-js`(東京リージョン) |
@@ -276,7 +276,8 @@ sales-talk/
 - 2026-04-23: タスクは own/customer/joint の3分類
 - 2026-04-24: マイグレーションで既存カラム削除禁止(deprecated_ プレフィックス→3ヶ月後削除)
 - 2026-04-24: 商談中の自動アップデート禁止、15分後リトライ
-- 2026-04-27: VibeVoice-ASR は Phase 2 検討候補(MVP は Deepgram 維持)
+- 2026-04-27: 当時判断として VibeVoice-ASR は Phase 2 検討候補(MVP は Deepgram 維持)
+- 2026-06-10: Mac MVP の STT 第一候補を Apple SpeechAnalyzer へ変更。Deepgram は fallback / Cloud β 用に降格。
 
 ## 13. 困ったとき
 
