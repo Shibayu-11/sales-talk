@@ -144,6 +144,18 @@ export interface CloudflareConnectionStatus {
   error: string | null;
 }
 
+export interface AnthropicDiagnosticResult {
+  configured: boolean;
+  authenticated: boolean;
+  haikuModel: string;
+  sonnetModel: string;
+  detectionOk: boolean;
+  responseOk: boolean;
+  latencyMs: number;
+  samplePeak: string | null;
+  error: string | null;
+}
+
 export interface PermissionState {
   screen: boolean;
   microphone: boolean;
@@ -683,6 +695,7 @@ export interface RendererApi {
     set(key: string, value: string): Promise<void>;
     has(key: string): Promise<boolean>;
     delete(key: string): Promise<void>;
+    checkAnthropic(): Promise<AnthropicDiagnosticResult>;
   };
   dev: {
     isEnabled(): Promise<boolean>;

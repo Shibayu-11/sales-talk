@@ -3,8 +3,11 @@ import type { ContentBlock, Message } from '@anthropic-ai/sdk/resources/messages
 import type {
   DetectionRequest,
   LlmProvider,
+  ObjectionLlmService,
   ResponseGenerationRequest,
 } from './llm';
+import { ObjectionLlmService as RuntimeObjectionLlmService } from './llm';
+import type { AnthropicDiagnosticResult, DetectedObjection } from '@shared/types';
 import { secretStore } from './secrets';
 
 interface AnthropicMessagesClient {
@@ -43,7 +46,7 @@ export class AnthropicLlmProvider implements LlmProvider {
   async generateObjectionResponse(input: ResponseGenerationRequest): Promise<unknown> {
     const message = await this.options.client.messages.create({
       model: this.options.sonnetModel,
-      max_tokens: 1_200,
+      max_tokens: 2_000,
       temperature: 0.2,
       system: buildResponseSystemPrompt(input.productId),
       messages: [{ role: 'user', content: buildResponsePrompt(input) }],
@@ -66,6 +69,60 @@ export async function createAnthropicLlmProvider(): Promise<AnthropicLlmProvider
   });
 }
 
+export function getAnthropicModelNames(): { haikuModel: string; sonnetModel: string } {
+  return {
+    haikuModel: process.env.ANTHROPIC_HAIKU_MODEL ?? 'claude-haiku-4-5',
+    sonnetModel: process.env.ANTHROPIC_SONNET_MODEL ?? 'claude-sonnet-4-6',
+  };
+}
+
+export async function runAnthropicDiagnostic(
+  provider?: LlmProvider,
+  serviceFactory: (provider: LlmProvider) => ObjectionLlmService = (llmProvider) =>
+    new RuntimeObjectionLlmService(llmProvider),
+): Promise<AnthropicDiagnosticResult> {
+  const startedAt = Date.now();
+  const models = getAnthropicModelNames();
+  try {
+    const llmProvider = provider ?? (await createAnthropicLlmProvider());
+    const service = serviceFactory(llmProvider);
+    const detected = await service.detect({
+      productId: 'kenko_keiei',
+      utterance: '費用が高くて、今すぐ導入する判断は難しいです。',
+      recentContext: '健康経営優良法人の申請支援について説明中です。',
+    });
+    const objection = detected ?? createDiagnosticObjection();
+    const response = await service.generateResponse({
+      productId: 'kenko_keiei',
+      objection,
+      transcript: '費用が高くて、今すぐ導入する判断は難しいです。',
+      knowledgeEntries: [],
+    });
+
+    return {
+      configured: true,
+      authenticated: true,
+      ...models,
+      detectionOk: Boolean(detected),
+      responseOk: response.fullScript.length > 0,
+      latencyMs: Date.now() - startedAt,
+      samplePeak: response.peak,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      configured: error instanceof Error && error.message.includes('not configured') ? false : true,
+      authenticated: false,
+      ...models,
+      detectionOk: false,
+      responseOk: false,
+      latencyMs: Date.now() - startedAt,
+      samplePeak: null,
+      error: error instanceof Error ? error.message : 'anthropic_diagnostic_failed',
+    };
+  }
+}
+
 export function parseJsonFromMessage(message: Message): unknown {
   const text = message.content.map(contentBlockToText).join('\n').trim();
   if (!text) {
@@ -80,8 +137,21 @@ function contentBlockToText(block: ContentBlock): string {
 }
 
 function stripJsonCodeFence(text: string): string {
-  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return fenced?.[1] ?? text;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    return fenced[1];
+  }
+  return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+}
+
+function createDiagnosticObjection(): DetectedObjection {
+  return {
+    id: '00000000-0000-4000-8000-000000000001',
+    type: 'price',
+    confidence: 0.8,
+    triggerText: '費用が高くて、今すぐ導入する判断は難しいです。',
+    detectedAt: Date.now(),
+  };
 }
 
 function buildDetectionPrompt(input: DetectionRequest): string {

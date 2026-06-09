@@ -163,6 +163,7 @@ export const IPC = {
     set: 'secrets:set',
     has: 'secrets:has',
     delete: 'secrets:delete',
+    anthropicDiagnostic: 'secrets:anthropic-diagnostic',
     // NOTE: `get` is intentionally absent from IPC. Renderer must never read raw secrets.
   },
 

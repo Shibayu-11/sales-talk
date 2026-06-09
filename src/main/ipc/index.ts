@@ -71,6 +71,7 @@ import { setCallModeLogging } from '../logger';
 import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
 import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
+import { runAnthropicDiagnostic } from '../services/anthropic';
 import { createRuntimeDeepgramSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
 import { NativeAudioCaptureService } from '../audio/native-audio-capture';
@@ -185,6 +186,7 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const key = SecretKeySchema.parse(payload);
     await secretStore.delete(key);
   });
+  ipcMain.handle(IPC.secrets.anthropicDiagnostic, () => runAnthropicDiagnostic());
 
   ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
 

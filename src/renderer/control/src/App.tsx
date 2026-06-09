@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   AppSettings,
+  AnthropicDiagnosticResult,
   ActionItemTask,
   AuditLogEntry,
   AuditIntegrityResult,
@@ -914,6 +915,9 @@ function SettingsPanel(props: {
   const [cloudflareEmail, setCloudflareEmail] = useState('agency-admin@example.local');
   const [cloudflarePassword, setCloudflarePassword] = useState('');
   const [cloudflareAuthPending, setCloudflareAuthPending] = useState(false);
+  const [anthropicDiagnostic, setAnthropicDiagnostic] =
+    useState<AnthropicDiagnosticResult | null>(null);
+  const [anthropicDiagnosticPending, setAnthropicDiagnosticPending] = useState(false);
 
   const runCloudflareAuth = async (
     action: (email: string, password: string) => Promise<CloudflareConnectionStatus>,
@@ -924,6 +928,15 @@ function SettingsPanel(props: {
       setCloudflarePassword('');
     } finally {
       setCloudflareAuthPending(false);
+    }
+  };
+
+  const runAnthropicDiagnostic = async (): Promise<void> => {
+    setAnthropicDiagnosticPending(true);
+    try {
+      setAnthropicDiagnostic(await window.api.secrets.checkAnthropic());
+    } finally {
+      setAnthropicDiagnosticPending(false);
     }
   };
 
@@ -1116,7 +1129,17 @@ function SettingsPanel(props: {
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5">
-        <h2 className="mb-3 text-sm font-medium text-zinc-400">API Keys</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-zinc-400">API Keys</h2>
+          <button
+            type="button"
+            disabled={anthropicDiagnosticPending || !props.secretStatus.anthropic_api_key}
+            onClick={() => void runAnthropicDiagnostic()}
+            className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {anthropicDiagnosticPending ? 'Anthropic確認中…' : 'Anthropic実API確認'}
+          </button>
+        </div>
         <div className="space-y-3">
           {SECRET_KEYS.map(({ key, label }) => (
             <div key={key} className="grid grid-cols-[160px_1fr_auto_auto] items-center gap-3">
@@ -1144,6 +1167,30 @@ function SettingsPanel(props: {
             </div>
           ))}
         </div>
+        {anthropicDiagnostic && (
+          <div
+            className={`mt-4 rounded border p-3 text-xs ${
+              anthropicDiagnostic.authenticated
+                ? 'border-overlay-success/40 bg-emerald-950/20 text-emerald-100'
+                : 'border-overlay-objection/40 bg-red-950/20 text-red-100'
+            }`}
+          >
+            <div className="flex flex-wrap gap-3">
+              <span>認証: {anthropicDiagnostic.authenticated ? 'OK' : 'NG'}</span>
+              <span>Haiku: {anthropicDiagnostic.haikuModel}</span>
+              <span>Sonnet: {anthropicDiagnostic.sonnetModel}</span>
+              <span>検知: {anthropicDiagnostic.detectionOk ? 'OK' : '未検知'}</span>
+              <span>回答: {anthropicDiagnostic.responseOk ? 'OK' : 'NG'}</span>
+              <span>{anthropicDiagnostic.latencyMs}ms</span>
+            </div>
+            {anthropicDiagnostic.samplePeak && (
+              <div className="mt-2">sample peak: {anthropicDiagnostic.samplePeak}</div>
+            )}
+            {anthropicDiagnostic.error && (
+              <div className="mt-2 text-overlay-objection">{anthropicDiagnostic.error}</div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5 text-sm text-zinc-400">

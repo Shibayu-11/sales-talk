@@ -4,6 +4,7 @@ import type {
   PermissionState,
   CallState,
   AppSettings,
+  AnthropicDiagnosticResult,
   CallSession,
   CloudflareConnectionStatus,
   ProductId,
@@ -150,6 +151,7 @@ const IPC = {
     set: 'secrets:set',
     has: 'secrets:has',
     delete: 'secrets:delete',
+    anthropicDiagnostic: 'secrets:anthropic-diagnostic',
   },
   dev: {
     isEnabled: 'dev:is-enabled',
@@ -373,6 +375,8 @@ const api: RendererApi = {
     set: (key, value) => ipcRenderer.invoke(IPC.secrets.set, { key, value }),
     has: (key) => ipcRenderer.invoke(IPC.secrets.has, key),
     delete: (key) => ipcRenderer.invoke(IPC.secrets.delete, key),
+    checkAnthropic: (): Promise<AnthropicDiagnosticResult> =>
+      ipcRenderer.invoke(IPC.secrets.anthropicDiagnostic),
   },
   dev: {
     isEnabled: () => ipcRenderer.invoke(IPC.dev.isEnabled),
