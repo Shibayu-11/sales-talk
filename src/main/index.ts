@@ -1,3 +1,4 @@
+import './app-identity';
 import { app, BrowserWindow } from 'electron';
 import { createControlWindow } from './windows/control';
 import { createOverlayWindow } from './windows/overlay';

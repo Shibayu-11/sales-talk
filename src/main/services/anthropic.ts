@@ -63,7 +63,7 @@ export async function createAnthropicLlmProvider(): Promise<AnthropicLlmProvider
   }
 
   return new AnthropicLlmProvider({
-    client: new Anthropic({ apiKey, timeout: 5_000, maxRetries: 1 }),
+    client: new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 }),
     haikuModel: process.env.ANTHROPIC_HAIKU_MODEL ?? 'claude-haiku-4-5',
     sonnetModel: process.env.ANTHROPIC_SONNET_MODEL ?? 'claude-sonnet-4-6',
   });
