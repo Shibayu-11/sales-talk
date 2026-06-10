@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   overlayPosition: { x: 0, y: 80, display: 0 },
   hotkeys: { ...DEFAULT_HOTKEYS },
   consentNoticeMode: 'verbal',
+  sttProviderMode: 'local_first',
   schemaVersion: SETTINGS_SCHEMA_VERSION,
 };
 

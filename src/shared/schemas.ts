@@ -44,6 +44,18 @@ export const RecordingConsentMethodSchema = z.enum([
 ]);
 export const SpeakerSchema = z.enum(['self', 'counterpart']);
 export const OverlayLayerSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+export const SttProviderKindSchema = z.enum([
+  'apple_speech_analyzer',
+  'deepgram_streaming',
+  'deepgram_prerecorded',
+  'manual',
+]);
+export const SttProviderModeSchema = z.enum([
+  'local_first',
+  'deepgram_fallback',
+  'deepgram_only',
+  'manual_only',
+]);
 
 export const AudioChunkSchema = z.object({
   speaker: SpeakerSchema,
@@ -421,6 +433,7 @@ export const AppSettingsSchema = z.object({
   }),
   hotkeys: z.record(z.string()),
   consentNoticeMode: z.enum(['verbal', 'zoom_background', 'sdk']),
+  sttProviderMode: SttProviderModeSchema.default('local_first'),
   schemaVersion: z.number().int().nonnegative(),
 });
 

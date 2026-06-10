@@ -104,6 +104,12 @@ export type SharingState =
   | { status: 'protection_failed' };
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+export type SttProviderKind =
+  | 'apple_speech_analyzer'
+  | 'deepgram_streaming'
+  | 'deepgram_prerecorded'
+  | 'manual';
+export type SttProviderMode = 'local_first' | 'deepgram_fallback' | 'deepgram_only' | 'manual_only';
 
 export interface AudioCaptureSourceStats {
   chunks: number;
@@ -166,6 +172,7 @@ export interface AppSettings {
   overlayPosition: { x: number; y: number; display: number };
   hotkeys: Record<string, string>;
   consentNoticeMode: 'verbal' | 'zoom_background' | 'sdk';
+  sttProviderMode: SttProviderMode;
   /** Per PRD §31: keep deprecated keys for 3 months */
   schemaVersion: number;
 }

@@ -355,6 +355,7 @@ export function App(): JSX.Element {
               audioStatus={audioStatus}
               audioStatusPolling={shouldPollAudioStatus}
               deepgramConfigured={Boolean(secretStatus.deepgram_api_key)}
+              sttProviderMode={settings?.sttProviderMode ?? 'local_first'}
               devToolsEnabled={devToolsEnabled}
               currentObjection={currentObjection}
               currentResponse={currentResponse}
@@ -395,6 +396,10 @@ export function App(): JSX.Element {
               onRefreshCloudflare={() => window.api.cloudflare.getStatus().then(setCloudflareStatus)}
               onCloudflareStatusChange={setCloudflareStatus}
               onUpdateUserRole={updateOrganizationUserRole}
+              onSettingsChange={async (patch) => {
+                await window.api.settings.set(patch);
+                setSettings(await window.api.settings.get());
+              }}
               onSecretInputChange={(key, value) =>
                 setSecretInputs((current) => ({ ...current, [key]: value }))
               }
@@ -433,6 +438,7 @@ function DashboardPanel(props: {
   recordingConsentGranted: boolean;
   onRecordingConsentChange: (granted: boolean) => void;
   deepgramConfigured: boolean;
+  sttProviderMode: AppSettings['sttProviderMode'];
   devToolsEnabled: boolean;
   sttError: string | null;
   sttState: ConnectionState;
@@ -442,6 +448,7 @@ function DashboardPanel(props: {
       props.deepgramConfigured &&
       !props.sttError.includes('Deepgram API key is not configured'),
   );
+  const sttProviderLabel = sttProviderModeLabel(props.sttProviderMode);
   const audioDiagnosticActive =
     Boolean(props.audioStatus?.nativeCaptureActive) ||
     props.sttState === 'connecting' ||
@@ -482,6 +489,7 @@ function DashboardPanel(props: {
           audioError={props.audioError}
           audioStatus={props.audioStatus}
           deepgramConfigured={props.deepgramConfigured}
+          sttProviderMode={props.sttProviderMode}
           permissions={props.permissions}
           sttError={props.sttError}
           onOpenSettings={props.onOpenSettings}
@@ -578,6 +586,9 @@ function DashboardPanel(props: {
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-zinc-400">音声 / STT 診断</h2>
+            <span className="rounded bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-400">
+              {sttProviderLabel}
+            </span>
             {props.audioStatusPolling && (
               <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-overlay-success">
                 auto refresh
@@ -651,6 +662,11 @@ function DashboardPanel(props: {
           )}
           {props.audioError && <div className="text-overlay-objection">Audio: {props.audioError}</div>}
           {deepgramErrorVisible && <div className="text-overlay-objection">STT: {props.sttError}</div>}
+          {props.sttProviderMode === 'local_first' && (
+            <div>
+              方針: Apple SpeechAnalyzer ローカル文字起こしを第一候補にし、現行Deepgram接続はfallbackとして扱います。
+            </div>
+          )}
         </div>
         <div className="mt-4">
           <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Recent transcripts</div>
@@ -746,6 +762,7 @@ function ActionableDiagnostics(props: {
   audioError: string | null;
   audioStatus: AudioCaptureStatus | null;
   deepgramConfigured: boolean;
+  sttProviderMode: AppSettings['sttProviderMode'];
   permissions: PermissionState | null;
   sttError: string | null;
   onOpenSettings: () => void;
@@ -758,8 +775,16 @@ function ActionableDiagnostics(props: {
   const deepgramMissing =
     !props.deepgramConfigured ||
     props.sttError?.includes('Deepgram API key is not configured') === true;
+  const deepgramFallbackRequired =
+    props.sttProviderMode === 'deepgram_fallback' || props.sttProviderMode === 'deepgram_only';
 
-  if (!permissionMissing && !nativeMissing && !deepgramMissing && !props.audioError && !props.sttError) {
+  if (
+    !permissionMissing &&
+    !nativeMissing &&
+    !(deepgramFallbackRequired && deepgramMissing) &&
+    !props.audioError &&
+    !props.sttError
+  ) {
     return null;
   }
 
@@ -782,10 +807,10 @@ function ActionableDiagnostics(props: {
           )}
         </ActionCard>
       )}
-      {deepgramMissing && (
+      {deepgramFallbackRequired && deepgramMissing && (
         <ActionCard
-          title="Deepgram API key が未設定です"
-          body="音声 chunk の取得診断は可能です。STT まで確認するには Settings で Deepgram key を保存してください。"
+          title="Deepgram fallback key が未設定です"
+          body="ローカルSTT非対応時のfallbackを使うには Settings で Deepgram key を保存してください。"
         >
           <ActionButton onClick={props.onOpenSettings}>Settings を開く</ActionButton>
         </ActionCard>
@@ -801,7 +826,9 @@ function ActionableDiagnostics(props: {
         </ActionCard>
       )}
       {props.audioError && <InlineError label="Audio" message={props.audioError} />}
-      {props.sttError && !deepgramMissing && <InlineError label="STT" message={props.sttError} />}
+      {props.sttError && !(deepgramFallbackRequired && deepgramMissing) && (
+        <InlineError label="STT" message={props.sttError} />
+      )}
     </div>
   );
 }
@@ -909,6 +936,7 @@ function SettingsPanel(props: {
   onRefreshCloudflare: () => Promise<void>;
   onCloudflareStatusChange: (status: CloudflareConnectionStatus) => void;
   onUpdateUserRole: (membershipId: string, role: OrganizationRole) => Promise<void>;
+  onSettingsChange: (patch: Partial<AppSettings>) => Promise<void>;
   onSecretInputChange: (key: string, value: string) => void;
   onSaveSecret: (key: string) => Promise<void>;
 }): JSX.Element {
@@ -1125,6 +1153,39 @@ function SettingsPanel(props: {
             granted={props.permissions?.microphone}
             onRequest={() => void window.api.permissions.requestMicrophone()}
           />
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">文字起こし方式</h2>
+        <div className="grid gap-4 text-sm md:grid-cols-[260px_1fr]">
+          <label className="text-xs text-zinc-500">
+            STT provider
+            <select
+              value={props.settings?.sttProviderMode ?? 'local_first'}
+              onChange={(event) =>
+                void props.onSettingsChange({
+                  sttProviderMode: event.currentTarget.value as AppSettings['sttProviderMode'],
+                })
+              }
+              className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-200"
+            >
+              <option value="local_first">Apple SpeechAnalyzer優先</option>
+              <option value="deepgram_fallback">ローカル + Deepgram fallback</option>
+              <option value="deepgram_only">Deepgramのみ</option>
+              <option value="manual_only">手動/開発 transcript のみ</option>
+            </select>
+          </label>
+          <div className="rounded border border-zinc-800 bg-zinc-950/40 p-3 text-xs text-zinc-400">
+            <div className="font-medium text-zinc-300">
+              {sttProviderModeLabel(props.settings?.sttProviderMode ?? 'local_first')}
+            </div>
+            <p className="mt-2">
+              Mac MVPは音声を外部サーバーに預けない方針です。Apple SpeechAnalyzer実装が入るまでは、
+              既存のDeepgram接続はfallback診断として残します。議事録・カンペ生成でAnthropicを使う場合は、
+              音声ではなく文字起こし後のテキストだけを送信します。
+            </p>
+          </div>
         </div>
       </div>
 
@@ -2329,6 +2390,19 @@ function ownerLabel(owner: TaskOwner): string {
     return '顧客';
   }
   return '共同';
+}
+
+function sttProviderModeLabel(mode: AppSettings['sttProviderMode']): string {
+  switch (mode) {
+    case 'local_first':
+      return 'Apple SpeechAnalyzer優先';
+    case 'deepgram_fallback':
+      return 'ローカル + Deepgram fallback';
+    case 'deepgram_only':
+      return 'Deepgramのみ';
+    case 'manual_only':
+      return '手動/開発 transcript のみ';
+  }
 }
 
 function PermissionRow(props: {

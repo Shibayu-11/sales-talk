@@ -49,6 +49,12 @@ export async function createRuntimeDeepgramSTTClient(
   });
 }
 
+export async function createRuntimeFallbackSTTClient(
+  options: Omit<RuntimeSTTClientOptions, 'provider'>,
+): Promise<ResilientSTTClient> {
+  return createRuntimeDeepgramSTTClient(options);
+}
+
 function notifyTranscript(windows: RuntimeSTTWindowAccessors, transcript: Transcript): void {
   const channel = transcript.isFinal ? IPC.stt.onFinal : IPC.stt.onInterim;
   windows.getControlWindow()?.webContents.send(channel, transcript);

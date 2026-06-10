@@ -8,7 +8,7 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
     await expect(controlWindow.getByText('音声 / STT 診断')).toBeVisible();
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
     await expect(controlWindow.getByText(/顧客へ録音・文字起こし/)).toBeVisible();
-    await expect(controlWindow.getByText('Deepgram API key が未設定です')).toBeVisible();
+    await expect(controlWindow.getByText('Apple SpeechAnalyzer優先')).toBeVisible();
     await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
 
     await expect
@@ -17,18 +17,25 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
   });
 });
 
-test('saving a Deepgram key clears the dashboard setup warning', async () => {
+test('settings exposes local-first STT and Deepgram fallback mode', async () => {
   await withSalesTalkApp(async ({ controlWindow }) => {
-    await expect(controlWindow.getByText('Deepgram API key が未設定です')).toBeVisible();
-
-    await controlWindow.getByRole('button', { name: 'Settings を開く' }).click();
+    await controlWindow.getByRole('button', { name: '設定', exact: true }).click();
     await expect(controlWindow.getByRole('heading', { name: 'API Keys' })).toBeVisible();
+    await expect(controlWindow.getByRole('heading', { name: '文字起こし方式' })).toBeVisible();
+    await expect(controlWindow.getByText(/音声を外部サーバーに預けない/)).toBeVisible();
+    await controlWindow.getByLabel('STT provider').selectOption('deepgram_fallback');
+    await expect(controlWindow.getByLabel('STT provider')).toHaveValue('deepgram_fallback');
+    await controlWindow.getByRole('button', { name: 'ダッシュボード' }).click();
+    await expect(controlWindow.getByText('ローカル + Deepgram fallback')).toBeVisible();
+    await expect(controlWindow.getByText('Deepgram fallback key が未設定です')).toBeVisible();
+
+    await controlWindow.getByRole('button', { name: '設定', exact: true }).click();
     await controlWindow.getByRole('textbox', { name: 'Deepgram API key' }).fill('e2e-deepgram-key');
     await controlWindow.getByRole('button', { name: 'Deepgram API key を保存' }).click();
     await expect(controlWindow.getByText('保存済み').first()).toBeVisible();
 
     await controlWindow.getByRole('button', { name: 'ダッシュボード' }).click();
-    await expect(controlWindow.getByText('Deepgram API key が未設定です')).toHaveCount(0);
+    await expect(controlWindow.getByText('Deepgram fallback key が未設定です')).toHaveCount(0);
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
 
     await controlWindow.getByRole('button', { name: '設定', exact: true }).click();
