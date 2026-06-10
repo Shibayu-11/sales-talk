@@ -13,6 +13,10 @@ extraResources:
     to: native/audio-capture
     filter:
       - audio_capture.node
+  - from: src/native/audio-capture/.build/release
+    to: native/audio-capture
+    filter:
+      - speech-analyzer-helper
 
 mac:
   category: public.app-category.business

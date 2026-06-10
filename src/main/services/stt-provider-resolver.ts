@@ -1,4 +1,5 @@
 import type { Speaker, SttProviderKind, SttProviderMode } from '@shared/types';
+import { createAppleSpeechAnalyzerSTTProvider } from './apple-speech-analyzer';
 import { createDeepgramSTTProvider } from './deepgram';
 import type { STTProvider } from './stt';
 
@@ -17,7 +18,7 @@ export interface STTProviderResolverOptions {
 
 export async function resolveSTTProvider(options: STTProviderResolverOptions): Promise<ResolvedSTTProvider> {
   const speaker = options.speaker ?? 'counterpart';
-  const createAppleProvider = options.createAppleSpeechAnalyzerProvider ?? createUnavailableAppleProvider;
+  const createAppleProvider = options.createAppleSpeechAnalyzerProvider ?? createAppleSpeechAnalyzerSTTProvider;
   const createDeepgramProvider = options.createDeepgramProvider ?? createDeepgramSTTProvider;
 
   if (options.mode === 'manual_only') {
@@ -68,8 +69,4 @@ class UnavailableSTTProvider implements STTProvider {
   async sendAudio(): Promise<void> {
     throw new Error(this.message);
   }
-}
-
-async function createUnavailableAppleProvider(): Promise<STTProvider | null> {
-  return null;
 }
