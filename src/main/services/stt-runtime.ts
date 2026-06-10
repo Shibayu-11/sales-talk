@@ -1,9 +1,10 @@
 import { IPC } from '@shared/ipc-channels';
 import type { BrowserWindow } from 'electron';
-import type { Transcript } from '@shared/types';
+import type { SttProviderMode, Transcript } from '@shared/types';
 import { logger } from '../logger';
 import { ResilientSTTClient, type STTProvider } from './stt';
 import { createDeepgramSTTProvider } from './deepgram';
+import { resolveSTTProvider } from './stt-provider-resolver';
 
 export interface RuntimeSTTWindowAccessors {
   getControlWindow(): BrowserWindow | null;
@@ -15,6 +16,10 @@ export interface RuntimeSTTClientOptions {
   windows: RuntimeSTTWindowAccessors;
   isInCall: () => boolean;
   onPipelineTranscript: (transcript: Transcript) => Promise<void>;
+}
+
+export interface RuntimeConfiguredSTTClientOptions extends Omit<RuntimeSTTClientOptions, 'provider'> {
+  mode: SttProviderMode;
 }
 
 export function createRuntimeSTTClient(options: RuntimeSTTClientOptions): ResilientSTTClient {
@@ -53,6 +58,29 @@ export async function createRuntimeFallbackSTTClient(
   options: Omit<RuntimeSTTClientOptions, 'provider'>,
 ): Promise<ResilientSTTClient> {
   return createRuntimeDeepgramSTTClient(options);
+}
+
+export async function createRuntimeConfiguredSTTClient(
+  options: RuntimeConfiguredSTTClientOptions,
+): Promise<ResilientSTTClient> {
+  const resolved = await resolveSTTProvider({
+    mode: options.mode,
+    speaker: 'counterpart',
+  });
+
+  logger.info(
+    {
+      requestedMode: options.mode,
+      providerKind: resolved.kind,
+      degradedReason: resolved.degradedReason,
+    },
+    'resolved stt provider',
+  );
+
+  return createRuntimeSTTClient({
+    ...options,
+    provider: resolved.provider,
+  });
 }
 
 function notifyTranscript(windows: RuntimeSTTWindowAccessors, transcript: Transcript): void {

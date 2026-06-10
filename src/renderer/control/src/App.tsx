@@ -664,7 +664,8 @@ function DashboardPanel(props: {
           {deepgramErrorVisible && <div className="text-overlay-objection">STT: {props.sttError}</div>}
           {props.sttProviderMode === 'local_first' && (
             <div>
-              方針: Apple SpeechAnalyzer ローカル文字起こしを第一候補にし、現行Deepgram接続はfallbackとして扱います。
+              方針: Apple SpeechAnalyzer ローカル文字起こしを第一候補にし、音声を外部STTへ送信しません。
+              Deepgram fallback は設定で明示した場合だけ使います。
             </div>
           )}
         </div>
@@ -1182,8 +1183,8 @@ function SettingsPanel(props: {
             </div>
             <p className="mt-2">
               Mac MVPは音声を外部サーバーに預けない方針です。Apple SpeechAnalyzer実装が入るまでは、
-              既存のDeepgram接続はfallback診断として残します。議事録・カンペ生成でAnthropicを使う場合は、
-              音声ではなく文字起こし後のテキストだけを送信します。
+              ローカルSTT provider は未接続として扱います。Deepgram fallback を選んだ場合だけクラウドSTTへ音声を送信します。
+              議事録・カンペ生成でAnthropicを使う場合は、音声ではなく文字起こし後のテキストだけを送信します。
             </p>
           </div>
         </div>

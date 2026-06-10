@@ -72,7 +72,7 @@ import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runti
 import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
 import { runAnthropicDiagnostic } from '../services/anthropic';
-import { createRuntimeFallbackSTTClient } from '../services/stt-runtime';
+import { createRuntimeConfiguredSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
 import { NativeAudioCaptureService } from '../audio/native-audio-capture';
 import {
@@ -706,7 +706,9 @@ function preflightAudioCapturePermissions(windows: IpcWindowAccessors): boolean 
 }
 
 async function startSTT(windows: IpcWindowAccessors): Promise<void> {
-  activeSttClient ??= await createRuntimeFallbackSTTClient({
+  const settings = await settingsStore.get();
+  activeSttClient ??= await createRuntimeConfiguredSTTClient({
+    mode: settings.sttProviderMode,
     windows,
     isInCall: () => callState.status === 'in_call',
     onPipelineTranscript: handlePipelineTranscript,
