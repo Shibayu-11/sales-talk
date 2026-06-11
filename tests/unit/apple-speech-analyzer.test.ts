@@ -25,8 +25,8 @@ describe('AppleSpeechAnalyzerSTTProvider', () => {
       speaker: 'counterpart',
       text: '保険料が高いですね',
       isFinal: true,
-      startMs: 120,
-      endMs: 220,
+      startMs: 0,
+      endMs: 100,
     });
 
     await provider.disconnect();
@@ -45,6 +45,7 @@ async function createFakeSpeechAnalyzerHelper(): Promise<string> {
   await writeFile(
     helperPath,
     `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'ready', sampleRate: 16000 }) + '\\n');
 process.stdin.setEncoding('utf8');
 let buffer = '';
 process.stdin.on('data', (chunk) => {

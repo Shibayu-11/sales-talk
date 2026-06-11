@@ -40,7 +40,12 @@ interface HelperErrorMessage {
   message: string;
 }
 
-type HelperMessage = HelperTranscriptMessage | HelperErrorMessage;
+interface HelperReadyMessage {
+  type: 'ready';
+  sampleRate: number;
+}
+
+type HelperMessage = HelperTranscriptMessage | HelperErrorMessage | HelperReadyMessage;
 
 export interface AppleSpeechAnalyzerSTTProviderOptions {
   helperPath?: string | undefined;
@@ -54,6 +59,10 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
   private stdoutReader: Interface | null = null;
   private transcriptHandler: ((transcript: Transcript) => void) | null = null;
   private lastError: Error | null = null;
+  private readyHandler: (() => void) | null = null;
+  private timelineOriginMs: number | null = null;
+  private nextAudioStartMs = 0;
+  private lastEmittedFinalText = '';
   private readonly helperPath: string;
   private readonly sampleRate: number;
   private readonly spawnProcess: typeof spawn;
@@ -72,6 +81,9 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
       throw new Error(`Apple SpeechAnalyzer helper was not found: ${this.helperPath}`);
     }
     this.lastError = null;
+    this.timelineOriginMs = null;
+    this.nextAudioStartMs = 0;
+    this.lastEmittedFinalText = '';
 
     const child = this.spawnProcess(this.helperPath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -89,16 +101,32 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
         this.handleHelperError(new Error(message));
       }
     });
+    child.on('exit', (code, signal) => {
+      if (this.process === child) {
+        this.lastError ??= new Error(
+          `Apple SpeechAnalyzer helper exited: ${code === null ? `signal ${signal ?? 'unknown'}` : `code ${code}`}`,
+        );
+        this.process = null;
+      }
+    });
 
     await new Promise<void>((resolve, reject) => {
+      const readyTimeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Apple SpeechAnalyzer helper did not become ready within 15000ms'));
+      }, 15_000);
       const cleanup = (): void => {
+        clearTimeout(readyTimeout);
+        this.readyHandler = null;
         child.off('spawn', handleSpawn);
         child.off('error', handleError);
         child.off('exit', handleExit);
       };
       const handleSpawn = (): void => {
-        cleanup();
-        resolve();
+        this.readyHandler = () => {
+          cleanup();
+          resolve();
+        };
       };
       const handleError = (error: Error): void => {
         cleanup();
@@ -127,7 +155,10 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
     if (!child.killed && child.exitCode === null) {
       child.stdin.write(`${JSON.stringify({ type: 'stop' })}\n`);
       child.stdin.end();
-      child.kill('SIGTERM');
+      await waitForExit(child, 5_000);
+      if (!child.killed && child.exitCode === null) {
+        child.kill('SIGTERM');
+      }
     }
   }
 
@@ -139,11 +170,12 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
       throw new Error('Apple SpeechAnalyzer helper is not connected');
     }
 
+    const startMs = this.normalizeAudioStartMs(chunk);
     this.process.stdin.write(
       `${JSON.stringify({
         type: 'audio',
         data: chunk.data,
-        startMs: chunk.startMs,
+        startMs,
         sampleRate: this.sampleRate,
       })}\n`,
     );
@@ -160,6 +192,13 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
     }
     if (message.type === 'error') {
       this.handleHelperError(new Error(`${message.code}: ${message.message}`));
+      return;
+    }
+    if (message.type === 'ready') {
+      this.readyHandler?.();
+      return;
+    }
+    if (this.shouldSuppressTranscript(message)) {
       return;
     }
 
@@ -186,6 +225,54 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
       this.process.kill('SIGTERM');
     }
   }
+
+  private normalizeAudioStartMs(chunk: AudioChunk): number {
+    this.timelineOriginMs ??= chunk.startMs;
+    const relativeStartMs = Math.max(0, chunk.startMs - this.timelineOriginMs);
+    const startMs = Math.max(relativeStartMs, this.nextAudioStartMs);
+    this.nextAudioStartMs = startMs + Math.max(1, chunk.durationMs);
+    return startMs;
+  }
+
+  private shouldSuppressTranscript(message: HelperTranscriptMessage): boolean {
+    const text = message.text.trim();
+    if (!text) {
+      return true;
+    }
+    if (!message.isFinal) {
+      return false;
+    }
+    if (text === this.lastEmittedFinalText) {
+      return true;
+    }
+    if (text.startsWith(this.lastEmittedFinalText) && text.length - this.lastEmittedFinalText.length < 4) {
+      return true;
+    }
+    this.lastEmittedFinalText = text;
+    return false;
+  }
+}
+
+async function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null || child.killed) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, timeoutMs);
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      child.off('exit', handleExit);
+    };
+    const handleExit = (): void => {
+      cleanup();
+      resolve();
+    };
+    child.once('exit', handleExit);
+  });
 }
 
 export async function createAppleSpeechAnalyzerSTTProvider(): Promise<AppleSpeechAnalyzerSTTProvider | null> {
@@ -219,6 +306,9 @@ function parseHelperMessage(line: string): HelperMessage | null {
     const parsed = JSON.parse(line) as Partial<HelperMessage>;
     if (parsed.type === 'error' && typeof parsed.code === 'string' && typeof parsed.message === 'string') {
       return parsed as HelperErrorMessage;
+    }
+    if (parsed.type === 'ready' && typeof parsed.sampleRate === 'number') {
+      return parsed as HelperReadyMessage;
     }
     if (
       parsed.type === 'transcript' &&

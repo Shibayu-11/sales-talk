@@ -25,6 +25,11 @@ struct ErrorMessage: Encodable {
     let message: String
 }
 
+struct ReadyMessage: Encodable {
+    let type: String
+    let sampleRate: Double
+}
+
 @available(macOS 26.0, *)
 final class SpeechAnalyzerRuntime: @unchecked Sendable {
     private let locale: Locale
@@ -33,7 +38,9 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var analyzerTask: Task<Void, Never>?
     private var resultTask: Task<Void, Never>?
+    private var analyzer: SpeechAnalyzer?
     private var transcriber: SpeechTranscriber?
+    private var analyzerFormat: AVAudioFormat?
 
     init(localeIdentifier: String = "ja-JP", sampleRate: Double = 16_000) {
         self.locale = Locale(identifier: localeIdentifier)
@@ -57,6 +64,7 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
                     locale: supportedLocale,
                     preset: .timeIndexedProgressiveTranscription
                 )
+                try await ensureAssetsAvailable(for: transcriber, locale: supportedLocale)
                 self.transcriber = transcriber
 
                 resultTask = Task {
@@ -67,15 +75,24 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
                     modules: [transcriber],
                     options: .init(priority: .userInitiated, modelRetention: .whileInUse)
                 )
+                self.analyzer = analyzer
 
-                if let format = AVAudioFormat(
+                guard let naturalFormat = AVAudioFormat(
                     commonFormat: .pcmFormatFloat32,
                     sampleRate: sampleRate,
                     channels: 1,
                     interleaved: false
-                ) {
-                    try await analyzer.prepareToAnalyze(in: format)
+                ) else {
+                    emitError(code: "speech_audio_format_unavailable", message: "Failed to create natural audio format")
+                    return
                 }
+                let format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                    compatibleWith: [transcriber],
+                    considering: naturalFormat
+                ) ?? naturalFormat
+                self.analyzerFormat = format
+                try await analyzer.prepareToAnalyze(in: format)
+                emit(ReadyMessage(type: "ready", sampleRate: format.sampleRate))
 
                 try await analyzer.start(inputSequence: inputStream)
             } catch {
@@ -98,10 +115,17 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
         inputContinuation?.yield(AnalyzerInput(buffer: buffer, bufferStartTime: startTime))
     }
 
-    func stop() {
+    func stop() async {
         inputContinuation?.finish()
-        analyzerTask?.cancel()
+        if let analyzer {
+            do {
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+            } catch {
+                emitError(code: "speech_analyzer_finalize_failed", message: error.localizedDescription)
+            }
+        }
         resultTask?.cancel()
+        analyzerTask?.cancel()
     }
 
     private func consumeResults(from transcriber: SpeechTranscriber) async {
@@ -116,6 +140,7 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
                 let endSeconds = CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
                 emitTranscript(
                     text: text,
+                    isFinal: true,
                     startMs: milliseconds(fromSeconds: startSeconds),
                     endMs: milliseconds(fromSeconds: endSeconds)
                 )
@@ -126,42 +151,61 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
     }
 
     private func makePCMBuffer(linear16 data: Data) -> AVAudioPCMBuffer? {
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
+        guard let format = analyzerFormat else {
             return nil
         }
 
-        let frameCount = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
+        let sourceFrames = data.count / MemoryLayout<Int16>.size
+        let frameCount = AVAudioFrameCount(max(1, Int((Double(sourceFrames) * format.sampleRate / sampleRate).rounded(.down))))
         guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             return nil
         }
 
         buffer.frameLength = frameCount
-        guard let destination = buffer.floatChannelData?[0] else {
-            return nil
-        }
 
         data.withUnsafeBytes { rawBuffer in
             let samples = rawBuffer.bindMemory(to: Int16.self)
-            for index in 0..<Int(frameCount) {
-                destination[index] = max(-1.0, min(1.0, Float(samples[index]) / 32768.0))
+            if let destination = buffer.floatChannelData?[0] {
+                for index in 0..<Int(frameCount) {
+                    let sourceIndex = min(sourceFrames - 1, Int((Double(index) * sampleRate / format.sampleRate).rounded(.down)))
+                    destination[index] = max(-1.0, min(1.0, Float(samples[sourceIndex]) / 32768.0))
+                }
+            } else if let destination = buffer.int16ChannelData?[0] {
+                for index in 0..<Int(frameCount) {
+                    let sourceIndex = min(sourceFrames - 1, Int((Double(index) * sampleRate / format.sampleRate).rounded(.down)))
+                    destination[index] = samples[sourceIndex]
+                }
             }
         }
 
         return buffer
     }
 
-    private func emitTranscript(text: String, startMs: Int, endMs: Int) {
+    private func ensureAssetsAvailable(for transcriber: SpeechTranscriber, locale: Locale) async throws {
+        _ = try await AssetInventory.reserve(locale: locale)
+        let modules: [any SpeechModule] = [transcriber]
+        let status = await AssetInventory.status(forModules: modules)
+        switch status {
+        case .installed:
+            return
+        case .supported, .downloading:
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: modules) {
+                try await request.downloadAndInstall()
+            }
+        case .unsupported:
+            emitError(code: "speech_assets_unsupported", message: "Speech assets are unsupported for locale \(locale.identifier)")
+        @unknown default:
+            emitError(code: "speech_assets_unknown_status", message: "Speech assets returned an unknown status")
+        }
+    }
+
+    private func emitTranscript(text: String, isFinal: Bool, startMs: Int, endMs: Int) {
         emit(
             TranscriptMessage(
                 type: "transcript",
                 speaker: "counterpart",
                 text: text,
-                isFinal: true,
+                isFinal: isFinal,
                 startMs: startMs,
                 endMs: max(startMs + 1, endMs)
             )
@@ -199,30 +243,51 @@ if #available(macOS 26.0, *) {
     let runtime = SpeechAnalyzerRuntime()
     runtime.start()
 
-    while let line = readLine(strippingNewline: true) {
-        guard let data = line.data(using: .utf8) else {
-            continue
+    var pendingInput = Data()
+    while true {
+        let chunk = FileHandle.standardInput.availableData
+        if chunk.isEmpty {
+            break
         }
+        pendingInput.append(chunk)
 
-        do {
-            let message = try JSONDecoder().decode(InputMessage.self, from: data)
-            switch message.type {
-            case "audio":
-                if let audio = message.data {
-                    runtime.appendAudio(base64: audio, startMs: message.startMs ?? 0)
-                }
-            case "stop":
-                runtime.stop()
-                exit(0)
-            default:
+        while let newlineRange = pendingInput.firstRange(of: Data([0x0A])) {
+            let lineData = pendingInput.subdata(in: pendingInput.startIndex..<newlineRange.lowerBound)
+            pendingInput.removeSubrange(pendingInput.startIndex..<newlineRange.upperBound)
+            guard !lineData.isEmpty else {
                 continue
             }
-        } catch {
-            emitStartupError("invalid_input_message", error.localizedDescription)
+
+            do {
+                let message = try JSONDecoder().decode(InputMessage.self, from: lineData)
+            switch message.type {
+                case "audio":
+                    if let audio = message.data {
+                        runtime.appendAudio(base64: audio, startMs: message.startMs ?? 0)
+                    }
+                case "stop":
+                    let semaphore = DispatchSemaphore(value: 0)
+                    Task {
+                        await runtime.stop()
+                        semaphore.signal()
+                    }
+                    semaphore.wait()
+                    exit(0)
+                default:
+                    continue
+                }
+            } catch {
+                emitStartupError("invalid_input_message", error.localizedDescription)
+            }
         }
     }
 
-    runtime.stop()
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        await runtime.stop()
+        semaphore.signal()
+    }
+    semaphore.wait()
 } else {
     emitStartupError("speech_analyzer_unsupported_macos", "Apple SpeechAnalyzer requires macOS 26.0 or newer")
     exit(2)
