@@ -9,6 +9,10 @@ function isGranted(mediaType: MediaAccessType): boolean {
 }
 
 export function checkPermissions(): PermissionState {
+  if (process.env.SALES_TALK_FORCE_AUDIO_PERMISSIONS === '1') {
+    return { screen: true, microphone: true };
+  }
+
   if (process.platform !== 'darwin') {
     return { screen: true, microphone: true };
   }

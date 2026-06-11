@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -192,6 +192,36 @@ test('dev transcript injection drives the mock pipeline without API keys', async
   );
 });
 
+test('audio diagnostic shows local-first SpeechAnalyzer transcripts in the UI', async () => {
+  const fakeNative = await createFakeNativeAudioModule();
+  const fakeSpeech = await createFakeSpeechAnalyzerHelper();
+
+  await withSalesTalkApp(
+    async ({ controlWindow }) => {
+      await controlWindow.getByLabel(/顧客へ録音・文字起こし/).check();
+      await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeEnabled();
+      await controlWindow.getByRole('button', { name: '診断開始' }).click();
+
+      await expect(controlWindow.getByText('STT').locator('..').getByText('connected')).toBeVisible();
+      await expect(controlWindow.getByText('停止')).toBeVisible();
+      await expect.poll(() => readTextFile(fakeNative.logPath)).toContain('emit');
+      await expect.poll(() => readTextFile(fakeSpeech.logPath)).toContain('audio');
+      await expect(controlWindow.getByText(/価格が高いので今は判断できません/)).toBeVisible();
+      await expect(controlWindow.getByText(/final \/ counterpart/)).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: '停止' }).click();
+      await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
+    },
+    {
+      env: {
+        SALES_TALK_AUDIO_CAPTURE_MODULE: fakeNative.modulePath,
+        SALES_TALK_FORCE_AUDIO_PERMISSIONS: '1',
+        SALES_TALK_SPEECH_ANALYZER_HELPER: fakeSpeech.helperPath,
+      },
+    },
+  );
+});
+
 async function withSalesTalkApp(
   run: (context: { controlWindow: Page; electronApp: ElectronApplication }) => Promise<void>,
   options: { env?: Record<string, string> } = {},
@@ -273,4 +303,108 @@ async function waitForOverlayWindow(electronApp: ElectronApplication): Promise<P
     throw new Error('Overlay window was not found');
   }
   return overlayWindow;
+}
+
+async function createFakeNativeAudioModule(): Promise<{ modulePath: string; logPath: string }> {
+  const directory = await mkdtemp(join(tmpdir(), 'sales-talk-fake-native-'));
+  const modulePath = join(directory, 'audio_capture.cjs');
+  const logPath = join(directory, 'native.log');
+  await writeFile(
+    modulePath,
+    `
+const { appendFileSync } = require('node:fs');
+const logPath = ${JSON.stringify(logPath)};
+let audioCallback = null;
+let errorCallback = null;
+let intervalId = null;
+exports.onAudioChunk = (cb) => { audioCallback = cb; };
+exports.onError = (cb) => { errorCallback = cb; void errorCallback; };
+exports.startCapture = async (config) => {
+  const sessionId = 'fake-native-session';
+  let emitted = 0;
+  const emitChunk = () => {
+    emitted += 1;
+    appendFileSync(logPath, 'emit\\n');
+    audioCallback?.({
+      source: 'system',
+      data: Buffer.alloc(3200),
+      timestamp: Date.now(),
+      durationMs: 100,
+      sampleRate: config.sampleRate ?? 16000,
+    });
+  };
+  emitChunk();
+  setTimeout(() => {
+    if (!audioCallback) return;
+    emitChunk();
+  }, 500);
+  intervalId = setInterval(() => {
+    if (!audioCallback) return;
+    emitChunk();
+    if (emitted >= 5 && intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  }, 500);
+  return { sessionId };
+};
+exports.stopCapture = async () => {
+  if (intervalId) clearInterval(intervalId);
+  intervalId = null;
+};
+`,
+    'utf8',
+  );
+  return { modulePath, logPath };
+}
+
+async function createFakeSpeechAnalyzerHelper(): Promise<{ helperPath: string; logPath: string }> {
+  const directory = await mkdtemp(join(tmpdir(), 'sales-talk-fake-speech-'));
+  const helperPath = join(directory, 'speech-analyzer-helper');
+  const logPath = join(directory, 'speech.log');
+  await writeFile(
+    helperPath,
+    `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const logPath = ${JSON.stringify(logPath)};
+process.stdout.write(JSON.stringify({ type: 'ready', sampleRate: 16000 }) + '\\n');
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let emitted = false;
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const index = buffer.indexOf('\\n');
+    if (index === -1) break;
+    const line = buffer.slice(0, index);
+    buffer = buffer.slice(index + 1);
+    const message = JSON.parse(line);
+    if (message.type === 'stop') process.exit(0);
+    if (message.type === 'audio' && !emitted) {
+      emitted = true;
+      appendFileSync(logPath, 'audio\\n');
+      process.stdout.write(JSON.stringify({
+        type: 'transcript',
+        speaker: 'counterpart',
+        text: '価格が高いので今は判断できません',
+        isFinal: true,
+        startMs: message.startMs,
+        endMs: message.startMs + 100
+      }) + '\\n');
+    }
+  }
+});
+`,
+    'utf8',
+  );
+  await chmod(helperPath, 0o755);
+  return { helperPath, logPath };
+}
+
+async function readTextFile(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    return '';
+  }
 }
