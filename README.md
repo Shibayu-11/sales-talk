@@ -28,11 +28,13 @@ npm run dev
 | `npm run test` | Vitest(単体) |
 | `npm run test:e2e` | Playwright(E2E) |
 | `npm run native:audio:build` | macOS native audio capture addon をビルド |
+| `npm run native:speech:build` | Apple SpeechAnalyzer helper をビルド |
 | `npm run native:audio:smoke -- --duration-ms 5000` | 実機で microphone/system audio chunk 到達を診断 |
+| `npm run native:audio:local-stt-smoke -- --duration-ms 8000` | 実機 audio chunk を Apple SpeechAnalyzer へ流してlocal STT疎通確認 |
 | `DEEPGRAM_API_KEY=... npm run native:audio:stt-smoke -- --duration-ms 8000` | fallback 用に実機 audio chunk を Deepgram へ送信して STT 疎通確認 |
 | `npm run package:mac` | macOS DMG ビルド(universal) |
 
-### Native audio smoke test
+### Native audio / local STT smoke test
 
 実機で Screen Recording / Microphone 権限と `.node` addon の chunk 到達を確認する。
 
@@ -47,7 +49,20 @@ Zoom system audio まで必須確認する場合は Zoom を起動してから�
 npm run native:audio:smoke -- --duration-ms 8000 --require-microphone --require-system
 ```
 
-Deepgram まで含めた実通し確認は `DEEPGRAM_API_KEY` を環境変数で渡す。発話が必要なため、文字起こし必須確認では実行中にマイクへ話す。
+Apple SpeechAnalyzer まで含めたlocal-first確認は、helperをビルドしてから実行する。発話が必要なため、`--require-transcript` を付ける場合は実行中にマイクへ話す。
+
+```bash
+npm run native:speech:build
+npm run native:audio:local-stt-smoke -- --duration-ms 8000 --source microphone --require-transcript
+```
+
+pipelineまで確認する場合は `--require-pipeline` を付ける。
+
+```bash
+npm run native:audio:local-stt-smoke -- --duration-ms 10000 --source microphone --require-transcript --require-pipeline
+```
+
+Deepgram まで含めた実通し確認は fallback 用。`DEEPGRAM_API_KEY` を環境変数で渡す。発話が必要なため、文字起こし必須確認では実行中にマイクへ話す。
 
 ```bash
 DEEPGRAM_API_KEY=... npm run native:audio:stt-smoke -- --duration-ms 8000 --require-transcript
@@ -70,5 +85,14 @@ src/
 │   └── control/     # 設定・履歴 React アプリ
 ├── shared/          # 型・IPC 定数・zod スキーマ
 └── native/
-    └── audio-capture/  # Swift + NAPI(Claude Code 主体)
+    └── audio-capture/  # NAPI audio capture + Swift SpeechAnalyzer helper
 ```
+
+## 現在の開発方針
+
+Mac MVP は `local_first`。Apple SpeechAnalyzer で端末上文字起こしを行い、音声データを外部STTへ送らない。
+
+- Deepgram は fallback / Cloud β / 非Mac入口用
+- Anthropic は議事録・カンペ・レビュー生成用で、送るのは transcript テキスト
+- コンプラ判定は rule engine first、LLMは補助
+- Mac商談支援とスマホ録音コンプラ議事録は、同じ transcript pipeline を使う

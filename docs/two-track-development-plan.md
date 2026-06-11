@@ -1,11 +1,31 @@
 # SalesTalk / セルログ 2軸開発計画
 
 作成日: 2026-05-25
-更新日: 2026-06-10
+更新日: 2026-06-11
 目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ業務API基盤で進める。
 
 中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
 STT 方針は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
+
+## 0. 現在地
+
+方向転換後も軸はぶれていない。入口の優先順位を変えただけで、中核は `transcript → rule engine → minutes → review → audit` の共通業務APIである。
+
+2026-06-11 時点の実装状況:
+
+| 領域 | 状態 | メモ |
+|---|---|---|
+| Mac local STT | 実装済み | Apple SpeechAnalyzer helper + TS provider + UI診断E2E |
+| Deepgram | fallback化済み | `deepgram_fallback` / `deepgram_only` で明示利用 |
+| 音声import→STT job | 実装済み | Deepgram prerecorded / Cloud worker側の基礎あり |
+| コンプラルール | 実装済み | 会社別プリセット、商品別ルール、CRUD、承認フロー |
+| 監査ログ | 実装済み | 検索・期間フィルタ・CSV/PDF export・改ざん検証 |
+| 録音同意 | 実装済み | realtime / upload attestation の基礎あり |
+| UI診断 | 実装済み | 診断開始からlocal transcript表示までE2Eで固定 |
+| Mobile recorder | 未着手 | 次以降の入口開発 |
+| Cloudflare β | 一部実装済み | R2 upload / Queues / auth基礎あり、運用化は次段階 |
+
+直近は **Track A のlocal-first STTを実アプリで品質確認しつつ、Track B の訪問録音・保険コンプラ議事録へ下流を接続する**。
 
 ## 1. 方針
 
@@ -195,48 +215,50 @@ Mac MVP の文字起こしは local-first に変更する。
 
 目的: Mac / mobile / upload を同じ transcript pipeline に乗せる。
 
-- `MeetingSource` 型を追加
-- transcript segment の共通保存
-- local / Cloudflare / AWS を見据えた repository 境界
-- 議事録生成を source 非依存にする
-- compliance finding の型とスキーマを追加
-- review task / audit log / presentation block の型を追加
+- [x] `MeetingSource` 型を追加
+- [x] transcript segment の共通保存
+- [x] local / Cloudflare / AWS を見据えた repository 境界
+- [x] 議事録生成を source 非依存にする
+- [x] compliance finding の型とスキーマを追加
+- [x] review task / audit log / presentation block の型を追加
 
 完了条件:
 
-- dev transcript 注入、Mac audio、upload transcript が同じ downstream に流れる
-- E2E で source 違いを確認できる
+- [x] dev transcript 注入、Mac audio、upload transcript が同じ downstream に流れる
+- [x] E2E で source 違いを確認できる
 
 ### MVP 2: 保険コンプラルールエンジン
 
 目的: key なしでも会社別ルールで発話を検知できる。
 
-- ルール CRUD
-- 禁止表現検知
-- 要注意表現検知
-- 必須説明チェック
-- finding を議事録に出す
-- severity: `critical` / `high` / `medium` / `low`
+- [x] ルール CRUD
+- [x] 禁止表現検知
+- [x] 要注意表現検知
+- [x] 必須説明チェック
+- [x] finding を議事録に出す
+- [x] severity: `critical` / `high` / `medium` / `low`
 
 完了条件:
 
-- 「絶対儲かります」「告知しなくて大丈夫」などを検知
-- 議事録にコンプラレビュー欄が出る
-- 管理者レビュー用の一覧が見られる
+- [x] 「絶対儲かります」「告知しなくて大丈夫」などを検知
+- [x] 議事録にコンプラレビュー欄が出る
+- [x] 管理者レビュー用の一覧が見られる
 
 ### MVP 3: 音声ファイルアップロード
 
 目的: スマホアプリ前に、訪問商談の検証を始める。
 
-- `.m4a` / `.mp3` / `.wav` import
-- Apple SpeechAnalyzer / Deepgram batch / Deepgram streaming を切り替えられる抽象化
-- transcript を meeting session に紐付け
-- コンプラ議事録生成
+- [x] `.m4a` / `.mp3` / `.wav` import
+- [x] Apple SpeechAnalyzer / Deepgram batch / Deepgram streaming を切り替えられる抽象化
+- [x] transcript を meeting session に紐付け
+- [x] コンプラ議事録生成
+- [ ] Apple SpeechAnalyzer batch/import provider の本接続
 
 完了条件:
 
-- iPhone ボイスメモ等で録った音声を取り込める
-- 保険コンプラレポートが生成される
+- [x] iPhone ボイスメモ等で録った音声を取り込める
+- [x] 保険コンプラレポートが生成される
+- [ ] local STT だけでupload音声を処理できる
 
 ### MVP 4: Mobile Recorder
 
@@ -274,34 +296,35 @@ Mac MVP の文字起こしは local-first に変更する。
 
 期間目安: 1週
 
-- 既存 Mac app の keyless E2E 維持
-- `MeetingSource` 設計
-- compliance finding schema
-- local repository の整理
-- review task / audit log / presentation block schema
-- README / PRD / 計画書のセルログ化
+- [x] 既存 Mac app の keyless E2E 維持
+- [x] `MeetingSource` 設計
+- [x] compliance finding schema
+- [x] local repository の整理
+- [x] review task / audit log / presentation block schema
+- [x] README / PRD / 計画書のセルログ化
 
 ### Phase 1: 保険コンプラMVP
 
 期間目安: 2週
 
-- 保険向け rule engine
-- 会社別ルール登録
-- transcript へのルール照合
-- 議事録への compliance review 追加
-- 管理者レビュー UI の最小版
-- review task 生成
-- Presentation JSON の最小 renderer
+- [x] 保険向け rule engine
+- [x] 会社別ルール登録
+- [x] transcript へのルール照合
+- [x] 議事録への compliance review 追加
+- [x] 管理者レビュー UI の最小版
+- [x] review task 生成
+- [x] Presentation JSON の最小 renderer
 
 ### Phase 2: Upload Audio MVP
 
 期間目安: 1〜2週
 
-- 音声ファイル import
-- STT ジョブ化
-- transcript 保存
-- compliance report 生成
-- CSV / PDF export の検討
+- [x] 音声ファイル import
+- [x] STT ジョブ化
+- [x] transcript 保存
+- [x] compliance report 生成
+- [x] CSV / PDF export の検討
+- [ ] Apple SpeechAnalyzer batch/import 処理
 
 ### Phase 3: Mobile Recorder MVP
 
@@ -329,29 +352,27 @@ Mac MVP の文字起こしは local-first に変更する。
 
 期間目安: 並行継続
 
-- 実 Zoom audio smoke
-- Apple SpeechAnalyzer 実機 smoke
-- Deepgram fallback 疎通
-- Anthropic 本番回答生成
-- Cohere / Cloudflare or local RAG
-- Overlay UX 改善
+- [ ] 実 Zoom audio smoke
+- [x] Apple SpeechAnalyzer 実機 smoke
+- [x] Deepgram fallback 疎通
+- [x] Anthropic 本番回答生成
+- [ ] Cohere / Cloudflare or local RAG
+- [ ] Overlay UX 改善
 
 ## 7. 実装優先順位
 
-次に手を動かす順番。
+次に手を動かす順番。完了済みの土台を前提に、実商談品質とTrack Bへ寄せる。
 
-1. `MeetingSource` / `MeetingSession` 型追加
-2. `ComplianceRule` / `ComplianceFinding` 型追加
-3. local compliance rule store
-4. rule engine
-5. 議事録への compliance review 欄
-6. 管理者レビュー UI
-7. ReviewTask / AuditLog / PresentationBlock
-8. 音声ファイル import UI
-9. Apple SpeechAnalyzer STT provider
-10. STT job abstraction
-11. Cloudflare Workers / D1 / R2 β
-12. iOS recorder PoC
+1. 実アプリで本人音声・Zoom system audio のlocal STT品質確認
+2. transcript metadata / audit log に `stt.provider=apple_speech_analyzer` を残す
+3. local STT transcript から議事録・コンプラレビューをワンクリック確認
+4. Apple SpeechAnalyzer batch/import provider を追加
+5. 音声importの既定providerを local-first に変更
+6. Mobile recorder PoC の録音/同意/アップロード最小実装
+7. Cloudflare API とmobile uploadの接続
+8. 管理者向け月次レポート・提出用exportの条件指定強化
+9. 実代理店ルールのサンプル投入
+10. iOS recorder PoC
 
 ## 8. あなたがやる必要がある作業
 
@@ -403,4 +424,4 @@ Mac MVP の文字起こしは local-first に変更する。
 - スマホは訪問録音とコンプラ議事録の入口
 - transcript / rule engine / minutes / tasks / review は共通
 
-直近の開発は、セルログの `ReviewTask` / `AuditLog` / `PresentationBlock` を共通基盤に追加し、管理者レビュー画面へ接続する。
+直近の開発は、Apple SpeechAnalyzer local-first STTを実商談で使える品質へ寄せながら、訪問録音・upload音声を同じコンプラ議事録pipelineへ流すことに集中する。

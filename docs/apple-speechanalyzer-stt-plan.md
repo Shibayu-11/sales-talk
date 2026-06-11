@@ -1,7 +1,32 @@
 # Apple SpeechAnalyzer ローカルSTT移行計画
 
 作成日: 2026-06-10
+更新日: 2026-06-11
 目的: SalesTalk / セルログの文字起こし基盤を、Deepgram中心から Apple SpeechAnalyzer 中心へ切り替える。
+
+## 0. 現在地
+
+2026-06-11 時点で、方針転換後の基礎実装は完了している。
+
+完了済み:
+
+- `sttProviderMode` を追加し、Mac MVP の既定を `local_first` に変更
+- Dashboard / Settings に Apple SpeechAnalyzer 優先の表示と切替UIを追加
+- `STTProvider` resolver を追加し、`local_first` / `deepgram_fallback` / `deepgram_only` / `manual_only` を分離
+- `AppleSpeechAnalyzerSTTProvider` を追加
+- `src/native/audio-capture` に Swift 製 `speech-analyzer-helper` を追加
+- Speech framework の asset 準備、ready handshake、timestamp 正規化、PCM format 変換を実装
+- `npm run native:audio:local-stt-smoke` を追加
+- 実機で `native capture → Apple SpeechAnalyzer → transcript` を確認
+- UI E2E で「診断開始 → STT connected → transcript表示」を確認
+
+直近の残タスク:
+
+- 実アプリ操作で本人の声・Zoom音声を使った transcript 品質確認
+- progressive result の確定タイミング調整
+- transcript を商談履歴・議事録・コンプラレビューへ保存する運用確認
+- system audio / microphone のspeaker扱いを実商談で確認
+- model asset 未準備時のUXをDashboardへ出す
 
 ## 1. 結論
 
@@ -126,7 +151,7 @@ Rule Engine / Minutes / AI Assist / Audit Log
 
 ### 5.1 TypeScript側
 
-追加・変更する型。
+実装済みの型。
 
 ```ts
 type SttProviderKind =
@@ -149,12 +174,12 @@ interface SttProviderStatus {
 ```ts
 interface STTProvider {
   connect(): Promise<void>;
-  send(chunk: AudioChunk): Promise<void>;
-  close(): Promise<void>;
+  disconnect(): Promise<void>;
+  sendAudio(chunk: AudioChunk): Promise<void>;
 }
 ```
 
-`createRuntimeSTTClient()` は設定に応じて provider を選ぶ。
+`createRuntimeConfiguredSTTClient()` は設定に応じて provider を選ぶ。
 
 ```txt
 settings.sttProvider = local_first
@@ -165,23 +190,34 @@ settings.sttProvider = local_first
 
 ### 5.2 Swift / NAPI側
 
-Swift native addon に以下を追加する。
+実装は Swift を NAPI に直接混ぜず、native 配下の Swift helper を Electron Main から spawn する方式を採用した。
+
+理由:
+
+- SpeechAnalyzer は Swift async API が中心
+- 既存 `.node` addon は audio capture に集中させる
+- helper を別プロセスにすると、Speech framework 側の失敗をMainプロセスから分離できる
+- packaging では `speech-analyzer-helper` を `extraResources` として同梱できる
+
+現在の構成。
 
 ```txt
 src/native/audio-capture
-  ├─ current audio capture
-  ├─ SpeechAnalyzerTranscriber.swift
-  ├─ LocalSpeechTranscriptionService.swift
-  └─ NAPI bridge events
+  ├─ Sources/NAPIBridge.mm                 # native audio capture .node
+  ├─ Sources/SpeechAnalyzerHelper/main.swift
+  ├─ Package.swift                         # speech-analyzer-helper build
+  └─ binding.gyp
 ```
 
-必要なイベント。
+helper は stdin/stdout JSONL で TS provider と通信する。
 
 ```txt
-stt:on-interim
-stt:on-final
-stt:on-error
-stt:on-provider-state
+TS AppleSpeechAnalyzerSTTProvider
+  ↓ stdin: { type: "audio", data, startMs, sampleRate }
+Swift speech-analyzer-helper
+  ↓ stdout: { type: "ready", sampleRate }
+  ↓ stdout: { type: "transcript", speaker, text, isFinal, startMs, endMs }
+  ↓ stdout: { type: "error", code, message }
 ```
 
 返す transcript は既存 `Transcript` 型へ合わせる。
@@ -218,18 +254,18 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 
 タスク:
 
-1. macOS / Xcode / deployment target の要件確認
-2. SpeechAnalyzer sample 実装
-3. microphone buffer → SpeechAnalyzer → final transcript
-4. system audio buffer → SpeechAnalyzer → final transcript
-5. 日本語モデルasset準備・未準備時UX確認
-6. `native:audio:local-stt-smoke` 追加
+1. [x] macOS / Xcode / deployment target の要件確認
+2. [x] SpeechAnalyzer helper 実装
+3. [x] microphone buffer → SpeechAnalyzer → transcript
+4. [ ] system audio buffer → SpeechAnalyzer → transcript の実商談品質確認
+5. [x] 日本語モデルasset準備処理
+6. [x] `native:audio:local-stt-smoke` 追加
 
 完了条件:
 
-- Mac実機で日本語発話がfinal transcriptになる
-- system audioでもfinal transcriptが出る
-- transcriptが既存 `handlePipelineTranscript()` に流れる
+- [x] Mac実機で日本語発話が transcript になる
+- [ ] system audioでも transcript が安定して出る
+- [x] transcriptが既存 `handlePipelineTranscript()` と同じ経路へ流せる
 
 ### Phase B: provider統合
 
@@ -237,17 +273,18 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 
 タスク:
 
-1. `SttProviderKind` / settings schema追加
-2. `AppleSpeechAnalyzerSTTProvider` をMain側から呼べるようにする
-3. `createRuntimeSTTClient()` をlocal-first化
-4. Dashboardに現在のSTT provider表示
-5. Deepgram key未設定warningをlocal-first表示へ変更
-6. E2E更新
+1. [x] `SttProviderKind` / settings schema追加
+2. [x] `AppleSpeechAnalyzerSTTProvider` をMain側から呼べるようにする
+3. [x] `createRuntimeConfiguredSTTClient()` をlocal-first化
+4. [x] Dashboardに現在のSTT provider表示
+5. [x] Deepgram key未設定warningをlocal-first表示へ変更
+6. [x] E2E更新
 
 完了条件:
 
-- Deepgram keyなしでもローカルSTT診断が動く
-- Apple unavailable時だけfallback案内が出る
+- [x] Deepgram keyなしでもローカルSTT診断が動く
+- [x] Apple unavailable時だけfallback案内が出る
+- [x] UIの「診断開始」から transcript が表示されるE2Eがある
 
 ### Phase C: 保険営業MVPへ接続
 
@@ -255,11 +292,11 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 
 タスク:
 
-1. realtime transcript保存
-2. local transcript → minutes generation
-3. local transcript → compliance analysis
-4. audit log に `stt.provider=apple_speech_analyzer` を記録
-5. export / review UI へ接続
+1. [ ] realtime transcript保存のprovider metadata整理
+2. [ ] local transcript → minutes generation の実データ確認
+3. [ ] local transcript → compliance analysis の実データ確認
+4. [ ] audit log に `stt.provider=apple_speech_analyzer` を記録
+5. [ ] export / review UI へ接続
 
 完了条件:
 
@@ -275,19 +312,20 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 | モデルasset | 初回に言語asset downloadが必要 | onboardingで事前準備、診断画面で状態表示 |
 | 話者分離 | SpeechAnalyzer単体ではspeaker分離が不足する可能性 | system/mic入力別speaker、diarizationはPhase 2 |
 | 精度 | 保険用語・固有名詞で誤認識 | ルール側を表記揺れ対応、必要ならfallback STT |
-| Swift実装量 | async sequence / audio format変換が必要 | まずsmoke、次にNAPI統合 |
+| Swift実装量 | async sequence / audio format変換が必要 | helper方式で分離、smoke/E2Eで固定 |
+| progressive result | live STTの確定タイミングが不安定 | TS側で短いprefix重複を抑制、実商談で調整 |
 | AI外部送信 | transcriptをAnthropicへ送ると完全ローカルではない | 音声非送信とテキスト送信を明示、将来local LLM option |
 
 ## 8. 直近タスク
 
-次に実装する順番。
+2026-06-11 時点の次タスク。
 
-1. `SttProviderKind` / local-first設定を shared type に追加
-2. Dashboard文言を「Deepgram必須」から「ローカルSTT優先」に変更
-3. Swift `SpeechAnalyzerTranscriber` smokeを作る
-4. `npm run native:audio:local-stt-smoke` を追加
-5. `handlePipelineTranscript()` へApple transcriptを流す
-6. Deepgram/R2/Cloudflare STTはfallback表示へ変更
+1. 実アプリを起動し、本人の声で「診断開始 → transcript表示」を手動確認
+2. Zoom / system audio source で transcript が取れるか確認
+3. transcript の重複・確定タイミングをUI上で調整
+4. `stt.provider` / `stt.localOnly` を transcript metadata / audit log に残す
+5. local transcript から議事録・コンプラレビュー生成までワンクリック確認
+6. model asset 未準備・非対応OS・helper missing のDashboard UXを整理
 
 ## 9. 方針変更の扱い
 

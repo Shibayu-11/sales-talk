@@ -1,7 +1,7 @@
 # セルログ AI-Native 業務API 計画
 
 作成日: 2026-05-26
-更新日: 2026-06-10
+更新日: 2026-06-11
 目的: SalesTalk を「Mac商談支援」だけでなく、保険営業向けの `セルログ` として成立する AI-Native 業務システムへ再設計する。
 
 ## 1. 結論
@@ -11,6 +11,8 @@
 最初に作るべきものは、保険営業の会話・議事録・コンプラ判定・上長レビューを扱う **業務API** である。
 
 UI、スマホ録音、Macリアルタイム支援、AIチャット、将来の音声エージェントは、すべて同じ業務APIを使うクライアントとして扱う。
+
+2026-06-11 時点では、Mac側の入口を **Apple SpeechAnalyzer local-first STT** へ寄せる方針転換を実装済み。これは方向転換ではなく、セルログの価値である「音声を外部に預けず、transcript以降を業務APIで処理する」を強める変更である。
 
 ```txt
 ユーザー
@@ -245,6 +247,16 @@ Supabase 前提は外す。Repository interface を先に切る。
 
 詳細は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
 
+2026-06-11 実装済み:
+
+- Apple SpeechAnalyzer provider
+- Swift `speech-analyzer-helper`
+- `local_first` / `deepgram_fallback` / `deepgram_only` / `manual_only` のprovider切替
+- local STT smoke
+- UIの「診断開始」から transcript 表示までのE2E
+
+これにより、Mac MVPでは「音声は外部送信しない」を実装レベルで言える状態になった。Anthropic等へ送るのは、同意・PIIマスク後の transcript テキストに限定する。
+
 ### 8.5 Security / Compliance
 
 必須要件:
@@ -372,24 +384,24 @@ Cloudflare はセルログの β 版に向いている。
 
 ### P0: すぐやる
 
-1. 計画書更新
-2. `PresentationBlock` shared type / zod schema
-3. `ReviewTask` shared type / zod schema
-4. local review task store
-5. Dashboard に要レビュー一覧
-6. 議事録の compliance finding から review task を作る
-7. E2E: NG発話 → 議事録 → 要レビュー表示
+1. 実アプリUIで `local_first` 音声診断を確認
+2. Zoom / system audio 由来の transcript 品質確認
+3. `stt.provider=apple_speech_analyzer` を transcript / audit metadata に保存
+4. local transcript から議事録 / コンプラ判定をワンクリック実行
+5. SpeechAnalyzer progressive / final transcript の重複表示を調整
+6. model asset 未準備 / unsupported / helper missing の Dashboard UX 整理
+7. E2E: local STT transcript → 議事録 → 要レビュー表示
 
 ### P1: 次にやる
 
-1. `CallRepository` interface
-2. `MinutesRepository` interface
-3. `ComplianceRepository` interface
-4. local adapter へ整理
-5. Supabase 直接依存を optional / legacy 扱いにする
-6. upload transcript / audio import の入口
-7. Apple SpeechAnalyzer STT provider
-8. STT job abstraction
+1. Apple SpeechAnalyzer の batch/import provider
+2. audio import の既定を local-first STT に変更
+3. `CallRepository` / `MinutesRepository` / `ComplianceRepository` の境界整理
+4. local adapter と Cloudflare adapter の責務分離
+5. スマホ録音アップロード PoC
+6. 管理者向け提出レポート条件指定
+7. 保険代理店向け会社別ルールサンプル
+8. AI Operator tool schema の最小実装
 
 ### P2: β化
 
