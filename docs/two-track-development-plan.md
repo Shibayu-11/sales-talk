@@ -6,6 +6,7 @@
 
 中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
 STT 方針は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
+Track A の週次実行計画は [MVP リリースロードマップ](./mvp-release-roadmap.md) を正とする。
 
 ## 0. 現在地
 
