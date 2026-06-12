@@ -7,6 +7,8 @@ import type {
   ResponseGenerationRequest,
 } from './llm';
 import { ObjectionLlmService as RuntimeObjectionLlmService } from './llm';
+import type { MinutesGenerationRequest, MinutesLlmProvider } from './minutes-llm';
+import { MEETING_MINUTES_SYSTEM_PROMPT } from './minutes-llm';
 import type { AnthropicDiagnosticResult, DetectedObjection } from '@shared/types';
 import { secretStore } from './secrets';
 
@@ -28,7 +30,7 @@ export interface AnthropicProviderOptions {
   sonnetModel: string;
 }
 
-export class AnthropicLlmProvider implements LlmProvider {
+export class AnthropicLlmProvider implements LlmProvider, MinutesLlmProvider {
   constructor(private readonly options: AnthropicProviderOptions) {}
 
   async detectObjection(input: DetectionRequest): Promise<unknown> {
@@ -54,6 +56,29 @@ export class AnthropicLlmProvider implements LlmProvider {
 
     return parseJsonFromMessage(message);
   }
+
+  async generateMeetingMinutes(input: MinutesGenerationRequest): Promise<unknown> {
+    const message = await this.options.client.messages.create({
+      model: this.options.sonnetModel,
+      max_tokens: 2_000,
+      temperature: 0.2,
+      system: MEETING_MINUTES_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: buildMinutesPrompt(input) }],
+    });
+
+    return parseJsonFromMessage(message);
+  }
+}
+
+function buildMinutesPrompt(input: MinutesGenerationRequest): string {
+  return JSON.stringify(
+    {
+      product_id: input.productId,
+      transcript: input.transcriptLines,
+    },
+    null,
+    2,
+  );
 }
 
 export async function createAnthropicLlmProvider(): Promise<AnthropicLlmProvider> {

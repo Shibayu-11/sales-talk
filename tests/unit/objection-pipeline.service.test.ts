@@ -99,6 +99,7 @@ describe('ObjectionPipelineService', () => {
       onResponseReady: vi.fn(),
       onCancelled: vi.fn(),
       onError: vi.fn(),
+      onTiming: vi.fn(),
     };
     const service = new ObjectionPipelineService({
       llm,
@@ -129,6 +130,47 @@ describe('ObjectionPipelineService', () => {
     );
     expect(callbacks.onCancelled).not.toHaveBeenCalled();
     expect(callbacks.onError).not.toHaveBeenCalled();
+    expect(callbacks.onTiming).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detected: true,
+        objectionId: expect.any(String) as string,
+        detectMs: expect.any(Number) as number,
+        knowledgeMs: expect.any(Number) as number,
+        generateMs: expect.any(Number) as number,
+        totalMs: expect.any(Number) as number,
+      }),
+    );
+  });
+
+  it('emits timing without notifications when no objection is detected', async () => {
+    const provider = createResponseProvider();
+    vi.mocked(provider.detectObjection).mockResolvedValueOnce({
+      isObjection: false,
+      type: 'price',
+      confidence: 0.1,
+      triggerText: '',
+      reasoning: '雑談',
+    });
+    const callbacks = { onDetected: vi.fn(), onResponseReady: vi.fn(), onTiming: vi.fn() };
+    const service = new ObjectionPipelineService({
+      llm: new ObjectionLlmService(provider),
+      knowledge: knowledgeService(),
+      getProductId: () => 'real_estate',
+      callbacks,
+    });
+
+    await service.handleTranscript(finalTranscript('今日は天気がいいですね、ところで'));
+
+    expect(callbacks.onDetected).not.toHaveBeenCalled();
+    expect(callbacks.onResponseReady).not.toHaveBeenCalled();
+    expect(callbacks.onTiming).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detected: false,
+        objectionId: null,
+        knowledgeMs: null,
+        generateMs: null,
+      }),
+    );
   });
 
   it('does not notify when no product is selected', async () => {

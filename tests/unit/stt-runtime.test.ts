@@ -2,7 +2,10 @@ import type { BrowserWindow } from 'electron';
 import { describe, expect, it, vi } from 'vitest';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { AudioChunk, Transcript } from '../../src/shared/types';
-import { createRuntimeSTTClient } from '../../src/main/services/stt-runtime';
+import {
+  createRuntimeConfiguredSTTClient,
+  createRuntimeSTTClient,
+} from '../../src/main/services/stt-runtime';
 import type { STTProvider } from '../../src/main/services/stt';
 
 class FakeProvider implements STTProvider {
@@ -85,5 +88,31 @@ describe('createRuntimeSTTClient', () => {
 
     expect(send).toHaveBeenCalledWith(IPC.stt.onConnectionState, 'connecting');
     expect(send).toHaveBeenCalledWith(IPC.stt.onConnectionState, 'connected');
+  });
+});
+
+describe('createRuntimeConfiguredSTTClient', () => {
+  it('exposes the resolved provider kind and degraded reason', async () => {
+    const provider = new FakeProvider();
+    const configured = await createRuntimeConfiguredSTTClient({
+      mode: 'deepgram_fallback',
+      windows: {
+        getControlWindow: () => null,
+        getOverlayWindow: () => null,
+      },
+      isInCall: () => false,
+      onPipelineTranscript: vi.fn(async () => {}),
+      resolveProvider: async () => ({
+        provider,
+        kind: 'deepgram_streaming',
+        degradedReason: 'apple_speech_analyzer_unavailable',
+      }),
+    });
+
+    expect(configured.providerKind).toBe('deepgram_streaming');
+    expect(configured.degradedReason).toBe('apple_speech_analyzer_unavailable');
+
+    await configured.client.start();
+    expect(provider.connect).toHaveBeenCalled();
   });
 });

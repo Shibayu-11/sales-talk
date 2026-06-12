@@ -375,6 +375,8 @@ export const MinutesGenerateInputSchema = z.object({
   productId: ProductIdSchema,
   transcripts: z.array(TranscriptSchema).max(100),
   source: MeetingSourceSchema.default('manual_transcript'),
+  /** 過去 call の議事録再生成用。未指定はアクティブ通話。 */
+  callId: z.string().uuid().optional(),
 });
 
 export const TaskOwnerSchema = z.enum(['own', 'customer', 'joint']);

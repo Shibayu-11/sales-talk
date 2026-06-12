@@ -56,6 +56,7 @@ import type {
   PermissionState,
   ReviewTask,
   SharingState,
+  SttProviderKind,
   Transcript,
 } from '@shared/types';
 import { logger } from '../logger';
@@ -86,6 +87,7 @@ import {
 import { assertDevToolsEnabled, isDevToolsEnabled } from '../services/dev-mode';
 import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
+import { tryGenerateLlmMinutesContent } from '../services/minutes-llm';
 import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
 import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
 import {
@@ -130,6 +132,8 @@ const audioSttJobRunner = new AudioSttJobRunner({
 });
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
+let activeSttProviderKind: SttProviderKind | null = null;
+let activeSttDegradedReason: string | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
 let audioCaptureStats = createInitialAudioCaptureStats();
 let activeCallId: string | null = null;
@@ -428,7 +432,13 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
     const input = MinutesGenerateInputSchema.parse(payload);
     return appRepositories.minutes.setLatestMeetingMinute(
-      await generateLocalMeetingMinute(input.productId, input.transcripts, input.source),
+      await generateMeetingMinuteForCall({
+        // callId 指定時は過去 call の再生成。未指定はアクティブ通話(従来動作)。
+        callId: input.callId ?? getCurrentCallId(),
+        productId: input.productId,
+        source: input.source,
+        transcripts: input.transcripts,
+      }),
     );
   });
   ipcMain.handle(IPC.minutes.get, () => appRepositories.minutes.getLatestMeetingMinute());
@@ -706,13 +716,18 @@ function preflightAudioCapturePermissions(windows: IpcWindowAccessors): boolean 
 }
 
 async function startSTT(windows: IpcWindowAccessors): Promise<void> {
-  const settings = await settingsStore.get();
-  activeSttClient ??= await createRuntimeConfiguredSTTClient({
-    mode: settings.sttProviderMode,
-    windows,
-    isInCall: () => callState.status === 'in_call',
-    onPipelineTranscript: handlePipelineTranscript,
-  });
+  if (!activeSttClient) {
+    const settings = await settingsStore.get();
+    const configured = await createRuntimeConfiguredSTTClient({
+      mode: settings.sttProviderMode,
+      windows,
+      isInCall: () => callState.status === 'in_call',
+      onPipelineTranscript: handlePipelineTranscript,
+    });
+    activeSttClient = configured.client;
+    activeSttProviderKind = configured.providerKind;
+    activeSttDegradedReason = configured.degradedReason;
+  }
   await activeSttClient.start();
 }
 
@@ -729,6 +744,8 @@ async function tryStartSTT(windows: IpcWindowAccessors): Promise<void> {
 async function stopSTT(): Promise<void> {
   await activeSttClient?.stop();
   activeSttClient = null;
+  activeSttProviderKind = null;
+  activeSttDegradedReason = null;
 }
 
 async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<void> {
@@ -961,19 +978,6 @@ function notifyObjectionCancelled(windows: IpcWindowAccessors, id: string): void
   windows.getOverlayWindow()?.webContents.send(IPC.objection.onCancelled, id);
 }
 
-async function generateLocalMeetingMinute(
-  productId: MeetingMinute['productId'],
-  transcripts: Transcript[],
-  source: MeetingMinute['source'],
-): Promise<MeetingMinute> {
-  return generateMeetingMinuteForCall({
-    callId: getCurrentCallId(),
-    productId,
-    source,
-    transcripts,
-  });
-}
-
 async function generateMeetingMinuteForCall(input: {
   callId: string;
   productId: MeetingMinute['productId'];
@@ -999,15 +1003,18 @@ async function generateMeetingMinuteForCall(input: {
     call?.productId,
   );
 
+  // LLM 生成が主、失敗・未設定時はヒューリスティックへ縮退。findings はルールエンジン固定。
+  const llmContent = await tryGenerateLlmMinutesContent(input.productId, effectiveTranscripts);
+
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),
     callId: input.callId,
     source: input.source,
     productId: input.productId,
-    summary: `直近の発話: ${summarySource}`,
-    agreed: [],
-    pending: pending.slice(0, 5),
-    decisions: [],
+    summary: llmContent?.summary ?? `直近の発話: ${summarySource}`,
+    agreed: llmContent?.agreed ?? [],
+    pending: llmContent?.pending ?? pending.slice(0, 5),
+    decisions: llmContent?.decisions ?? [],
     numbers: extractNumbers(finalTexts.join('\n')),
     complianceFindings: evaluateCompliance({
       meetingId: input.callId,
@@ -1187,12 +1194,15 @@ function recordingConsentMetadata(
   consent: CallSession['recordingConsent'],
   source: string,
 ): AuditLogEntry['metadata'] {
+  // 計画書 §7-2: どの STT で文字起こしされた録音かを監査証跡に残す。
   return {
     source,
     consentStatus: consent.status,
     consentMethod: consent.method,
     consentCapturedAt: consent.capturedAt,
     consentNoticeVersion: consent.noticeVersion,
+    sttProvider: activeSttProviderKind,
+    sttDegradedReason: activeSttDegradedReason,
   };
 }
 

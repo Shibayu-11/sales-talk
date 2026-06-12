@@ -3,11 +3,29 @@ import type { DetectedObjection, ObjectionResponse, ProductId, Transcript } from
 import type { KnowledgeSearchService } from './knowledge';
 import type { ObjectionLlmService } from './llm';
 
+/**
+ * Per PRD §4.6: 相手発話終了 → オーバーレイ表示 2.5s 以内。
+ * 実機検証で段階別の所要時間を判定できるよう、final transcript 受信を起点に計測する。
+ * STT の確定遅延と overlay 描画は含まない(main プロセス内の処理時間のみ)。
+ */
+export interface ObjectionPipelineTiming {
+  objectionId: string | null;
+  detected: boolean;
+  transcriptChars: number;
+  /** wall-clock ms when the final counterpart transcript entered the pipeline */
+  transcriptReceivedAt: number;
+  detectMs: number;
+  knowledgeMs: number | null;
+  generateMs: number | null;
+  totalMs: number;
+}
+
 export interface ObjectionPipelineCallbacks {
   onDetected?: ((objection: DetectedObjection) => void) | undefined;
   onResponseReady?: ((response: ObjectionResponse) => void) | undefined;
   onCancelled?: ((objectionId: string) => void) | undefined;
   onError?: ((error: unknown) => void) | undefined;
+  onTiming?: ((timing: ObjectionPipelineTiming) => void) | undefined;
 }
 
 export interface ObjectionPipelineServiceOptions {
@@ -43,6 +61,7 @@ export class ObjectionPipelineService {
     }
 
     const runId = this.nextRunId();
+    const transcriptReceivedAt = Date.now();
     try {
       const recentContext = this.recentCounterpartFinals.join('\n');
       const objection = await this.options.llm.detect({
@@ -50,8 +69,23 @@ export class ObjectionPipelineService {
         utterance: transcript.text,
         recentContext,
       });
+      const detectDoneAt = Date.now();
 
-      if (!objection || !this.isCurrentRun(runId)) {
+      if (!this.isCurrentRun(runId)) {
+        return;
+      }
+
+      if (!objection) {
+        this.options.callbacks?.onTiming?.({
+          objectionId: null,
+          detected: false,
+          transcriptChars: transcript.text.length,
+          transcriptReceivedAt,
+          detectMs: detectDoneAt - transcriptReceivedAt,
+          knowledgeMs: null,
+          generateMs: null,
+          totalMs: detectDoneAt - transcriptReceivedAt,
+        });
         return;
       }
 
@@ -62,6 +96,7 @@ export class ObjectionPipelineService {
         productId,
         limit: this.knowledgeLimit,
       });
+      const knowledgeDoneAt = Date.now();
 
       if (!this.isCurrentRun(runId)) {
         this.options.callbacks?.onCancelled?.(objection.id);
@@ -74,6 +109,7 @@ export class ObjectionPipelineService {
         transcript: recentContext,
         knowledgeEntries,
       });
+      const generateDoneAt = Date.now();
 
       if (!this.isCurrentRun(runId)) {
         this.options.callbacks?.onCancelled?.(objection.id);
@@ -81,6 +117,16 @@ export class ObjectionPipelineService {
       }
 
       this.options.callbacks?.onResponseReady?.(response);
+      this.options.callbacks?.onTiming?.({
+        objectionId: objection.id,
+        detected: true,
+        transcriptChars: transcript.text.length,
+        transcriptReceivedAt,
+        detectMs: detectDoneAt - transcriptReceivedAt,
+        knowledgeMs: knowledgeDoneAt - detectDoneAt,
+        generateMs: generateDoneAt - knowledgeDoneAt,
+        totalMs: generateDoneAt - transcriptReceivedAt,
+      });
     } catch (error) {
       if (this.isCurrentRun(runId)) {
         this.options.callbacks?.onError?.(error);

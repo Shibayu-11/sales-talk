@@ -141,22 +141,28 @@ test('dev transcript injection drives the mock pipeline without API keys', async
       await expect(controlWindow.getByText('検知待機中')).toBeVisible();
 
       await controlWindow.getByRole('button', { name: '商談履歴' }).click();
-      await expect(controlWindow.getByRole('heading', { name: '商談履歴' })).toBeVisible();
+      await expect(controlWindow.getByRole('heading', { name: '商談ライブラリ' })).toBeVisible();
       await expect(controlWindow.getByText(/顧客から録音・文字起こし/)).toBeVisible();
       await expect(controlWindow.getByRole('button', { name: '音声から自動生成' })).toBeDisabled();
       await expect(controlWindow.getByRole('button', { name: '音声から自動生成' })).toBeVisible();
       await expect(controlWindow.getByRole('button', { name: '音声ファイルを取り込む' })).toBeVisible();
       await expect(controlWindow.getByText('価格の内訳を確認').first()).toBeVisible();
-      await controlWindow.getByRole('button', { name: 'transcript から生成' }).click();
-      await expect(controlWindow.getByText(/直近の発話:/)).toBeVisible();
-      await expect(controlWindow.getByText('保留事項')).toBeVisible();
+      await controlWindow.getByRole('button', { name: '現セッションから議事録生成' }).click();
+      await expect(controlWindow.getByText(/development mock 議事録/)).toBeVisible();
+      await expect(controlWindow.getByText('決定事項', { exact: true })).toBeVisible();
+      await expect(controlWindow.getByText('保留・宿題')).toBeVisible();
       await expect(controlWindow.getByText('コンプラレビュー')).toBeVisible();
       await expect(controlWindow.getByText('将来利益を断定する表現は顧客誤認につながります。')).toBeVisible();
-      await expect(controlWindow.getByText('保存済み call / transcript')).toBeVisible();
-      await expect(controlWindow.getByText(new RegExp('manual_transcript / insurance'))).toBeVisible();
-      await expect(controlWindow.getByText('stt jobs')).toBeVisible();
-      await expect(controlWindow.getByText('この call の STT job は未作成です。')).toBeVisible();
-      await expect(controlWindow.getByText('saved transcript')).toBeVisible();
+      // Kanary 流三分割: 経過時間グループ + 商談タイトル + transcript バブル
+      await expect(controlWindow.getByText('今日', { exact: true })).toBeVisible();
+      await expect(controlWindow.getByText('不動産 / 手動transcript').first()).toBeVisible();
+      await expect(
+        controlWindow
+          .getByText('価格が高いので、今すぐ導入するのは難しいです。', { exact: true })
+          .first(),
+      ).toBeVisible();
+      await expect(controlWindow.getByText(/音声ファイル \/ STT ジョブ/)).toBeVisible();
+      await expect(controlWindow.getByRole('button', { name: '再生成' })).toBeVisible();
 
       await controlWindow.getByRole('button', { name: 'レビュー' }).click();
       await expect(controlWindow.getByRole('heading', { name: '管理者レビュー' })).toBeVisible();

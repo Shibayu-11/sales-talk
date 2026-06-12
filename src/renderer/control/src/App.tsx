@@ -7,12 +7,8 @@ import type {
   AuditLogEntry,
   AuditIntegrityResult,
   AuditLogFilter,
-  AudioAsset,
   AudioCaptureStatus,
-  AudioSttJob,
-  CallSession,
   CallState,
-  CloudAudioUploadProcessResult,
   CloudflareConnectionStatus,
   ConnectionState,
   ComplianceRule,
@@ -22,7 +18,6 @@ import type {
   CurrentUserContext,
   DetectedObjection,
   KnowledgeEntry,
-  MeetingMinute,
   ObjectionResponse,
   Organization,
   OrganizationRole,
@@ -34,9 +29,11 @@ import type {
   RecordingConsent,
   TaskOwner,
   Transcript,
-  TranscriptSegment,
 } from '@shared/types';
 import { UiIcon, type UiIconName } from './components/UiIcon';
+import { CallLibrary } from './components/CallLibrary';
+import { TranscriptBubbles } from './components/TranscriptBubbles';
+import { formatBytes } from './lib/call-view';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'real_estate', label: '不動産' },
@@ -886,16 +883,6 @@ function StatusTile(props: { label: string; value: string; ok: boolean }): JSX.E
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function formatLastReceivedAt(timestampMs: number | null): string {
   if (timestampMs === null) {
     return '-';
@@ -905,15 +892,6 @@ function formatLastReceivedAt(timestampMs: number | null): string {
     minute: '2-digit',
     second: '2-digit',
   });
-}
-
-function createUploadConsent(): RecordingConsent {
-  return {
-    status: 'granted',
-    method: 'upload_attestation',
-    capturedAt: new Date().toISOString(),
-    noticeVersion: 'local-v1',
-  };
 }
 
 function createRealtimeConsent(): RecordingConsent {
@@ -1597,338 +1575,12 @@ function HistoryPanel(props: {
   productId: ProductId;
   recentTranscripts: Transcript[];
 }): JSX.Element {
-  const [meetingMinute, setMeetingMinute] = useState<MeetingMinute | null>(null);
-  const [savedCalls, setSavedCalls] = useState<CallSession[]>([]);
-  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
-  const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
-  const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
-  const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
-  const [processingAudio, setProcessingAudio] = useState(false);
-  const [cloudUploading, setCloudUploading] = useState(false);
-  const [cloudUploadResult, setCloudUploadResult] =
-    useState<CloudAudioUploadProcessResult | null>(null);
-  const [uploadConsentGranted, setUploadConsentGranted] = useState(false);
-
-  useEffect(() => {
-    void window.api.minutes.get().then(setMeetingMinute);
-    void window.api.call.list().then((calls) => {
-      setSavedCalls(calls);
-      setSelectedCallId(calls[0]?.id ?? null);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!selectedCallId) {
-      setSavedTranscripts([]);
-      setAudioAssets([]);
-      setSttJobs([]);
-      return;
-    }
-
-    void window.api.transcripts.list(selectedCallId).then(setSavedTranscripts);
-    void window.api.audioAssets.list(selectedCallId).then(setAudioAssets);
-    void window.api.sttJobs.list(selectedCallId).then(setSttJobs);
-  }, [selectedCallId]);
-
-  const importAudio = async (): Promise<void> => {
-    const result = await window.api.audioAssets.import(props.productId, createUploadConsent());
-    if (!result) {
-      return;
-    }
-
-    const calls = await window.api.call.list();
-    setSavedCalls(calls);
-    setSelectedCallId(result.call.id);
-    setAudioAssets([result.asset]);
-    setSttJobs(await window.api.sttJobs.list(result.call.id));
-    setSavedTranscripts([]);
-  };
-
-  const importAndProcessAudio = async (): Promise<void> => {
-    setProcessingAudio(true);
-    try {
-      const result = await window.api.audioAssets.importAndProcess(
-        props.productId,
-        createUploadConsent(),
-      );
-      if (!result) {
-        return;
-      }
-
-      const calls = await window.api.call.list();
-      setSavedCalls(calls);
-      setSelectedCallId(result.call.id);
-      setAudioAssets([result.asset]);
-      setSttJobs([result.job]);
-      setSavedTranscripts(await window.api.transcripts.list(result.call.id));
-      setMeetingMinute(result.meetingMinute);
-    } finally {
-      setProcessingAudio(false);
-    }
-  };
-
-  const cloudUploadAndProcessAudio = async (): Promise<void> => {
-    setCloudUploading(true);
-    try {
-      const result = await window.api.audioAssets.cloudUploadAndProcess(
-        props.productId,
-        createUploadConsent(),
-      );
-      if (!result) {
-        return;
-      }
-
-      setCloudUploadResult(result);
-    } finally {
-      setCloudUploading(false);
-    }
-  };
-
-  const createSttJob = async (audioAssetId: string): Promise<void> => {
-    const job = await window.api.sttJobs.create(audioAssetId);
-    setSttJobs((current) => [job, ...current]);
-  };
-
-  const runSttJob = async (jobId: string): Promise<void> => {
-    setSttJobs((current) =>
-      current.map((job) => (job.id === jobId ? { ...job, status: 'running' } : job)),
-    );
-    const job = await window.api.sttJobs.run(jobId);
-    setSttJobs((current) => current.map((candidate) => (candidate.id === job.id ? job : candidate)));
-    if (selectedCallId) {
-      setSavedTranscripts(await window.api.transcripts.list(selectedCallId));
-    }
-    if (job.status === 'completed') {
-      setMeetingMinute(await window.api.minutes.get());
-    }
-  };
-
-  const generateMinutes = async (): Promise<void> => {
-    const generated = await window.api.minutes.generate(props.productId, props.recentTranscripts);
-    setMeetingMinute(generated);
-    const calls = await window.api.call.list();
-    setSavedCalls(calls);
-    setSelectedCallId(generated.callId);
-    setSavedTranscripts(await window.api.transcripts.list(generated.callId));
-  };
-
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-zinc-800 p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-zinc-400">ローカル議事録</h2>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={cloudUploading || !uploadConsentGranted}
-              onClick={() => void cloudUploadAndProcessAudio()}
-              className="rounded bg-sky-400 px-3 py-2 text-xs font-medium text-zinc-950 hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
-            >
-              {cloudUploading ? 'Cloud処理中…' : 'Cloudへアップロード'}
-            </button>
-            <button
-              type="button"
-              disabled={processingAudio || !uploadConsentGranted}
-              onClick={() => void importAndProcessAudio()}
-              className="rounded bg-overlay-success px-3 py-2 text-xs font-medium text-zinc-950 hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
-            >
-              {processingAudio ? '音声を処理中…' : '音声から自動生成'}
-            </button>
-            <button
-              type="button"
-              disabled={!uploadConsentGranted}
-              onClick={() => void importAudio()}
-              className="rounded border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              音声ファイルを取り込む
-            </button>
-            <button
-              type="button"
-              onClick={() => void generateMinutes()}
-              className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900"
-            >
-              transcript から生成
-            </button>
-          </div>
-        </div>
-        <label className="mb-4 flex items-start gap-3 rounded border border-zinc-800 bg-zinc-950/50 p-3 text-xs text-zinc-400">
-          <input
-            type="checkbox"
-            checked={uploadConsentGranted}
-            onChange={(event) => setUploadConsentGranted(event.currentTarget.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            顧客から録音・文字起こし・コンプラ解析への同意を取得済みです。この確認は監査証跡として
-            call に保存されます。
-          </span>
-        </label>
-        {cloudUploadResult && (
-          <div className="mb-4 rounded border border-sky-900/70 bg-sky-950/30 p-3 text-xs text-sky-100">
-            <div className="mb-2 font-medium">Cloud STT job</div>
-            <div className="grid gap-2 md:grid-cols-4">
-              <span>call {cloudUploadResult.callId.slice(0, 8)}</span>
-              <span>asset {cloudUploadResult.audioAssetId.slice(0, 8)}</span>
-              <span>job {cloudUploadResult.sttJobId.slice(0, 8)}</span>
-              <span>
-                {cloudUploadResult.status} / transcript {cloudUploadResult.transcriptCount}
-              </span>
-            </div>
-            {cloudUploadResult.job.errorMessage && (
-              <div className="mt-2 text-overlay-objection">
-                {cloudUploadResult.job.errorMessage}
-              </div>
-            )}
-          </div>
-        )}
-        {meetingMinute ? (
-          <div className="space-y-3">
-            <p className="rounded border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-300">
-              {meetingMinute.summary}
-            </p>
-            <MinuteList title="保留事項" items={meetingMinute.pending} empty="保留事項なし" />
-            <MinuteList
-              title="数値メモ"
-              items={meetingMinute.numbers.map((number) => `${number.label}: ${number.value}`)}
-              empty="数値なし"
-            />
-            <ComplianceFindingList findings={meetingMinute.complianceFindings} />
-          </div>
-        ) : (
-          <p className="text-sm text-zinc-600">まだ生成されていません。</p>
-        )}
-      </div>
+      <CallLibrary productId={props.productId} recentTranscripts={props.recentTranscripts} />
 
       <div className="rounded-lg border border-zinc-800 p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-zinc-400">保存済み call / transcript</h2>
-          <span className="text-xs text-zinc-600">{savedCalls.length} calls</span>
-        </div>
-        {savedCalls.length === 0 ? (
-          <p className="text-sm text-zinc-600">保存済み call はまだありません。</p>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-            <ul className="space-y-2">
-              {savedCalls.slice(0, 20).map((call) => (
-                <li key={call.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCallId(call.id)}
-                    className={`w-full rounded border p-3 text-left text-xs ${
-                      selectedCallId === call.id
-                        ? 'border-zinc-500 bg-zinc-900 text-zinc-100'
-                        : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:bg-zinc-900/60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono">{call.id.slice(0, 8)}</span>
-                      <span>{call.status}</span>
-                    </div>
-                    <div className="mt-2 text-zinc-500">
-                      {call.source} / {call.industry} / {call.productId}
-                    </div>
-                    <div className="mt-1 text-zinc-600">
-                      tenant {call.tenantId.slice(0, 8)} / org {call.organizationId.slice(0, 8)}
-                    </div>
-                    <div className="mt-1 text-zinc-600">
-                      consent {call.recordingConsent.status} /{' '}
-                      {call.recordingConsent.method ?? '未記録'}
-                    </div>
-                    <div className="mt-1 text-zinc-600">
-                      {new Date(call.startedAt).toLocaleString('ja-JP')}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <div className="rounded border border-zinc-800 bg-zinc-950/40 p-3">
-              <div className="mb-4">
-                <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
-                  imported audio
-                </div>
-                {audioAssets.length === 0 ? (
-                  <p className="text-xs text-zinc-600">この call の音声ファイルは未登録です。</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {audioAssets.map((asset) => (
-                      <li key={asset.id} className="rounded bg-zinc-900/70 p-3 text-xs">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-zinc-200">{asset.fileName}</div>
-                            <div className="mt-1 text-zinc-500">
-                              {asset.mimeType} / {formatBytes(asset.sizeBytes)}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void createSttJob(asset.id)}
-                            className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
-                          >
-                            STT job作成
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className="mb-4">
-                <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">stt jobs</div>
-                {sttJobs.length === 0 ? (
-                  <p className="text-xs text-zinc-600">この call の STT job は未作成です。</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {sttJobs.map((job) => (
-                      <li key={job.id} className="rounded bg-zinc-900/70 p-3 text-xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-zinc-400">{job.id.slice(0, 8)}</span>
-                          <span className="rounded bg-zinc-950 px-2 py-0.5 text-zinc-300">
-                            {job.status}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-zinc-500">
-                          {job.provider} / asset {job.audioAssetId.slice(0, 8)}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={job.status === 'running' || job.status === 'completed'}
-                          onClick={() => void runSttJob(job.id)}
-                          className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          STT実行
-                        </button>
-                        {job.errorMessage && (
-                          <div className="mt-1 text-overlay-objection">{job.errorMessage}</div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
-                saved transcript
-              </div>
-              {savedTranscripts.length === 0 ? (
-                <p className="text-xs text-zinc-600">この call の transcript は未保存です。</p>
-              ) : (
-                <ul className="space-y-2">
-                  {savedTranscripts.map((segment) => (
-                    <li key={segment.id} className="rounded bg-zinc-900/70 p-3 text-xs">
-                      <span className="mr-2 text-zinc-500">
-                        {segment.isFinal ? 'final' : 'interim'} / {segment.speaker}
-                      </span>
-                      {segment.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-lg border border-zinc-800 p-5">
-        <h2 className="mb-3 text-sm font-medium text-zinc-400">商談履歴</h2>
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">このセッションの反論検知</h2>
         {props.objectionHistory.length === 0 ? (
           <p className="text-sm text-zinc-600">このセッションではまだ反論を検知していません。</p>
         ) : (
@@ -1961,72 +1613,18 @@ function HistoryPanel(props: {
 
       <div className="rounded-lg border border-zinc-800 p-5">
         <h2 className="mb-3 text-sm font-medium text-zinc-400">直近 transcript</h2>
-        {props.recentTranscripts.length === 0 ? (
-          <p className="text-sm text-zinc-600">未受信</p>
-        ) : (
-          <ul className="space-y-2">
-            {props.recentTranscripts.map((transcript, index) => (
-              <li key={`${transcript.startMs}-${index}`} className="rounded border border-zinc-800 p-3 text-xs">
-                <span className="mr-2 text-zinc-500">
-                  {transcript.isFinal ? 'final' : 'interim'} / {transcript.speaker}
-                </span>
-                {transcript.text}
-              </li>
-            ))}
-          </ul>
-        )}
+        <TranscriptBubbles
+          entries={props.recentTranscripts.map((transcript, index) => ({
+            id: `${transcript.startMs}-${index}`,
+            speaker: transcript.speaker,
+            text: transcript.text,
+            startMs: transcript.startMs,
+            isFinal: transcript.isFinal,
+          }))}
+          emptyMessage="未受信"
+          maxHeightClassName="max-h-[320px]"
+        />
       </div>
-    </div>
-  );
-}
-
-function ComplianceFindingList(props: {
-  findings: MeetingMinute['complianceFindings'];
-}): JSX.Element {
-  return (
-    <div>
-      <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">コンプラレビュー</div>
-      {props.findings.length === 0 ? (
-        <p className="text-xs text-zinc-600">検知なし</p>
-      ) : (
-        <ul className="space-y-2">
-          {props.findings.map((finding) => (
-            <li
-              key={finding.id}
-              className="rounded border border-overlay-objection/40 bg-overlay-objection/10 p-3 text-xs"
-            >
-              <div className="mb-1 flex items-center gap-2">
-                <span className="rounded bg-zinc-900 px-2 py-0.5 text-overlay-objection">
-                  {finding.severity}
-                </span>
-                <span className="text-zinc-500">{finding.ruleType}</span>
-              </div>
-              <div className="text-zinc-200">{finding.quotedText}</div>
-              <div className="mt-1 text-zinc-500">{finding.reason}</div>
-              <div className="mt-2 text-overlay-warning">{finding.recommendedAction}</div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function MinuteList(props: { title: string; items: string[]; empty: string }): JSX.Element {
-  return (
-    <div>
-      <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">{props.title}</div>
-      {props.items.length === 0 ? (
-        <p className="text-xs text-zinc-600">{props.empty}</p>
-      ) : (
-        <ul className="space-y-1 text-xs text-zinc-400">
-          {props.items.map((item) => (
-            <li key={item} className="rounded bg-zinc-900 px-3 py-2">
-              {item}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

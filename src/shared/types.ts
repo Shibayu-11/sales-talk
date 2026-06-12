@@ -645,6 +645,7 @@ export interface RendererApi {
       productId: ProductId,
       transcripts: Transcript[],
       source?: MeetingSource,
+      callId?: string,
     ): Promise<MeetingMinute>;
     get(): Promise<MeetingMinute | null>;
   };

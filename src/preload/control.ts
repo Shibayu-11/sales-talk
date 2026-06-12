@@ -314,8 +314,9 @@ const api: RendererApi = {
       productId: ProductId,
       transcripts: Transcript[],
       source: MeetingSource = 'manual_transcript',
+      callId?: string,
     ): Promise<MeetingMinute> =>
-      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts, source }),
+      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts, source, callId }),
     get: (): Promise<MeetingMinute | null> => ipcRenderer.invoke(IPC.minutes.get),
   },
   tasks: {

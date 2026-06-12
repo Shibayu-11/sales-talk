@@ -50,6 +50,10 @@ export function createRuntimeObjectionPipelineService(
       onError: (error) => {
         logger.warn({ error }, 'objection pipeline degraded');
       },
+      // Per PRD §4.6: 発話終了→表示 2.5s の実測根拠。商談中(info+)でも必ず残す。
+      onTiming: (timing) => {
+        logger.info({ metric: 'objection_pipeline_latency', ...timing }, 'objection pipeline latency');
+      },
     },
   });
 }
