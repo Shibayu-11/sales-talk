@@ -187,6 +187,16 @@ Registered via `app.setAsDefaultProtocolClient('salestalk')` in GUI mode and dec
 | `salestalk://record/start?product=hojokin` | Start recording for hojokin |
 | `salestalk://record/stop` | Stop current recording |
 
+The URL scheme drives the **same single recording session as the GUI start/stop button**
+(shared `activeCallId`, STT client, native capture, and overlay). So:
+
+- `salestalk://record/stop` stops a session started from the GUI, and the GUI "停止" button
+  stops one started via the URL scheme — there is never a parallel/orphan session.
+- Firing `salestalk://record/start` while already recording is a no-op that reports
+  `already_recording` (it will not spawn a second call).
+- A protocol-started session runs the full real-time stack (STT → objection detection →
+  overlay), not just a bare call record.
+
 ### Test from Terminal
 
 ```bash
@@ -261,5 +271,5 @@ In an agent task YAML:
 When a GUI instance of sales-talk is running:
 
 - **`transcribe` and `minutes`**: operate on stored local data only; they work correctly alongside a running GUI with no coordination needed.
-- **`record start/stop`**: the CLI spawns its own headless Electron process and maintains its own native capture state, **independent of the GUI**. Running both simultaneously will attempt to start two ScreenCaptureKit sessions — the OS may allow this but audio data will not be merged. **Recommended**: use the GUI or the CLI for recording, not both at once. The protocol handler (`salestalk://record/start`) drives the GUI instance and is the preferred path when the app is already open.
-- Second-instance detection: if you call `open salestalk://record/start` while the app is running, the `open-url` / `second-instance` handler in the GUI process receives the URL and starts capture there — no duplicate process is spawned.
+- **`record start/stop` via `--cli`**: the CLI spawns its own headless Electron process and maintains its own native capture state, **independent of the GUI**. Running both simultaneously will attempt to start two ScreenCaptureKit sessions — the OS may allow this but audio data will not be merged. **Recommended**: when the app is open, prefer the URL scheme (`salestalk://record/start`) over the `--cli` path so recording shares the GUI's single session.
+- **`salestalk://record/start|stop` (preferred when app is open)**: the `open-url` / `second-instance` handler in the running GUI process receives the URL and drives the GUI's singleton session — no duplicate process, no parallel ScreenCaptureKit session. This is the canonical path for Shortcuts/Spotlight.

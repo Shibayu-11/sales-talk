@@ -97,3 +97,4 @@ temp/
 .cache/
 vitest.config.mts.timestamp-*.mjs
 .claude/
+/native/

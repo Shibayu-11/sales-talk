@@ -72,7 +72,7 @@ if (isCliMode) {
 
     if (action === 'start') {
       const product = url.searchParams.get('product') ?? undefined;
-      // Forward to the running GUI instance: reuse cmdRecordStart with real services.
+      // Drives the GUI instance's singleton session (shared with the start button).
       void handleProtocolRecordStart(product);
     } else if (action === 'stop') {
       void handleProtocolRecordStop();
@@ -81,58 +81,42 @@ if (isCliMode) {
     }
   };
 
-  const handleProtocolRecordStart = async (product?: string): Promise<void> => {
-    const { cmdRecordStart } = await import('./cli/commands');
-    const { checkPermissions } = await import('./services/permissions');
-    const { NativeAudioCaptureService } = await import('./audio/native-audio-capture');
-    const { loadNativeAudioCaptureModule } = await import('./audio/native-module-loader');
-    const { appRepositories } = await import('./services/repositories');
+  const protocolWindows = {
+    getControlWindow: getControlWindowInner,
+    getOverlayWindow: getOverlayWindowInner,
+  };
 
-    // REQUIRES on-device verification
-    const result = await cmdRecordStart(
-      { productId: product },
-      {
-        checkPermissions,
-        startNativeCapture: async () => {
-          const mod = loadNativeAudioCaptureModule();
-          if (!mod) throw new Error('native module unavailable');
-          const svc = new NativeAudioCaptureService({
-            module: mod,
-            sendAudioChunk: async () => { /* protocol-triggered capture; no streaming STT */ },
-            onError: (err) => logger.warn({ err }, 'protocol capture error'),
-          });
-          await svc.start();
-        },
-        stopNativeCapture: async () => { /* stop is handled by record/stop */ },
-        createCall: async ({ productId, consent }) => {
-          const scope = await appRepositories.organizations.getDefaultScope();
-          const call = await appRepositories.calls.createCall({
-            ...scope,
-            source: 'zoom_desktop',
-            industry: 'btob_sales',
-            productId,
-            recordingConsent: consent,
-            startedAt: new Date(),
-          });
-          return { id: call.id };
-        },
-        endCall: async (callId) => { await appRepositories.calls.endCall(callId); },
-        getActiveCallId: () => null,
-      },
-    );
+  // Shortcut/Spotlight-triggered recording. The consent is still obtained
+  // verbally in the live call; the notice version flags the protocol entry point
+  // so the audit trail distinguishes it from the GUI button.
+  const protocolConsent = () => ({
+    status: 'granted' as const,
+    method: 'verbal' as const,
+    capturedAt: new Date().toISOString(),
+    noticeVersion: 'shortcut-v1',
+  });
+
+  const handleProtocolRecordStart = async (product?: string): Promise<void> => {
+    const { startRecordingSession } = await import('./ipc');
+    const { ProductIdSchema } = await import('@shared/schemas');
+    const parsed = ProductIdSchema.safeParse(product ?? 'real_estate');
+    if (!parsed.success) {
+      logger.warn({ product }, 'protocol record start: invalid product');
+      return;
+    }
+    // Routes through the singleton session so STT, overlay, and the objection
+    // pipeline all run — same path as the GUI start button.
+    const result = await startRecordingSession(protocolWindows, {
+      productId: parsed.data,
+      consent: protocolConsent(),
+      source: 'zoom_desktop',
+    });
     logger.info({ result }, 'protocol record start');
   };
 
   const handleProtocolRecordStop = async (): Promise<void> => {
-    const { cmdRecordStop } = await import('./cli/commands');
-    const result = await cmdRecordStop({
-      checkPermissions: () => ({ screen: true, microphone: true }),
-      startNativeCapture: async () => { /* not used for stop */ },
-      stopNativeCapture: async () => { /* TODO: expose active capture ref if needed */ },
-      createCall: async () => ({ id: '' }),
-      endCall: async () => { /* not applicable in stop-only path */ },
-      getActiveCallId: () => null,
-    });
+    const { stopRecordingSession } = await import('./ipc');
+    const result = stopRecordingSession(protocolWindows);
     logger.info({ result }, 'protocol record stop');
   };
 

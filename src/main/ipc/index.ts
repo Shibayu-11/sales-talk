@@ -55,6 +55,7 @@ import type {
   CurrentUserContext,
   MeetingMinute,
   PermissionState,
+  ProductId,
   ReviewTask,
   SharingState,
   SttProviderKind,
@@ -262,38 +263,11 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const input = CallStartInputSchema.parse(payload);
-    const context = await appRepositories.organizations.assertPermission('recording:start');
-    if (!preflightAudioCapturePermissions(windows)) {
-      return;
-    }
-    audioCaptureStats = createInitialAudioCaptureStats();
-    const startedAt = new Date();
-    const call = await appRepositories.calls.createCall({
-      tenantId: context.tenant.id,
-      organizationId: context.organization.id,
-      source: 'zoom_desktop',
-      industry: 'btob_sales',
+    await startRecordingSession(windows, {
       productId: input.productId,
-      recordingConsent: input.consent,
-      startedAt,
+      consent: input.consent,
+      source: 'zoom_desktop',
     });
-    activeCallId = call.id;
-    callState = { status: 'in_call', productId: input.productId, startedAt: startedAt.getTime() };
-    await tryStartSTT(windows);
-    await tryStartNativeAudioCapture(windows);
-    setCallModeLogging(true);
-    notifyCallState(windows);
-    windows.getOverlayWindow()?.showInactive();
-    await appendRecordingAuditLogs(context, call.id, input.consent, 'zoom_desktop');
-    logger.info(
-      {
-        productId: input.productId,
-        tenantId: context.tenant.id,
-        organizationId: context.organization.id,
-        consentMethod: input.consent.method,
-      },
-      'call started',
-    );
   });
 
   ipcMain.handle(IPC.call.end, () => {
@@ -1327,6 +1301,84 @@ function getCurrentCallId(): string {
   return activeCallId ?? localSessionId;
 }
 
+export interface StartRecordingSessionInput {
+  productId: ProductId;
+  consent: CallSession['recordingConsent'];
+  source: CallSession['source'];
+}
+
+export type StartRecordingSessionResult =
+  | { ok: true; callId: string }
+  | {
+      ok: false;
+      error: 'already_recording' | 'permission_required' | 'start_failed';
+      callId?: string | undefined;
+    };
+
+/**
+ * Canonical recording start. Drives the singleton session state (activeCallId,
+ * STT client, native capture, overlay) so the GUI button, IPC, and the
+ * salestalk:// URL scheme all share one session — never parallel ones.
+ */
+export async function startRecordingSession(
+  windows: IpcWindowAccessors,
+  input: StartRecordingSessionInput,
+): Promise<StartRecordingSessionResult> {
+  if (callState.status === 'in_call') {
+    // Idempotent: a second start (e.g. Shortcut fired twice) must not spawn a
+    // parallel call. Report the already-active one instead.
+    return { ok: false, error: 'already_recording', callId: activeCallId ?? undefined };
+  }
+
+  let context: CurrentUserContext;
+  try {
+    context = await appRepositories.organizations.assertPermission('recording:start');
+  } catch (error) {
+    logger.warn({ error }, 'recording start permission denied');
+    return { ok: false, error: 'permission_required' };
+  }
+
+  if (!preflightAudioCapturePermissions(windows)) {
+    return { ok: false, error: 'permission_required' };
+  }
+
+  audioCaptureStats = createInitialAudioCaptureStats();
+  const startedAt = new Date();
+  const call = await appRepositories.calls.createCall({
+    tenantId: context.tenant.id,
+    organizationId: context.organization.id,
+    source: input.source,
+    industry: 'btob_sales',
+    productId: input.productId,
+    recordingConsent: input.consent,
+    startedAt,
+  });
+  activeCallId = call.id;
+  callState = { status: 'in_call', productId: input.productId, startedAt: startedAt.getTime() };
+  await tryStartSTT(windows);
+  await tryStartNativeAudioCapture(windows);
+  setCallModeLogging(true);
+  notifyCallState(windows);
+  windows.getOverlayWindow()?.showInactive();
+  await appendRecordingAuditLogs(context, call.id, input.consent, input.source);
+  logger.info(
+    {
+      productId: input.productId,
+      source: input.source,
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+      consentMethod: input.consent.method,
+    },
+    'call started',
+  );
+  return { ok: true, callId: call.id };
+}
+
+/** The live recording call id, or null when idle. Unlike getCurrentCallId there is no fallback id. */
+export function getActiveRecordingCallId(): string | null {
+  return activeCallId;
+}
+
 async function persistCurrentTranscript(transcript: Transcript): Promise<void> {
   if (!activeCallId) {
     return;
@@ -1353,4 +1405,14 @@ function endCurrentCall(windows: IpcWindowAccessors): void {
   setCallModeLogging(false);
   notifyCallState(windows);
   windows.getOverlayWindow()?.hide();
+}
+
+/**
+ * Canonical recording stop. Ends whatever session the singleton state holds —
+ * so salestalk://record/stop stops a GUI-started session and vice versa.
+ */
+export function stopRecordingSession(windows: IpcWindowAccessors): { ok: true; callId: string | null } {
+  const endedCallId = activeCallId;
+  endCurrentCall(windows);
+  return { ok: true, callId: endedCallId };
 }

@@ -103,7 +103,8 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 - [x] `salestalk` CLI(record start/stop・transcribe・minutes、JSON 出力で Agent Skill 連携可)— [使い方](./cli.md)
 - [x] macOS Shortcuts / Spotlight 連携(`salestalk://record/start?product=X` / `salestalk://record/stop` URL スキーム + `--cli` argv ルーティング)
 - [ ] 実機: import 音声を local SpeechAnalyzer batch だけで議事録まで通す検証
-- [ ] 実機: URL スキーム経路と GUI 経路の状態共有(protocol record/stop が GUI 起動セッションを停止できるか。現状は別インスタンス生成で activeCallId 等を共有しない懸念 → M1 で確認)
+- [x] URL スキーム経路と GUI 経路の状態共有(`startRecordingSession`/`stopRecordingSession` に一本化。protocol も GUI も同一シングルトンセッションを駆動、二重起動は `already_recording` で抑止)
+  - [ ] 実機: 実際に Shortcut → 録音 → GUI 停止が1セッションで通るか最終確認(M1)
 
 完了条件: 「Kanary でできることは SalesTalk でもできる」と言い切れる。upload 音声を local STT だけで処理できる。
 
