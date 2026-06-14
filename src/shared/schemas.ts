@@ -447,6 +447,7 @@ export const AppSettingsSchema = z.object({
   consentNoticeMode: z.enum(['verbal', 'zoom_background', 'sdk']),
   sttProviderMode: SttProviderModeSchema.default('local_first'),
   sttImportProviderMode: SttImportProviderModeSchema.default('local_first'),
+  onboardingCompletedAt: z.string().nullable().default(null),
   schemaVersion: z.number().int().nonnegative(),
 });
 

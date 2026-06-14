@@ -33,6 +33,7 @@ import type {
 import { UiIcon, type UiIconName } from './components/UiIcon';
 import { CallLibrary } from './components/CallLibrary';
 import { TranscriptBubbles } from './components/TranscriptBubbles';
+import { Onboarding } from './components/Onboarding';
 import { formatBytes } from './lib/call-view';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
@@ -232,6 +233,16 @@ export function App(): JSX.Element {
     await refreshAudioStatus();
   };
 
+  const saveAnthropicKey = async (value: string): Promise<void> => {
+    await window.api.secrets.set('anthropic_api_key', value);
+    await refreshSecretStatus();
+  };
+
+  const completeOnboarding = async (): Promise<void> => {
+    await window.api.settings.set({ onboardingCompletedAt: new Date().toISOString() });
+    setSettings(await window.api.settings.get());
+  };
+
   const endCall = async (): Promise<void> => {
     await window.api.call.end();
     await refreshAudioStatus();
@@ -303,8 +314,24 @@ export function App(): JSX.Element {
     );
   };
 
+  // Show onboarding until settings load and confirm it was completed. Guard on
+  // settings !== null so the overlay doesn't flash before the first load.
+  const showOnboarding = settings !== null && settings.onboardingCompletedAt === null;
+
   return (
     <div className="flex min-h-screen flex-col">
+      {showOnboarding && (
+        <Onboarding
+          permissions={permissions}
+          anthropicKeyConfigured={Boolean(secretStatus.anthropic_api_key)}
+          selectedProductId={settings?.selectedProductId ?? null}
+          onRequestScreen={requestScreenPermission}
+          onRequestMicrophone={requestMicrophonePermission}
+          onSaveAnthropicKey={saveAnthropicKey}
+          onSelectProduct={selectProduct}
+          onComplete={completeOnboarding}
+        />
+      )}
       <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
         <h1 className="text-lg font-semibold">SalesTalk</h1>
         <span className="text-xs text-zinc-500">v{version}</span>

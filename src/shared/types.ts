@@ -184,6 +184,8 @@ export interface AppSettings {
   sttProviderMode: SttProviderMode;
   /** Import (batch/file) STT provider mode. local_first = Apple SpeechAnalyzer when available, else Deepgram. */
   sttImportProviderMode: SttImportProviderMode;
+  /** ISO timestamp when first-run onboarding finished; null until completed. */
+  onboardingCompletedAt: string | null;
   /** Per PRD §31: keep deprecated keys for 3 months */
   schemaVersion: number;
 }

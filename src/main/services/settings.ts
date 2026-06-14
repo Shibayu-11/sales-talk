@@ -7,12 +7,15 @@ import type { AppSettingsPatchInput } from '@shared/schemas';
 import type { AppSettings } from '@shared/types';
 
 const DEFAULT_SETTINGS: AppSettings = {
-  selectedProductId: 'real_estate',
+  // null until the user picks during onboarding — the vertical drives the legal
+  // guardrails, so first-run must be an explicit, conscious choice.
+  selectedProductId: null,
   overlayPosition: { x: 0, y: 80, display: 0 },
   hotkeys: { ...DEFAULT_HOTKEYS },
   consentNoticeMode: 'verbal',
   sttProviderMode: 'local_first',
   sttImportProviderMode: 'local_first',
+  onboardingCompletedAt: null,
   schemaVersion: SETTINGS_SCHEMA_VERSION,
 };
 

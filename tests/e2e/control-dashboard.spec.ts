@@ -17,6 +17,37 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
   });
 });
 
+test('first-run onboarding gates the app until permissions, key, and product are set', async () => {
+  await withSalesTalkApp(
+    async ({ controlWindow }) => {
+      // Onboarding overlay is shown and blocks the main UI. Scope to the dialog so
+      // queries don't match the dashboard rendered underneath.
+      const dialog = controlWindow.getByRole('dialog', { name: '初期セットアップ' });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'すべての項目を完了してください' })).toBeDisabled();
+
+      // Permissions are force-granted via env, so step 1 auto-completes and the
+      // API key becomes the active step.
+      await dialog.getByLabel('Anthropic API key').fill('sk-ant-e2e-test');
+      await dialog.getByRole('button', { name: '保存', exact: true }).click();
+
+      // Step 3: pick a product (only present once the API key step completes).
+      await dialog.getByRole('button', { name: '健康経営優良法人' }).click();
+
+      // Now completable; finishing reveals the main dashboard.
+      const done = dialog.getByRole('button', { name: '商談を始める' });
+      await expect(done).toBeEnabled();
+      await done.click();
+      await expect(controlWindow.getByRole('dialog', { name: '初期セットアップ' })).toHaveCount(0);
+      await expect(controlWindow.getByText('音声 / STT 診断')).toBeVisible();
+    },
+    {
+      completeOnboarding: false,
+      env: { SALES_TALK_FORCE_AUDIO_PERMISSIONS: '1' },
+    },
+  );
+});
+
 test('settings exposes local-first STT and Deepgram fallback mode', async () => {
   await withSalesTalkApp(async ({ controlWindow }) => {
     await controlWindow.getByRole('button', { name: '設定', exact: true }).click();
@@ -230,9 +261,14 @@ test('audio diagnostic shows local-first SpeechAnalyzer transcripts in the UI', 
 
 async function withSalesTalkApp(
   run: (context: { controlWindow: Page; electronApp: ElectronApplication }) => Promise<void>,
-  options: { env?: Record<string, string> } = {},
+  options: { env?: Record<string, string>; completeOnboarding?: boolean } = {},
 ): Promise<void> {
   const userDataPath = await mkdtemp(join(tmpdir(), 'sales-talk-e2e-'));
+  // Existing tests target the main UI, not first-run onboarding; pre-seed settings
+  // so the onboarding overlay does not block them. The onboarding test opts out.
+  if (options.completeOnboarding !== false) {
+    await seedOnboardedSettings(userDataPath);
+  }
   const electronApp = await electron.launch({
     args: ['.'],
     cwd: process.cwd(),
@@ -256,7 +292,7 @@ async function withSalesTalkApp(
 
     await controlWindow.reload();
     await controlWindow.waitForLoadState('load');
-    await expect(controlWindow.getByText('SalesTalk')).toBeVisible();
+    await expect(controlWindow.getByText('SalesTalk').first()).toBeVisible();
     await run({ controlWindow, electronApp });
     expect(pageErrors).toEqual([]);
     expect(consoleErrors.filter((message) => message.includes('preload'))).toEqual([]);
@@ -413,4 +449,23 @@ async function readTextFile(path: string): Promise<string> {
   } catch {
     return '';
   }
+}
+
+async function seedOnboardedSettings(userDataPath: string): Promise<void> {
+  const settings = {
+    selectedProductId: 'real_estate',
+    overlayPosition: { x: 0, y: 80, display: 0 },
+    hotkeys: {
+      toggleOverlay: 'Option+Space',
+      expandLayer3: 'Command+D',
+      nextCandidate: 'Command+N',
+      markUnused: 'Command+Shift+X',
+    },
+    consentNoticeMode: 'verbal',
+    sttProviderMode: 'local_first',
+    sttImportProviderMode: 'local_first',
+    onboardingCompletedAt: '2026-06-01T00:00:00.000Z',
+    schemaVersion: 1,
+  };
+  await writeFile(join(userDataPath, 'settings.json'), JSON.stringify(settings), 'utf8');
 }

@@ -125,10 +125,11 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 
 目的: 自分以外の Mac でも動く状態にして配布する。
 
-- [ ] DMG ビルド + Apple Notarize の通し確認(universal binary)
-- [ ] 初回起動オンボーディング(Screen Recording / Microphone 権限誘導、API キー設定)
-- [ ] electron-updater 動作確認(商談中更新禁止 → 15 分後リトライ)
-- [ ] クリーン環境(別 Mac or 新規ユーザー)でのインストール検証
+- [x] 初回起動オンボーディング(権限誘導 → Anthropic キー → 商材選択。`onboardingCompletedAt` で制御、E2E あり)
+- [x] electron-updater 実装(商談中は install 遅延 → 15 分後リトライ、通話終了で即時。`UpdateManager` + 6 テスト)
+- [ ] DMG ビルド + Apple Notarize の通し確認(universal binary)※実機
+- [ ] electron-updater 実機動作確認(実際の GitHub Release で更新が降ってくるか)※実機
+- [ ] クリーン環境(別 Mac or 新規ユーザー)でのインストール検証 ※実機
 - [ ] 自社営業メンバーへの β 配布と初回フィードバック収集
 
 完了条件: クリーンな Mac に DMG を入れて、初商談で使えるまでを本人以外が完走できる。
