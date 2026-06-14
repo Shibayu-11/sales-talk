@@ -120,6 +120,36 @@ if (isCliMode) {
     logger.info({ result }, 'protocol record stop');
   };
 
+  /**
+   * Auto-update is packaged-build only (electron-updater is a no-op unpackaged).
+   * Per PRD §32 the UpdateManager defers installs while a call is active.
+   */
+  const startAutoUpdater = async (): Promise<void> => {
+    if (isDev) {
+      logger.info('auto-updater disabled in dev');
+      return;
+    }
+    try {
+      const { createElectronUpdaterDriver } = await import('./services/updater-driver');
+      const { UpdateManager } = await import('./services/updater');
+      const { isRecordingInProgress, onCallEnded } = await import('./ipc');
+
+      const driver = await createElectronUpdaterDriver((message, context) =>
+        logger.info({ ...context }, message),
+      );
+      const manager = new UpdateManager({
+        driver,
+        isInCall: isRecordingInProgress,
+        log: (message, context) => logger.info({ ...context }, message),
+      });
+      onCallEnded(() => manager.onCallEnded());
+      manager.start();
+      logger.info('auto-updater started');
+    } catch (error) {
+      logger.warn({ error }, 'auto-updater failed to start');
+    }
+  };
+
   // macOS: URL scheme arrives as `open-url` event
   app.on('open-url', (_event, urlStr) => {
     handleProtocolUrl(urlStr);
@@ -142,6 +172,7 @@ if (isCliMode) {
     logger.info({ isDev, version: app.getVersion() }, 'app ready');
     registerIpcHandlers({ getControlWindow: getControlWindowInner, getOverlayWindow: getOverlayWindowInner });
     await createWindows();
+    await startAutoUpdater();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

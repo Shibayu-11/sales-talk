@@ -39,6 +39,9 @@ export const SUPABASE_REGION = 'ap-northeast-1';
 
 export const SETTINGS_SCHEMA_VERSION = 1;
 
+/** Per PRD §32: never auto-update during a call; re-check this often while an update waits. */
+export const UPDATE_DEFERRED_RETRY_MS = 15 * 60 * 1_000;
+
 export const DEFAULT_HOTKEYS = {
   toggleOverlay: 'Option+Space',
   expandLayer3: 'Command+D',

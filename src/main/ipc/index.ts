@@ -1405,6 +1405,22 @@ function endCurrentCall(windows: IpcWindowAccessors): void {
   setCallModeLogging(false);
   notifyCallState(windows);
   windows.getOverlayWindow()?.hide();
+  for (const listener of callEndedListeners) {
+    listener();
+  }
+}
+
+const callEndedListeners = new Set<() => void>();
+
+/** Notified after a call ends — lets the updater install a deferred update promptly. */
+export function onCallEnded(listener: () => void): () => void {
+  callEndedListeners.add(listener);
+  return () => callEndedListeners.delete(listener);
+}
+
+/** True while a sales call is in progress. Used by the updater to defer installs (PRD §32). */
+export function isRecordingInProgress(): boolean {
+  return callState.status === 'in_call';
 }
 
 /**
