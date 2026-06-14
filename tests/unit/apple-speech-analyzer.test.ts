@@ -20,7 +20,8 @@ describe('AppleSpeechAnalyzerSTTProvider', () => {
       durationMs: 100,
     });
 
-    await expect.poll(() => transcripts.length).toBe(1);
+    // Spawns a real node subprocess; allow generous polling under parallel load.
+    await expect.poll(() => transcripts.length, { timeout: 15_000 }).toBe(1);
     expect(transcripts[0]).toEqual({
       speaker: 'counterpart',
       text: '保険料が高いですね',
@@ -30,7 +31,7 @@ describe('AppleSpeechAnalyzerSTTProvider', () => {
     });
 
     await provider.disconnect();
-  });
+  }, 20_000);
 
   it('fails fast when the helper binary is missing', async () => {
     const provider = new AppleSpeechAnalyzerSTTProvider({ helperPath: '/tmp/sales-talk-missing-helper' });

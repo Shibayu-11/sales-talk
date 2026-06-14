@@ -95,3 +95,5 @@ tests/**/CLAUDE.md
 tmp/
 temp/
 .cache/
+vitest.config.mts.timestamp-*.mjs
+.claude/
