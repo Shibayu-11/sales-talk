@@ -19,10 +19,13 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 | Renderer(Overlay + Kanary 流三分割 Call Library) | 完成 |
 | 議事録(LLM 生成 + [mm:ss] ジャンプリンク + ヒューリスティック縮退) | 完成 |
 | ナレッジ / RAG(ハイブリッド検索 + 3商材37件シード + 応答接地) | 完成(クラウド側は β へ) |
-| salestalk CLI(record/transcribe/minutes/knowledge、JSON 出力) | 完成 |
+| salestalk CLI(record/transcribe/minutes、JSON 出力) | 完成 |
+| Shortcuts / Spotlight 連携(salestalk:// URL スキーム) | 完成(実機での状態共有は要検証) |
+| 提案カードのナレッジ出典表示(根拠ナレッジ N件 + 関連度%) | 完成 |
 | テスト(unit 189 + E2E 4) | 全グリーン |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
-| Shortcuts / Spotlight 連携・DMG 配布・公証 | 未着手 |
+| W5: オンボーディング + electron-updater | **保留中(cowork で次に着手予定だった)** |
+| DMG 配布・公証 | 未着手 |
 
 ## 1. 競合ベンチマーク: Kanary v2
 
@@ -98,8 +101,9 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 - [x] Apple SpeechAnalyzer batch/import provider 本接続(Swift file-mode + TS batch provider、実機ビルド検証済み)
 - [x] 音声 import の既定 provider を local-first に変更(import-stt-provider-resolver)
 - [x] `salestalk` CLI(record start/stop・transcribe・minutes、JSON 出力で Agent Skill 連携可)— [使い方](./cli.md)
-- [ ] macOS Shortcuts / Spotlight からの録音開始・停止(CLI を叩く形。残課題)
+- [x] macOS Shortcuts / Spotlight 連携(`salestalk://record/start?product=X` / `salestalk://record/stop` URL スキーム + `--cli` argv ルーティング)
 - [ ] 実機: import 音声を local SpeechAnalyzer batch だけで議事録まで通す検証
+- [ ] 実機: URL スキーム経路と GUI 経路の状態共有(protocol record/stop が GUI 起動セッションを停止できるか。現状は別インスタンス生成で activeCallId 等を共有しない懸念 → M1 で確認)
 
 完了条件: 「Kanary でできることは SalesTalk でもできる」と言い切れる。upload 音声を local STT だけで処理できる。
 
@@ -110,8 +114,8 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 - [x] ナレッジ検索 → Sonnet プロンプトへの接地(knowledge_entries を一次情報源として優先、score passthrough)
 - [x] 3商材のナレッジ初期投入(real_estate 13 / kenko_keiei 12 / hojokin 12 = 計37件、seedLocalKnowledge)
 - [x] RAG の保存先確定(MVP は local-first 維持、Cloudflare 接続は β フェーズへ)
+- [x] 提案カードにナレッジ出典表示(overlay に「根拠ナレッジ N件」+ 関連度% 、`ObjectionResponse.sources` 経由)
 - [ ] ガードレールの実発話テスト(禁止キーワード発話 → 差し替え/トーンダウン確認)※実機検証で
-- [ ] 提案カードにナレッジ出典表示(信頼性 + 本人のナレッジ改善ループ)
 - [ ] 実商談想定の反論 10 パターンで接地提案を確認(実機 / プロンプト評価)
 
 完了条件: 実商談を想定した反論 10 パターンで、ナレッジ接地した提案が出る。
