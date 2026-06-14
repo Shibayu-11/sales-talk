@@ -6,19 +6,23 @@
 
 ## 0. 現在地(2026-06-12 実態調査)
 
-コードベース実測で全体 **約55%**、Mac アプリ単体では **約85%** が実装済み。
+Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week 3/4 機能を消化)。
+残る最大の不確実性は実機検証(M1)と β 配布(M5)。
 
 | 領域 | 状態 |
 |---|---|
 | Swift 音声キャプチャ(ScreenCaptureKit + AVAudioEngine + NAPI) | 完成・ビルド済み |
-| STT(Apple SpeechAnalyzer local + Deepgram fallback + resolver) | 完成、テスト6本 |
-| 反論検知パイプライン(XState / Haiku 検知 / Sonnet 投機生成) | 完成 |
+| STT(Apple SpeechAnalyzer local realtime + batch/file + Deepgram fallback) | 完成、実機ビルド検証済み |
+| 反論検知パイプライン(XState / Haiku 検知 / Sonnet 投機生成 + レイテンシ計測) | 完成 |
 | 法務ガードレール(3商材 risk_flags + 安全フォールバック) | 完成 |
-| Electron Main(IPC 71 endpoints、サービス 40+) | 完成 |
-| Renderer(Overlay + Control) | 85〜90% |
-| ナレッジ / RAG(ハイブリッド検索 + Cohere) | 70%(クラウド側未接続) |
-| テスト 36 ファイル + electron-builder / 公証設定 | ほぼ完成 |
+| Electron Main(IPC / サービス層) | 完成 |
+| Renderer(Overlay + Kanary 流三分割 Call Library) | 完成 |
+| 議事録(LLM 生成 + [mm:ss] ジャンプリンク + ヒューリスティック縮退) | 完成 |
+| ナレッジ / RAG(ハイブリッド検索 + 3商材37件シード + 応答接地) | 完成(クラウド側は β へ) |
+| salestalk CLI(record/transcribe/minutes/knowledge、JSON 出力) | 完成 |
+| テスト(unit 189 + E2E 4) | 全グリーン |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
+| Shortcuts / Spotlight 連携・DMG 配布・公証 | 未着手 |
 
 ## 1. 競合ベンチマーク: Kanary v2
 
@@ -89,12 +93,13 @@
 
 目的: Kanary ができることを全部できるようにする。UI は [Kanary UI リファレンス](./kanary-ui-reference.md) に従う。
 
-- [x] Calls タブを三分割レイアウトへ再構成(経過時間グルーピング / 左右チャットバブル / Summary パネル)※前倒しで実装済み
-- [x] 商談後の議事録ワンクリック生成(LLM 生成 + ヒューリスティック縮退、[mm:ss] タイムスタンプリンクで該当発話・コンプラ findings へジャンプ)※前倒しで実装済み
-- [ ] Apple SpeechAnalyzer batch/import provider 本接続(2軸計画 MVP 3 の残課題)
-- [ ] 音声 import の既定 provider を local-first に変更
-- [ ] `salestalk` CLI 最小版(録音開始/停止、文字起こし、議事録出力。Agent Skill から叩ける形)
-- [ ] macOS Shortcuts / Spotlight からの録音開始・停止
+- [x] Calls タブを三分割レイアウトへ再構成(経過時間グルーピング / 左右チャットバブル / Summary パネル)
+- [x] 商談後の議事録ワンクリック生成(LLM 生成 + ヒューリスティック縮退、[mm:ss] タイムスタンプリンクで該当発話・コンプラ findings へジャンプ)
+- [x] Apple SpeechAnalyzer batch/import provider 本接続(Swift file-mode + TS batch provider、実機ビルド検証済み)
+- [x] 音声 import の既定 provider を local-first に変更(import-stt-provider-resolver)
+- [x] `salestalk` CLI(record start/stop・transcribe・minutes、JSON 出力で Agent Skill 連携可)— [使い方](./cli.md)
+- [ ] macOS Shortcuts / Spotlight からの録音開始・停止(CLI を叩く形。残課題)
+- [ ] 実機: import 音声を local SpeechAnalyzer batch だけで議事録まで通す検証
 
 完了条件: 「Kanary でできることは SalesTalk でもできる」と言い切れる。upload 音声を local STT だけで処理できる。
 
@@ -102,11 +107,12 @@
 
 目的: 切り返し提案の質を「汎用 LLM」から「自社ナレッジ接地」へ引き上げる。
 
-- [ ] ナレッジ検索 → Sonnet プロンプトへの接地を実商談フローで確認
-- [ ] 3商材のナレッジ初期投入(各 20〜50 件: よくある反論と切り返し、商材 FAQ)
-- [ ] RAG の保存先確定(MVP は local-first 維持、Cloudflare 接続は β フェーズへ)
-- [ ] ガードレールの実発話テスト(禁止キーワード発話 → 差し替え/トーンダウン確認)
+- [x] ナレッジ検索 → Sonnet プロンプトへの接地(knowledge_entries を一次情報源として優先、score passthrough)
+- [x] 3商材のナレッジ初期投入(real_estate 13 / kenko_keiei 12 / hojokin 12 = 計37件、seedLocalKnowledge)
+- [x] RAG の保存先確定(MVP は local-first 維持、Cloudflare 接続は β フェーズへ)
+- [ ] ガードレールの実発話テスト(禁止キーワード発話 → 差し替え/トーンダウン確認)※実機検証で
 - [ ] 提案カードにナレッジ出典表示(信頼性 + 本人のナレッジ改善ループ)
+- [ ] 実商談想定の反論 10 パターンで接地提案を確認(実機 / プロンプト評価)
 
 完了条件: 実商談を想定した反論 10 パターンで、ナレッジ接地した提案が出る。
 
