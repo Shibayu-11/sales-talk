@@ -5,9 +5,17 @@ import Speech
 
 struct InputMessage: Decodable {
     let type: String
+    // realtime audio fields
     let data: String?
     let startMs: Double?
     let sampleRate: Double?
+    // file mode fields
+    let path: String?
+    let locale: String?
+}
+
+struct DoneMessage: Encodable {
+    let type: String
 }
 
 struct TranscriptMessage: Encodable {
@@ -224,6 +232,190 @@ final class SpeechAnalyzerRuntime: @unchecked Sendable {
     }
 }
 
+// MARK: - File-mode batch transcription
+
+// REQUIRES on-device build verification (cannot compile Swift in CI/Linux env)
+
+/// Reads an audio file via AVAudioFile, feeds it through SpeechAnalyzer, and emits
+/// transcript JSON events identical to realtime mode, followed by {type:"done"}.
+/// Per W3-C: supports {type:"file", path:"<abs path>", locale?} input message.
+@available(macOS 26.0, *)
+final class SpeechAnalyzerFileRuntime: @unchecked Sendable {
+    private let locale: Locale
+    private let encoder = JSONEncoder()
+
+    init(localeIdentifier: String = "ja-JP") {
+        self.locale = Locale(identifier: localeIdentifier)
+    }
+
+    func transcribe(filePath: String) async {
+        let url = URL(fileURLWithPath: filePath)
+        do {
+            guard SpeechTranscriber.isAvailable else {
+                emitError(code: "speech_transcriber_unavailable", message: "SpeechTranscriber is not available on this Mac")
+                emitDone()
+                return
+            }
+
+            let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) ?? locale
+            let transcriber = SpeechTranscriber(
+                locale: supportedLocale,
+                preset: .timeIndexedProgressiveTranscription
+            )
+            _ = try await AssetInventory.reserve(locale: supportedLocale)
+            let modules: [any SpeechModule] = [transcriber]
+            let assetStatus = await AssetInventory.status(forModules: modules)
+            switch assetStatus {
+            case .installed:
+                break
+            case .supported, .downloading:
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: modules) {
+                    try await request.downloadAndInstall()
+                }
+            case .unsupported:
+                emitError(code: "speech_assets_unsupported", message: "Speech assets unsupported for locale \(supportedLocale.identifier)")
+                emitDone()
+                return
+            @unknown default:
+                break
+            }
+
+            let audioFile = try AVAudioFile(forReading: url)
+            let fileFormat = audioFile.processingFormat
+
+            let analyzer = SpeechAnalyzer(
+                modules: [transcriber],
+                options: .init(priority: .userInitiated, modelRetention: .whileInUse)
+            )
+
+            // Prefer the file's natural format; SpeechAnalyzer will pick the best compatible one.
+            let naturalFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: fileFormat.sampleRate,
+                channels: 1,
+                interleaved: false
+            ) ?? fileFormat
+            let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: [transcriber],
+                considering: naturalFormat
+            ) ?? naturalFormat
+
+            try await analyzer.prepareToAnalyze(in: analyzerFormat)
+
+            // Collect results concurrently while feeding audio buffers.
+            let resultTask = Task<Void, Never> {
+                do {
+                    for try await result in transcriber.results {
+                        let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { continue }
+                        let startSeconds = CMTimeGetSeconds(result.range.start)
+                        let endSeconds = CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
+                        self.emitTranscript(
+                            text: text,
+                            startMs: milliseconds(fromSeconds: startSeconds),
+                            endMs: milliseconds(fromSeconds: endSeconds)
+                        )
+                    }
+                } catch {
+                    self.emitError(code: "speech_transcriber_results_failed", message: error.localizedDescription)
+                }
+            }
+
+            // Build input sequence from file buffers.
+            let inputStream = AsyncStream<AnalyzerInput> { continuation in
+                Task {
+                    let bufferFrameCapacity: AVAudioFrameCount = 4096
+                    var currentSamplePosition: AVAudioFramePosition = 0
+
+                    // Convert file buffers to the analyzer's required format using AVAudioConverter.
+                    guard let converter = AVAudioConverter(from: fileFormat, to: analyzerFormat),
+                          let convertedBuffer = AVAudioPCMBuffer(
+                            pcmFormat: analyzerFormat,
+                            frameCapacity: bufferFrameCapacity
+                          ) else {
+                        self.emitError(code: "speech_file_converter_failed", message: "Could not create AVAudioConverter for file")
+                        continuation.finish()
+                        return
+                    }
+
+                    while currentSamplePosition < audioFile.length {
+                        guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: fileFormat, frameCapacity: bufferFrameCapacity) else {
+                            break
+                        }
+                        do {
+                            try audioFile.read(into: sourceBuffer)
+                        } catch {
+                            self.emitError(code: "speech_file_read_failed", message: error.localizedDescription)
+                            break
+                        }
+                        guard sourceBuffer.frameLength > 0 else { break }
+
+                        var error: NSError?
+                        var inputConsumed = false
+                        converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
+                            if inputConsumed {
+                                outStatus.pointee = .noDataNow
+                                return nil
+                            }
+                            inputConsumed = true
+                            outStatus.pointee = .haveData
+                            return sourceBuffer
+                        }
+                        if let error {
+                            self.emitError(code: "speech_file_convert_failed", message: error.localizedDescription)
+                            break
+                        }
+
+                        let startTimeSeconds = Double(currentSamplePosition) / fileFormat.sampleRate
+                        let startTime = CMTime(value: CMTimeValue(startTimeSeconds * 1000), timescale: 1000)
+                        continuation.yield(AnalyzerInput(buffer: convertedBuffer, bufferStartTime: startTime))
+                        currentSamplePosition += AVAudioFramePosition(sourceBuffer.frameLength)
+                    }
+                    continuation.finish()
+                }
+            }
+
+            try await analyzer.start(inputSequence: inputStream)
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            await resultTask.value
+        } catch {
+            emitError(code: "speech_file_transcription_failed", message: error.localizedDescription)
+        }
+
+        emitDone()
+    }
+
+    private func emitTranscript(text: String, startMs: Int, endMs: Int) {
+        emit(
+            TranscriptMessage(
+                type: "transcript",
+                speaker: "counterpart",
+                text: text,
+                isFinal: true,
+                startMs: startMs,
+                endMs: max(startMs + 1, endMs)
+            )
+        )
+    }
+
+    private func emitDone() {
+        emit(DoneMessage(type: "done"))
+    }
+
+    private func emitError(code: String, message: String) {
+        emit(ErrorMessage(type: "error", code: code, message: message))
+    }
+
+    private func emit<T: Encodable>(_ message: T) {
+        guard let data = try? encoder.encode(message), let line = String(data: data, encoding: .utf8) else {
+            return
+        }
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
+    }
+}
+
+// MARK: - Utilities
+
 func milliseconds(fromSeconds seconds: Double) -> Int {
     if seconds.isFinite {
         return max(0, Int((seconds * 1000).rounded()))
@@ -240,54 +432,113 @@ func emitStartupError(_ code: String, _ message: String) {
 }
 
 if #available(macOS 26.0, *) {
-    let runtime = SpeechAnalyzerRuntime()
-    runtime.start()
+    // Read the first non-empty line to determine the operating mode:
+    // - {type:"file", path, locale?} → batch file transcription mode (exit after done)
+    // - {type:"audio"/"stop"} → realtime streaming mode (existing behaviour)
+    var firstLinePendingInput = Data()
+    var firstLineData: Data? = nil
 
-    var pendingInput = Data()
-    while true {
+    readFirstLine: while true {
         let chunk = FileHandle.standardInput.availableData
         if chunk.isEmpty {
-            break
+            // EOF before any message — nothing to do.
+            exit(0)
         }
-        pendingInput.append(chunk)
-
-        while let newlineRange = pendingInput.firstRange(of: Data([0x0A])) {
-            let lineData = pendingInput.subdata(in: pendingInput.startIndex..<newlineRange.lowerBound)
-            pendingInput.removeSubrange(pendingInput.startIndex..<newlineRange.upperBound)
-            guard !lineData.isEmpty else {
-                continue
+        firstLinePendingInput.append(chunk)
+        if let newlineRange = firstLinePendingInput.firstRange(of: Data([0x0A])) {
+            let lineData = firstLinePendingInput.subdata(in: firstLinePendingInput.startIndex..<newlineRange.lowerBound)
+            firstLinePendingInput.removeSubrange(firstLinePendingInput.startIndex..<newlineRange.upperBound)
+            if !lineData.isEmpty {
+                firstLineData = lineData
+                break readFirstLine
             }
+        }
+    }
 
-            do {
-                let message = try JSONDecoder().decode(InputMessage.self, from: lineData)
+    guard let firstLineData else {
+        exit(0)
+    }
+
+    do {
+        let firstMessage = try JSONDecoder().decode(InputMessage.self, from: firstLineData)
+
+        if firstMessage.type == "file" {
+            // --- File (batch) mode ---
+            guard let filePath = firstMessage.path, !filePath.isEmpty else {
+                emitStartupError("missing_file_path", "file message must include a non-empty path")
+                exit(1)
+            }
+            let localeId = firstMessage.locale ?? "ja-JP"
+            let fileRuntime = SpeechAnalyzerFileRuntime(localeIdentifier: localeId)
+            let semaphore = DispatchSemaphore(value: 0)
+            Task {
+                await fileRuntime.transcribe(filePath: filePath)
+                semaphore.signal()
+            }
+            semaphore.wait()
+            exit(0)
+        }
+
+        // --- Realtime (streaming) mode ---
+        // The first line was an audio/stop/other message — start the realtime runtime and
+        // re-process the first line, then continue reading from stdin.
+        let runtime = SpeechAnalyzerRuntime()
+        runtime.start()
+
+        func handleRealtimeMessage(_ lineData: Data) {
+            guard let message = try? JSONDecoder().decode(InputMessage.self, from: lineData) else {
+                emitStartupError("invalid_input_message", "Could not decode input message")
+                return
+            }
             switch message.type {
-                case "audio":
-                    if let audio = message.data {
-                        runtime.appendAudio(base64: audio, startMs: message.startMs ?? 0)
-                    }
-                case "stop":
-                    let semaphore = DispatchSemaphore(value: 0)
-                    Task {
-                        await runtime.stop()
-                        semaphore.signal()
-                    }
-                    semaphore.wait()
-                    exit(0)
-                default:
-                    continue
+            case "audio":
+                if let audio = message.data {
+                    runtime.appendAudio(base64: audio, startMs: message.startMs ?? 0)
                 }
-            } catch {
-                emitStartupError("invalid_input_message", error.localizedDescription)
+            case "stop":
+                let stopSemaphore = DispatchSemaphore(value: 0)
+                Task {
+                    await runtime.stop()
+                    stopSemaphore.signal()
+                }
+                stopSemaphore.wait()
+                exit(0)
+            default:
+                break
             }
         }
-    }
 
-    let semaphore = DispatchSemaphore(value: 0)
-    Task {
-        await runtime.stop()
-        semaphore.signal()
+        // Process the already-read first line.
+        handleRealtimeMessage(firstLineData)
+
+        // Continue processing remaining stdin lines (including any bytes buffered after the first line).
+        var pendingInput = firstLinePendingInput
+        while true {
+            let chunk = FileHandle.standardInput.availableData
+            if chunk.isEmpty {
+                break
+            }
+            pendingInput.append(chunk)
+
+            while let newlineRange = pendingInput.firstRange(of: Data([0x0A])) {
+                let lineData = pendingInput.subdata(in: pendingInput.startIndex..<newlineRange.lowerBound)
+                pendingInput.removeSubrange(pendingInput.startIndex..<newlineRange.upperBound)
+                guard !lineData.isEmpty else { continue }
+                handleRealtimeMessage(lineData)
+            }
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            await runtime.stop()
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+    } catch {
+        emitStartupError("invalid_input_message", error.localizedDescription)
+        exit(1)
     }
-    semaphore.wait()
 } else {
     emitStartupError("speech_analyzer_unsupported_macos", "Apple SpeechAnalyzer requires macOS 26.0 or newer")
     exit(2)

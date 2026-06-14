@@ -115,6 +115,7 @@ const IPC = {
     list: 'knowledge:list',
     create: 'knowledge:create',
     delete: 'knowledge:delete',
+    seedDefaults: 'knowledge:seed-defaults',
   },
   minutes: {
     generate: 'minutes:generate',
@@ -308,6 +309,8 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.knowledge.list, productId),
     create: (input): Promise<KnowledgeEntry> => ipcRenderer.invoke(IPC.knowledge.create, input),
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.knowledge.delete, id),
+    seedDefaults: (opts?: { productId?: ProductId; force?: boolean }) =>
+      ipcRenderer.invoke(IPC.knowledge.seedDefaults, opts),
   },
   minutes: {
     generate: (

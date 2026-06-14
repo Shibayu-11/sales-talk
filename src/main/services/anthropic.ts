@@ -198,11 +198,14 @@ function buildResponsePrompt(input: ResponseGenerationRequest): string {
       objection: input.objection,
       transcript: input.transcript,
       knowledge_entries: input.knowledgeEntries.map((entry) => ({
+        id: entry.id,
         objection_type: entry.objectionType,
         trigger: entry.trigger,
         response: entry.response,
         reasoning: entry.reasoning,
         risk_flags: entry.riskFlags,
+        // score is present only when callers pass KnowledgeSearchResult[]
+        ...('score' in entry && typeof entry.score === 'number' ? { score: entry.score } : {}),
       })),
     },
     null,
@@ -227,6 +230,14 @@ function buildResponseSystemPrompt(productId: string): string {
 必ずJSONのみを返してください。
 出力前に商材別ガードレールを自己確認し、リスクがあればriskFlagsへ記載してください。
 商材: ${productId}
+
+ナレッジの活用(最重要):
+- 入力の knowledge_entries は、自社で検証済みの反論対応ナレッジです。切り返しの一次情報源として最優先で活用してください。
+- knowledge_entries に該当する内容がある場合は、一般論よりも knowledge_entries の response / reasoning を根拠として優先してください。
+- 実際に根拠として用いた knowledge_entries の id を、使用した順(関連度の高い順)に knowledgeSourceIds 配列へ列挙してください。
+- knowledge_entries を一切使わなかった場合のみ knowledgeSourceIds を空配列 [] にしてください。存在しない id を捏造しないでください。
+- knowledge_entries が空、または該当が無い場合は、一般論で安全に回答し、knowledgeSourceIds は [] にしてください。
+
 出力形式:
 {
   "layer1Peek": "15文字以内",
@@ -241,6 +252,7 @@ function buildResponseSystemPrompt(productId: string): string {
     "similarCases": string[]
   },
   "confidence": number,
-  "riskFlags": string[]
+  "riskFlags": string[],
+  "knowledgeSourceIds": string[]
 }`;
 }

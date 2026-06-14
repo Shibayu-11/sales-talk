@@ -26,6 +26,7 @@ import {
   KnowledgeCreateInputSchema,
   KnowledgeDeleteInputSchema,
   KnowledgeSearchInputSchema,
+  KnowledgeSeedDefaultsInputSchema,
   MinutesGenerateInputSchema,
   ObjectionDismissInputSchema,
   OrganizationUserRoleUpdateInputSchema,
@@ -70,6 +71,8 @@ import { secretStore } from '../services/secrets';
 import { settingsStore } from '../services/settings';
 import { setCallModeLogging } from '../logger';
 import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
+import { localKnowledgeStore } from '../services/local-knowledge-store';
+import { seedLocalKnowledge } from '../seed-local-knowledge';
 import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
 import { runAnthropicDiagnostic } from '../services/anthropic';
@@ -89,6 +92,7 @@ import { appRepositories } from '../services/repositories';
 import { evaluateCompliance } from '../services/compliance';
 import { tryGenerateLlmMinutesContent } from '../services/minutes-llm';
 import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
+import { resolveImportSTTProvider } from '../services/import-stt-provider-resolver';
 import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
 import {
   bootstrapCloudflareCredential,
@@ -110,7 +114,9 @@ interface IpcWindowAccessors {
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
-const audioSttJobRunner = new AudioSttJobRunner({
+// audioSttJobRunner is initialized lazily so it can pick up current settings at job creation time.
+// Per W3-C: importProviderMode is resolved from settings each time a job is created.
+let audioSttJobRunner = new AudioSttJobRunner({
   repositories: appRepositories,
   onCompleted: async (job) => {
     const call = (await appRepositories.calls.listCalls()).find(
@@ -427,6 +433,12 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.knowledge.delete, async (_event, payload: unknown) => {
     const id = KnowledgeDeleteInputSchema.parse(payload);
     await appRepositories.knowledge.delete(id);
+  });
+  ipcMain.handle(IPC.knowledge.seedDefaults, async (_event, payload: unknown) => {
+    const input = KnowledgeSeedDefaultsInputSchema.parse(payload);
+    const result = await seedLocalKnowledge(localKnowledgeStore, input ?? {});
+    logger.info({ ...result, productId: input?.productId ?? 'all' }, 'knowledge seed completed');
+    return result;
   });
 
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
@@ -893,6 +905,34 @@ async function selectAudioFile(windows: IpcWindowAccessors): Promise<string | nu
 }
 
 async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
+  // Resolve provider from current settings (local_first → Apple when available, else Deepgram).
+  const settings = await settingsStore.get();
+  const importMode = settings.sttImportProviderMode ?? 'local_first';
+  const resolved = resolveImportSTTProvider({ mode: importMode });
+
+  // Rebuild runner with current settings so transcribe() uses the correct provider.
+  audioSttJobRunner = new AudioSttJobRunner({
+    repositories: appRepositories,
+    importProviderMode: importMode,
+    onCompleted: async (job) => {
+      const call = (await appRepositories.calls.listCalls()).find(
+        (candidate) => candidate.id === job.callId,
+      );
+      if (!call) {
+        throw new Error('Call was not found');
+      }
+
+      await appRepositories.minutes.setLatestMeetingMinute(
+        await generateMeetingMinuteForCall({
+          callId: call.id,
+          productId: call.productId,
+          source: call.source,
+          transcripts: [],
+        }),
+      );
+    },
+  });
+
   const calls = await appRepositories.calls.listCalls();
   for (const call of calls) {
     const assets = await appRepositories.audioAssets.listAudioAssets(call.id);
@@ -904,7 +944,7 @@ async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
     const job = await appRepositories.sttJobs.createJob({
       callId: call.id,
       audioAssetId: asset.id,
-      provider: 'deepgram',
+      provider: resolved.kind,
     });
     await appRepositories.auditLogs.appendAuditLogs([
       createAuditLogEntry({
@@ -916,6 +956,8 @@ async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
           audioAssetId: asset.id,
           provider: job.provider,
           status: job.status,
+          sttProvider: job.provider,
+          ...(resolved.degradedReason ? { sttDegradedReason: resolved.degradedReason } : {}),
         },
       }),
     ]);

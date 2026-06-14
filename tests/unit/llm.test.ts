@@ -145,4 +145,58 @@ describe('ObjectionLlmService.generateResponse', () => {
     expect(result.riskFlags).toContain('real_estate_yield_guarantee');
     expect(result.riskFlags).toContain('requires_human_review');
   });
+
+  it('maps knowledgeSourceIds back to retrieved entries as sources', async () => {
+    const provider = createProvider();
+    vi.mocked(provider.generateObjectionResponse).mockResolvedValueOnce({
+      layer1Peek: '比較で整理',
+      layer2Summary: { mainResponse: '比較', keyPoints: ['総額で比較'] },
+      layer3Detail: { fullScript: '一般論として比較', rationale: '有効', cautions: [], similarCases: [] },
+      confidence: 0.8,
+      riskFlags: [],
+      knowledgeSourceIds: [knowledgeEntry.id],
+    });
+    const service = new ObjectionLlmService(provider);
+
+    const result = await service.generateResponse({
+      productId: 'real_estate',
+      objection,
+      transcript: '価格懸念',
+      knowledgeEntries: [{ ...knowledgeEntry, score: 0.42 } as KnowledgeEntry & { score: number }],
+    });
+
+    expect(result.sources).toEqual([
+      { knowledgeId: knowledgeEntry.id, trigger: '[redacted-email] が価格懸念', score: 0.42 },
+    ]);
+  });
+
+  it('falls back to the top-1 retrieved entry when the model cites none', async () => {
+    const provider = createProvider();
+    // base provider returns no knowledgeSourceIds at all.
+    const service = new ObjectionLlmService(provider);
+
+    const result = await service.generateResponse({
+      productId: 'real_estate',
+      objection,
+      transcript: '価格懸念',
+      knowledgeEntries: [knowledgeEntry],
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]?.knowledgeId).toBe(knowledgeEntry.id);
+  });
+
+  it('returns no sources when no knowledge was retrieved', async () => {
+    const provider = createProvider();
+    const service = new ObjectionLlmService(provider);
+
+    const result = await service.generateResponse({
+      productId: 'real_estate',
+      objection,
+      transcript: '価格懸念',
+      knowledgeEntries: [],
+    });
+
+    expect(result.sources).toEqual([]);
+  });
 });

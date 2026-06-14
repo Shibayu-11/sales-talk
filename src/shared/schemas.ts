@@ -56,6 +56,7 @@ export const SttProviderModeSchema = z.enum([
   'deepgram_only',
   'manual_only',
 ]);
+export const SttImportProviderModeSchema = z.enum(['local_first', 'deepgram_only']);
 
 export const AudioChunkSchema = z.object({
   speaker: SpeakerSchema,
@@ -119,6 +120,14 @@ export const SonnetResponseOutputSchema = z.object({
   }),
   confidence: z.number().min(0).max(1),
   riskFlags: z.array(z.string()),
+  /** Ids of knowledge_entries the model actually grounded the rebuttal in. Backward-tolerant. */
+  knowledgeSourceIds: z.array(z.string()).optional().default([]),
+});
+
+export const ObjectionResponseSourceSchema = z.object({
+  knowledgeId: z.string(),
+  trigger: z.string(),
+  score: z.number().optional(),
 });
 
 export const ObjectionResponseSchema = z.object({
@@ -130,6 +139,7 @@ export const ObjectionResponseSchema = z.object({
   reasoning: z.string(),
   notes: z.array(z.string()),
   riskFlags: z.array(z.string()),
+  sources: z.array(ObjectionResponseSourceSchema),
   generatedAtMs: z.number(),
 });
 
@@ -436,6 +446,7 @@ export const AppSettingsSchema = z.object({
   hotkeys: z.record(z.string()),
   consentNoticeMode: z.enum(['verbal', 'zoom_background', 'sdk']),
   sttProviderMode: SttProviderModeSchema.default('local_first'),
+  sttImportProviderMode: SttImportProviderModeSchema.default('local_first'),
   schemaVersion: z.number().int().nonnegative(),
 });
 
@@ -556,7 +567,7 @@ export const AudioImportInputSchema = z.object({
 });
 
 export const AudioSttJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
-export const AudioSttProviderSchema = z.enum(['deepgram']);
+export const AudioSttProviderSchema = z.enum(['deepgram', 'apple_speech_analyzer']);
 
 export const AudioSttJobSchema = z.object({
   id: z.string().uuid(),
@@ -620,6 +631,18 @@ export const KnowledgeCreateInputSchema = z.object({
 });
 
 export const KnowledgeDeleteInputSchema = z.string().uuid();
+
+export const KnowledgeSeedDefaultsInputSchema = z
+  .object({
+    productId: ProductIdSchema.optional(),
+    force: z.boolean().optional(),
+  })
+  .optional();
+
+export const KnowledgeSeedResultSchema = z.object({
+  created: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
 
 export const KnowledgeEntrySchema = z.object({
   id: z.string().uuid(),

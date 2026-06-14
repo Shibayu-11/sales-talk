@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { DetectedObjection, ObjectionResponse, SharingState } from '@shared/types';
+import type {
+  DetectedObjection,
+  ObjectionResponse,
+  ObjectionResponseSource,
+  SharingState,
+} from '@shared/types';
 
 export function App(): JSX.Element {
   const [layer, setLayer] = useState<1 | 2 | 3>(2);
@@ -164,6 +169,11 @@ function LayerTwo(props: {
             ))}
           </ul>
           <ReasoningBlock title="根拠" text={props.response.reasoning} />
+          {props.response.sources.length > 0 && (
+            <div className="text-xs text-overlay-success">
+              根拠ナレッジ {props.response.sources.length} 件
+            </div>
+          )}
         </>
       ) : (
         <GeneratingState />
@@ -195,6 +205,13 @@ function LayerThree(props: {
         {props.response.fullScript}
       </div>
       <ReasoningBlock title="根拠詳細" text={props.response.reasoning} />
+      {props.response.sources.length > 0 && (
+        <ListBlock
+          title="根拠ナレッジ"
+          items={props.response.sources.map(formatSource)}
+          tone="info"
+        />
+      )}
       {props.response.notes.length > 0 && (
         <ListBlock title="注意事項" items={props.response.notes} tone="warning" />
       )}
@@ -237,9 +254,14 @@ function ReasoningBlock(props: { title: string; text: string }): JSX.Element {
 function ListBlock(props: {
   title: string;
   items: string[];
-  tone: 'warning' | 'danger';
+  tone: 'info' | 'warning' | 'danger';
 }): JSX.Element {
-  const color = props.tone === 'danger' ? 'text-overlay-objection' : 'text-overlay-warning';
+  const color =
+    props.tone === 'danger'
+      ? 'text-overlay-objection'
+      : props.tone === 'info'
+        ? 'text-overlay-success'
+        : 'text-overlay-warning';
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
       <div className={`mb-2 text-xs uppercase tracking-wide ${color}`}>{props.title}</div>
@@ -250,6 +272,12 @@ function ListBlock(props: {
       </ul>
     </div>
   );
+}
+
+function formatSource(source: ObjectionResponseSource): string {
+  return typeof source.score === 'number'
+    ? `${source.trigger}(関連度 ${Math.round(source.score * 100)}%)`
+    : source.trigger;
 }
 
 function compactPeak(text: string): string {

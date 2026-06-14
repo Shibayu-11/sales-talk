@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hotkeys: { ...DEFAULT_HOTKEYS },
   consentNoticeMode: 'verbal',
   sttProviderMode: 'local_first',
+  sttImportProviderMode: 'local_first',
   schemaVersion: SETTINGS_SCHEMA_VERSION,
 };
 

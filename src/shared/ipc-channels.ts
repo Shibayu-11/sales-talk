@@ -117,6 +117,7 @@ export const IPC = {
     create: 'knowledge:create',
     update: 'knowledge:update',
     delete: 'knowledge:delete',
+    seedDefaults: 'knowledge:seed-defaults',
   },
 
   // Meeting minutes / tasks (post-call, §22)

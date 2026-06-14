@@ -9,10 +9,14 @@
   "engines": {
     "node": ">=20.11.0"
   },
+  "bin": {
+    "salestalk": "scripts/salestalk-cli.mjs"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "preview": "electron-vite preview",
+    "cli": "node scripts/salestalk-cli.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",

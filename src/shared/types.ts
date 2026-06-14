@@ -74,6 +74,13 @@ export interface DetectedObjection {
   detectedAt: number;
 }
 
+/** Per PRD §17/§18: knowledge entry the rebuttal was grounded in (citation). */
+export interface ObjectionResponseSource {
+  knowledgeId: string;
+  trigger: string;
+  score?: number | undefined;
+}
+
 export interface ObjectionResponse {
   id: string;
   objectionId: string;
@@ -87,6 +94,8 @@ export interface ObjectionResponse {
   notes: string[];
   /** Per PRD §16: guardrail risk flags */
   riskFlags: string[];
+  /** Knowledge entries the rebuttal was grounded in (citations). */
+  sources: ObjectionResponseSource[];
   generatedAtMs: number;
 }
 
@@ -173,6 +182,8 @@ export interface AppSettings {
   hotkeys: Record<string, string>;
   consentNoticeMode: 'verbal' | 'zoom_background' | 'sdk';
   sttProviderMode: SttProviderMode;
+  /** Import (batch/file) STT provider mode. local_first = Apple SpeechAnalyzer when available, else Deepgram. */
+  sttImportProviderMode: SttImportProviderMode;
   /** Per PRD §31: keep deprecated keys for 3 months */
   schemaVersion: number;
 }
@@ -294,7 +305,8 @@ export interface CloudAudioUploadProcessResult {
 }
 
 export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
-export type AudioSttProvider = 'deepgram';
+export type AudioSttProvider = 'deepgram' | 'apple_speech_analyzer';
+export type SttImportProviderMode = 'local_first' | 'deepgram_only';
 
 export interface AudioSttJob {
   id: string;
@@ -639,6 +651,10 @@ export interface RendererApi {
       riskFlags?: string[];
     }): Promise<KnowledgeEntry>;
     delete(id: string): Promise<void>;
+    seedDefaults(opts?: {
+      productId?: ProductId;
+      force?: boolean;
+    }): Promise<{ created: number; skipped: number }>;
   };
   minutes: {
     generate(

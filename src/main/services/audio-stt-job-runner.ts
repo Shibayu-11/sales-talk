@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import type { AudioAsset, AudioSttJob, Transcript } from '@shared/types';
+import type { AudioAsset, AudioSttJob, AudioSttProvider, SttImportProviderMode, Transcript } from '@shared/types';
 import type { AppRepositories } from './repositories';
 import { secretStore } from './secrets';
+import { resolveImportSTTProvider } from './import-stt-provider-resolver';
+import type { ImportSTTProviderResolverOptions } from './import-stt-provider-resolver';
 
 const DEEPGRAM_PRERECORDED_URL = 'https://api.deepgram.com/v1/listen';
 const DEEPGRAM_MODEL = 'nova-3';
@@ -28,8 +30,13 @@ const DeepgramPrerecordedResponseSchema = z.object({
 
 export interface AudioSttJobRunnerOptions {
   repositories: AppRepositories;
+  /** Injectable override for tests; when set, bypasses provider resolution entirely. */
   transcribeAudio?: ((asset: AudioAsset) => Promise<Transcript[]>) | undefined;
   onCompleted?: ((job: AudioSttJob, transcripts: Transcript[]) => Promise<void>) | undefined;
+  /** Import provider mode; defaults to 'local_first'. */
+  importProviderMode?: SttImportProviderMode | undefined;
+  /** Injectable factory overrides for the import resolver (for tests). */
+  importResolverOptions?: Partial<ImportSTTProviderResolverOptions> | undefined;
 }
 
 export class AudioSttJobRunner {
@@ -62,6 +69,19 @@ export class AudioSttJobRunner {
     }
   }
 
+  /**
+   * Returns the resolved import provider without running a job.
+   * Used by IPC to record the chosen provider in the audit log before job creation.
+   */
+  resolveImportProvider(): { kind: AudioSttProvider; degradedReason?: string | undefined } {
+    const mode = this.options.importProviderMode ?? 'local_first';
+    const resolved = resolveImportSTTProvider({
+      mode,
+      ...this.options.importResolverOptions,
+    });
+    return { kind: resolved.kind, degradedReason: resolved.degradedReason };
+  }
+
   private async findAudioAsset(job: AudioSttJob): Promise<AudioAsset> {
     const assets = await this.options.repositories.audioAssets.listAudioAssets(job.callId);
     const asset = assets.find((candidate) => candidate.id === job.audioAssetId);
@@ -72,11 +92,17 @@ export class AudioSttJobRunner {
   }
 
   private async transcribe(asset: AudioAsset): Promise<Transcript[]> {
+    // Injectable override for tests takes precedence.
     if (this.options.transcribeAudio) {
       return this.options.transcribeAudio(asset);
     }
 
-    return transcribeAudioWithDeepgram(asset);
+    const mode = this.options.importProviderMode ?? 'local_first';
+    const resolved = resolveImportSTTProvider({
+      mode,
+      ...this.options.importResolverOptions,
+    });
+    return resolved.transcriber.transcribeFile(asset);
   }
 }
 

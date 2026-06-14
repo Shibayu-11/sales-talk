@@ -8,29 +8,168 @@ import { errorHandler } from './services/error-handler';
 
 const isDev = !app.isPackaged;
 
-let controlWindow: BrowserWindow | null = null;
-let overlayWindow: BrowserWindow | null = null;
+// ---------------------------------------------------------------------------
+// CLI mode detection — checked before any GUI work.
+// If --cli is present in argv, route to headless CLI and exit.
+// ---------------------------------------------------------------------------
+const isCliMode = process.argv.includes('--cli');
 
-async function createWindows(): Promise<void> {
-  controlWindow = createControlWindow();
-  overlayWindow = createOverlayWindow();
-}
+if (isCliMode) {
+  // Single-instance lock: if a GUI instance is already running, second-instance
+  // handling below will forward the argv to it. For CLI transcribe/minutes this
+  // is fine (they don't share native capture state). For record start/stop with a
+  // live GUI session, the user should use the GUI instead; the CLI will report
+  // an error if capture is already active.
+  //
+  // REQUIRES on-device verification: app.requestSingleInstanceLock() returns false
+  // when a GUI instance owns the lock. We proceed headlessly regardless, because
+  // transcribe/minutes operate on stored data and don't need the GUI instance.
+  app.whenReady().then(async () => {
+    const { runCli } = await import('./cli/index');
+    await runCli(process.argv);
+  }).catch((err: unknown) => {
+    const detail = err instanceof Error ? err.message : String(err);
+    process.stdout.write(JSON.stringify({ ok: false, error: 'cli_init_failed', detail }) + '\n');
+    app.exit(1);
+  });
+} else {
+  // ---------------------------------------------------------------------------
+  // Normal GUI mode
+  // ---------------------------------------------------------------------------
 
-app.whenReady().then(async () => {
-  logger.info({ isDev, version: app.getVersion() }, 'app ready');
-  registerIpcHandlers({ getControlWindow, getOverlayWindow });
-  await createWindows();
+  // Register URL scheme handler for macOS Shortcuts / Spotlight.
+  // REQUIRES on-device verification: setAsDefaultProtocolClient works only in
+  // a packaged/signed build; in dev mode use `open salestalk://` after setting
+  // the plist via electron-builder.
+  app.setAsDefaultProtocolClient('salestalk');
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindows();
+  const getControlWindowInner = (): BrowserWindow | null => _controlWindow;
+  const getOverlayWindowInner = (): BrowserWindow | null => _overlayWindow;
+
+  const createWindows = async (): Promise<void> => {
+    _controlWindow = createControlWindow();
+    _overlayWindow = createOverlayWindow();
+  };
+
+  /** Handle `salestalk://record/start?product=real_estate` and `salestalk://record/stop` */
+  const handleProtocolUrl = (urlStr: string): void => {
+    let url: URL;
+    try {
+      url = new URL(urlStr);
+    } catch {
+      logger.warn({ urlStr }, 'protocol handler received invalid URL');
+      return;
+    }
+
+    // pathname is e.g. "//record/start" — strip leading slashes
+    const path = url.pathname.replace(/^\/+/, '');
+    const [domain, action] = path.split('/');
+
+    if (domain !== 'record') {
+      logger.warn({ path }, 'unsupported salestalk:// path');
+      return;
+    }
+
+    if (action === 'start') {
+      const product = url.searchParams.get('product') ?? undefined;
+      // Forward to the running GUI instance: reuse cmdRecordStart with real services.
+      void handleProtocolRecordStart(product);
+    } else if (action === 'stop') {
+      void handleProtocolRecordStop();
+    } else {
+      logger.warn({ action }, 'unsupported salestalk://record action');
+    }
+  };
+
+  const handleProtocolRecordStart = async (product?: string): Promise<void> => {
+    const { cmdRecordStart } = await import('./cli/commands');
+    const { checkPermissions } = await import('./services/permissions');
+    const { NativeAudioCaptureService } = await import('./audio/native-audio-capture');
+    const { loadNativeAudioCaptureModule } = await import('./audio/native-module-loader');
+    const { appRepositories } = await import('./services/repositories');
+
+    // REQUIRES on-device verification
+    const result = await cmdRecordStart(
+      { productId: product },
+      {
+        checkPermissions,
+        startNativeCapture: async () => {
+          const mod = loadNativeAudioCaptureModule();
+          if (!mod) throw new Error('native module unavailable');
+          const svc = new NativeAudioCaptureService({
+            module: mod,
+            sendAudioChunk: async () => { /* protocol-triggered capture; no streaming STT */ },
+            onError: (err) => logger.warn({ err }, 'protocol capture error'),
+          });
+          await svc.start();
+        },
+        stopNativeCapture: async () => { /* stop is handled by record/stop */ },
+        createCall: async ({ productId, consent }) => {
+          const scope = await appRepositories.organizations.getDefaultScope();
+          const call = await appRepositories.calls.createCall({
+            ...scope,
+            source: 'zoom_desktop',
+            industry: 'btob_sales',
+            productId,
+            recordingConsent: consent,
+            startedAt: new Date(),
+          });
+          return { id: call.id };
+        },
+        endCall: async (callId) => { await appRepositories.calls.endCall(callId); },
+        getActiveCallId: () => null,
+      },
+    );
+    logger.info({ result }, 'protocol record start');
+  };
+
+  const handleProtocolRecordStop = async (): Promise<void> => {
+    const { cmdRecordStop } = await import('./cli/commands');
+    const result = await cmdRecordStop({
+      checkPermissions: () => ({ screen: true, microphone: true }),
+      startNativeCapture: async () => { /* not used for stop */ },
+      stopNativeCapture: async () => { /* TODO: expose active capture ref if needed */ },
+      createCall: async () => ({ id: '' }),
+      endCall: async () => { /* not applicable in stop-only path */ },
+      getActiveCallId: () => null,
+    });
+    logger.info({ result }, 'protocol record stop');
+  };
+
+  // macOS: URL scheme arrives as `open-url` event
+  app.on('open-url', (_event, urlStr) => {
+    handleProtocolUrl(urlStr);
+  });
+
+  // Windows / second-instance fallback: URL scheme may arrive in argv
+  app.on('second-instance', (_event, argv) => {
+    const protocolArg = argv.find((a) => a.startsWith('salestalk://'));
+    if (protocolArg) {
+      handleProtocolUrl(protocolArg);
+    }
+    // Bring existing window to front
+    if (_controlWindow) {
+      if (_controlWindow.isMinimized()) _controlWindow.restore();
+      _controlWindow.focus();
     }
   });
-});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.whenReady().then(async () => {
+    logger.info({ isDev, version: app.getVersion() }, 'app ready');
+    registerIpcHandlers({ getControlWindow: getControlWindowInner, getOverlayWindow: getOverlayWindowInner });
+    await createWindows();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindows();
+      }
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+}
 
 process.on('unhandledRejection', (reason) => {
   errorHandler.handle({
@@ -58,10 +197,15 @@ process.on('uncaughtException', (error) => {
   });
 });
 
+// Module-level window accessors — only valid in GUI mode.
+// In CLI mode these always return null (no windows are created).
+let _controlWindow: BrowserWindow | null = null;
+let _overlayWindow: BrowserWindow | null = null;
+
 export function getControlWindow(): BrowserWindow | null {
-  return controlWindow;
+  return _controlWindow;
 }
 
 export function getOverlayWindow(): BrowserWindow | null {
-  return overlayWindow;
+  return _overlayWindow;
 }

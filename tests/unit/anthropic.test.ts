@@ -123,6 +123,65 @@ describe('AnthropicLlmProvider', () => {
       }),
     );
   });
+
+  it('grounds the Sonnet prompt in knowledge_entries and asks for cited ids', async () => {
+    let captured: {
+      system: string;
+      messages: Array<{ role: string; content: string }>;
+    } | null = null;
+    const create = vi.fn(async (input: unknown) => {
+      captured = input as typeof captured;
+      return message(
+        JSON.stringify({
+          layer1Peek: '比較で整理',
+          layer2Summary: { mainResponse: '比較', keyPoints: ['総額で比較'] },
+          layer3Detail: { fullScript: '一般論として比較', rationale: '有効', cautions: [], similarCases: [] },
+          confidence: 0.8,
+          riskFlags: [],
+          knowledgeSourceIds: ['k-1'],
+        }),
+      );
+    });
+    const provider = new AnthropicLlmProvider({
+      client: { messages: { create } },
+      haikuModel: 'haiku-test',
+      sonnetModel: 'sonnet-test',
+    });
+
+    await provider.generateObjectionResponse({
+      productId: 'real_estate',
+      objection: {
+        id: '00000000-0000-4000-8000-000000000001',
+        type: 'price',
+        confidence: 0.8,
+        triggerText: '高い',
+        detectedAt: 1,
+      },
+      transcript: '高い',
+      knowledgeEntries: [
+        {
+          id: 'k-1',
+          productId: 'real_estate',
+          objectionType: 'price',
+          trigger: '価格が高い',
+          response: '範囲を分けて確認します',
+          reasoning: '価格反論に有効',
+          riskFlags: [],
+          createdAt: '2026-04-30T00:00:00Z',
+          updatedAt: '2026-04-30T00:00:00Z',
+          score: 0.42,
+        } as never,
+      ],
+    });
+
+    expect(captured).not.toBeNull();
+    const call = captured!;
+    expect(call.system).toContain('knowledgeSourceIds');
+    expect(call.system).toContain('knowledge_entries');
+    const userContent = call.messages[0]?.content ?? '';
+    expect(userContent).toContain('"id": "k-1"');
+    expect(userContent).toContain('"score": 0.42');
+  });
 });
 
 describe('runAnthropicDiagnostic', () => {

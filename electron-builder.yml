@@ -29,9 +29,19 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
+  # URL scheme registration for macOS Shortcuts / Spotlight.
+  # Enables: open salestalk://record/start?product=real_estate
+  protocols:
+    - name: SalesTalk
+      schemes:
+        - salestalk
   extendInfo:
     NSScreenCaptureUsageDescription: "Zoom 商談の音声をリアルタイムで文字起こしするため、画面収録権限が必要です。"
     NSMicrophoneUsageDescription: "あなたの発話をリアルタイムで文字起こしするため、マイクアクセスが必要です。"
+    CFBundleURLTypes:
+      - CFBundleURLName: com.salestalk.app
+        CFBundleURLSchemes:
+          - salestalk
 
 dmg:
   sign: false

@@ -7,6 +7,7 @@ import type {
   TranscriptRepository,
 } from '../../src/main/services/repositories';
 import type { AudioAsset, AudioSttJob, Transcript } from '../../src/shared/types';
+import { AppleSpeechAnalyzerBatchTranscriber } from '../../src/main/services/apple-speech-analyzer-batch';
 
 const callId = 'ce710872-1efd-4965-8ca4-e4d13f810250';
 const audioAssetId = 'e3aa5d3e-6f23-4f3c-bfc6-b0453eaa4ff3';
@@ -63,6 +64,112 @@ describe('AudioSttJobRunner', () => {
       status: 'failed',
       errorMessage: 'missing key',
     });
+  });
+});
+
+describe('AudioSttJobRunner — import provider resolution', () => {
+  it('uses Apple batch transcriber when local_first and helper is available', async () => {
+    const transcript: Transcript = {
+      speaker: 'counterpart',
+      text: '価格が高い',
+      isFinal: true,
+      startMs: 0,
+      endMs: 500,
+    };
+    const appleTranscriber = {
+      isAvailable: vi.fn(() => true),
+      transcribeFile: vi.fn(async () => [transcript]),
+    } as unknown as AppleSpeechAnalyzerBatchTranscriber;
+
+    const repositories = createRepositories();
+    const runner = new AudioSttJobRunner({
+      repositories,
+      importProviderMode: 'local_first',
+      importResolverOptions: {
+        createAppleBatchTranscriber: () => appleTranscriber,
+      },
+    });
+
+    const result = await runner.run(jobId);
+    expect(result.status).toBe('completed');
+    expect(appleTranscriber.transcribeFile).toHaveBeenCalled();
+  });
+
+  it('falls back to Deepgram when local_first and helper is unavailable', async () => {
+    const transcript: Transcript = {
+      speaker: 'counterpart',
+      text: '考えます',
+      isFinal: true,
+      startMs: 0,
+      endMs: 200,
+    };
+    const appleTranscriber = {
+      isAvailable: vi.fn(() => false),
+      transcribeFile: vi.fn(),
+    } as unknown as AppleSpeechAnalyzerBatchTranscriber;
+    const deepgramTranscribe = vi.fn(async () => [transcript]);
+
+    const repositories = createRepositories();
+    const runner = new AudioSttJobRunner({
+      repositories,
+      importProviderMode: 'local_first',
+      importResolverOptions: {
+        createAppleBatchTranscriber: () => appleTranscriber,
+        deepgramTranscribe,
+      },
+    });
+
+    const result = await runner.run(jobId);
+    expect(result.status).toBe('completed');
+    expect(deepgramTranscribe).toHaveBeenCalled();
+    expect(appleTranscriber.transcribeFile).not.toHaveBeenCalled();
+  });
+
+  it('resolveImportProvider returns correct kind and degradedReason', () => {
+    const appleTranscriber = {
+      isAvailable: vi.fn(() => false),
+      transcribeFile: vi.fn(),
+    } as unknown as AppleSpeechAnalyzerBatchTranscriber;
+
+    const runner = new AudioSttJobRunner({
+      repositories: createRepositories(),
+      importProviderMode: 'local_first',
+      importResolverOptions: {
+        createAppleBatchTranscriber: () => appleTranscriber,
+      },
+    });
+
+    const resolved = runner.resolveImportProvider();
+    expect(resolved.kind).toBe('deepgram');
+    expect(resolved.degradedReason).toBe('apple_speech_analyzer_unavailable');
+  });
+
+  it('injectable transcribeAudio still takes precedence over resolver', async () => {
+    const injectableTranscript: Transcript = {
+      speaker: 'counterpart',
+      text: 'injected',
+      isFinal: true,
+      startMs: 0,
+      endMs: 100,
+    };
+    const appleTranscriber = {
+      isAvailable: vi.fn(() => true),
+      transcribeFile: vi.fn(),
+    } as unknown as AppleSpeechAnalyzerBatchTranscriber;
+
+    const repositories = createRepositories();
+    const runner = new AudioSttJobRunner({
+      repositories,
+      transcribeAudio: vi.fn(async () => [injectableTranscript]),
+      importProviderMode: 'local_first',
+      importResolverOptions: {
+        createAppleBatchTranscriber: () => appleTranscriber,
+      },
+    });
+
+    await runner.run(jobId);
+    // Apple transcriber should NOT be called — injectable takes precedence
+    expect(appleTranscriber.transcribeFile).not.toHaveBeenCalled();
   });
 });
 

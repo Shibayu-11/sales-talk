@@ -33,6 +33,7 @@ export class LocalSttJobStore {
       id: randomUUID(),
       callId: input.callId,
       audioAssetId: input.audioAssetId,
+      // Default to 'deepgram' only as a safe fallback; callers should always pass provider explicitly.
       provider: input.provider ?? 'deepgram',
       status: 'queued',
       errorMessage: null,

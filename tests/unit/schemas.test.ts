@@ -4,9 +4,19 @@ import {
   CallStartInputSchema,
   CloudflareCredentialInputSchema,
   KnowledgeSearchInputSchema,
+  ObjectionResponseSchema,
   OverlayLayerSchema,
   SecretSetInputSchema,
+  SonnetResponseOutputSchema,
 } from '../../src/shared/schemas';
+
+const baseSonnetOutput = {
+  layer1Peek: '比較で整理',
+  layer2Summary: { mainResponse: '比較しましょう', keyPoints: ['総額で比較'] },
+  layer3Detail: { fullScript: '一般論として比較しましょう', rationale: '有効', cautions: [], similarCases: [] },
+  confidence: 0.8,
+  riskFlags: [],
+};
 
 describe('shared schemas', () => {
   it('rejects invalid overlay layers', () => {
@@ -58,6 +68,47 @@ describe('shared schemas', () => {
         data: '',
         startMs: -1,
         durationMs: 0,
+      }),
+    ).toThrow();
+  });
+
+  it('accepts Sonnet output with and without knowledgeSourceIds', () => {
+    const withoutIds = SonnetResponseOutputSchema.parse(baseSonnetOutput);
+    expect(withoutIds.knowledgeSourceIds).toEqual([]);
+
+    const withIds = SonnetResponseOutputSchema.parse({
+      ...baseSonnetOutput,
+      knowledgeSourceIds: ['k-1', 'k-2'],
+    });
+    expect(withIds.knowledgeSourceIds).toEqual(['k-1', 'k-2']);
+  });
+
+  it('validates ObjectionResponse sources citations', () => {
+    const parsed = ObjectionResponseSchema.parse({
+      id: '00000000-0000-4000-8000-000000000001',
+      objectionId: '00000000-0000-4000-8000-000000000002',
+      peak: '比較で整理',
+      summary: ['総額で比較'],
+      fullScript: '一般論として比較しましょう',
+      reasoning: '有効',
+      notes: [],
+      riskFlags: [],
+      sources: [{ knowledgeId: 'k-1', trigger: '価格が高い', score: 0.5 }],
+      generatedAtMs: 1,
+    });
+    expect(parsed.sources[0]?.knowledgeId).toBe('k-1');
+
+    expect(() =>
+      ObjectionResponseSchema.parse({
+        id: '00000000-0000-4000-8000-000000000001',
+        objectionId: '00000000-0000-4000-8000-000000000002',
+        peak: 'x',
+        summary: [],
+        fullScript: '',
+        reasoning: '',
+        notes: [],
+        riskFlags: [],
+        generatedAtMs: 1,
       }),
     ).toThrow();
   });

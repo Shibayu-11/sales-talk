@@ -23,6 +23,7 @@ const response: ObjectionResponse = {
   reasoning: '価格反論',
   notes: [],
   riskFlags: [],
+  sources: [],
   generatedAtMs: 1_777_000_001,
 };
 
