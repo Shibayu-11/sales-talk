@@ -20,10 +20,16 @@ extraResources:
 
 mac:
   category: public.app-category.business
+  # Apple Silicon only. The headline STT (Apple SpeechAnalyzer) requires Apple
+  # Silicon, the native binaries ship arm64-only, and the competitor (Kanary) is
+  # also Apple-Silicon-only. A universal target would produce a broken Intel slice
+  # (arm64 .node/helper can't load under x86_64). Revisit only if Intel demand
+  # appears — that needs universal native binaries first.
   target:
     - target: dmg
       arch:
-        - universal
+        - arm64
+  minimumSystemVersion: "13.0"
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -36,6 +42,8 @@ mac:
       schemes:
         - salestalk
   extendInfo:
+    # ScreenCaptureKit needs macOS 13+; SpeechAnalyzer (26+) degrades to Deepgram below that.
+    LSMinimumSystemVersion: "13.0"
     NSScreenCaptureUsageDescription: "Zoom 商談の音声をリアルタイムで文字起こしするため、画面収録権限が必要です。"
     NSMicrophoneUsageDescription: "あなたの発話をリアルタイムで文字起こしするため、マイクアクセスが必要です。"
     CFBundleURLTypes:

@@ -127,7 +127,9 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 
 - [x] 初回起動オンボーディング(権限誘導 → Anthropic キー → 商材選択。`onboardingCompletedAt` で制御、E2E あり)
 - [x] electron-updater 実装(商談中は install 遅延 → 15 分後リトライ、通話終了で即時。`UpdateManager` + 6 テスト)
-- [ ] DMG ビルド + Apple Notarize の通し確認(universal binary)※実機
+- [x] 配布設定を Apple Silicon (arm64) 専用に確定(universal は壊れた Intel スライスを生むため。Kanary も Apple Silicon 限定)→ [release-build.md](./release-build.md)
+- [x] 署名・公証なしで packaging 構成を検証(.app arch / ネイティブ binary 同梱 / Info.plist / ランタイムパス整合)
+- [ ] DMG ビルド + Apple Notarize の本番通し(Apple Developer アカウント必須)※実機
 - [ ] electron-updater 実機動作確認(実際の GitHub Release で更新が降ってくるか)※実機
 - [ ] クリーン環境(別 Mac or 新規ユーザー)でのインストール検証 ※実機
 - [ ] 自社営業メンバーへの β 配布と初回フィードバック収集

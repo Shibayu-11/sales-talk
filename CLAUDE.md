@@ -52,14 +52,14 @@ Codex の担当(TS/React/DB)とは AGENTS.md で分担明記。
 | 状態管理 | **XState v5**(`setup` API) | parallel ステート、invoke/spawn |
 | ロギング | Pino(JSON Lines、PII 自動マスキング) | 商談中は info+ のみ |
 | 監視 | Sentry(beforeSend スクラブ二重防御)+ PostHog | Session Replay は **無効化** |
-| 配布 | electron-builder + electron-updater | macOS DMG、Apple Notarize、universal binary |
+| 配布 | electron-builder + electron-updater | macOS DMG、Apple Notarize、**arm64 専用**(2026-06-15 universal から変更、§4.1) |
 
 ## 4. 絶対に守る制約(設計の前提)
 
 ### 4.1 macOS API
 - **ScreenCaptureKit を使う**(macOS 13+)。`CGDisplayStream`(deprecated)・`AVCaptureSession` でのシステム音声・BlackHole 等の仮想デバイスは**禁止**。
 - AI が古いコードを出してくる傾向があるので、プロンプトに「macOS 13+ / ScreenCaptureKit / 2026年時点最新 API」を明示。
-- Universal Binary(Apple Silicon + Intel)でビルド。
+- **Apple Silicon (arm64) 専用でビルド**(2026-06-15 決定)。Apple SpeechAnalyzer が Apple Silicon 必須で、ネイティブ binary も arm64 のみ。universal を名乗ると Intel スライスが arm64 ネイティブを読めず起動クラッシュする。Intel 対応が要るなら先に NAPI/Swift helper を x86_64 でもビルドして lipo で universal 化してから。詳細は [docs/release-build.md](./docs/release-build.md)。
 - AEC 3段構え:ヘッドフォン推奨 → `setVoiceProcessingEnabled(true)` → 将来 ScreenCaptureKit 参照信号。
 
 ### 4.2 セキュリティ
@@ -207,6 +207,7 @@ sales-talk/
 - 2026-04-25: Deepgram Nova-3 日本語実測を Week 1 Day 3-5 に必須化
 - 2026-04-27: 当時判断として VibeVoice-ASR は Phase 2 検討候補(MVP は Deepgram 維持)
 - 2026-06-10: Mac MVP の STT 第一候補を Apple SpeechAnalyzer へ変更。音声を外部送信しない価値を優先し、Deepgram は fallback / Cloud β 用に降格。
+- 2026-06-15: 配布を **Apple Silicon (arm64) 専用**に確定(従来の universal を撤回)。SpeechAnalyzer が Apple Silicon 必須、競合 Kanary も同条件、universal は壊れた Intel スライスを生むため。Intel 対応は将来 universal native binary を用意してから再検討。
 
 ## 12. 困ったとき
 

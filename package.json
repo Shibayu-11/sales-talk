@@ -29,7 +29,7 @@
     "native:audio:smoke": "tsx scripts/audio-capture-smoke.ts",
     "native:audio:stt-smoke": "tsx scripts/audio-stt-smoke.ts",
     "native:audio:local-stt-smoke": "tsx scripts/audio-local-stt-smoke.ts",
-    "package:mac": "npm run native:audio:build && npm run native:speech:build && electron-vite build && electron-builder --mac --universal",
+    "package:mac": "npm run native:audio:build && npm run native:speech:build && electron-vite build && electron-builder --mac --arm64",
     "license:audit": "tsx scripts/license-audit.ts",
     "cloudflare:types": "wrangler types cloudflare/worker-configuration.d.ts",
     "cloudflare:typecheck": "tsc --noEmit -p cloudflare/tsconfig.json",
