@@ -143,7 +143,7 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 
 - 実商談での継続利用とフィードバックループ(提案採用率の記録)
 - Cloudflare β(D1 / R2 / Queues、adapter 切替)— **コードはデプロイ可能(`deploy:dry` 成功)**。残りはアカウント/シークレット準備のみ → [手順](./cloudflare-beta-deploy.md)
-- Mobile Recorder PoC(iOS、Track B 入口)
+- Mobile Recorder PoC(Track B 入口)— **PWA 版を実装済み**(録音同意ゲート + MediaRecorder + 署名アップロード、unit 13本、login画面レンダリング確認)。`npm run mobile:dev`。E2E はデプロイ済み Worker が前提。ネイティブ iOS(Expo)は需要が見えてから
 - 管理者向け月次レポート強化
 
 ## 3. マイルストーン
