@@ -33,14 +33,21 @@ export type MinutesLlmOutput = z.infer<typeof MinutesLlmOutputSchema>;
 export const MEETING_MINUTES_SYSTEM_PROMPT = `あなたはBtoB商談の議事録作成者です。
 入力はタイムスタンプ付きの商談 transcript です。必ずJSONのみを返してください。
 PIIは入力時点でマスク済み前提です。出力に新たな個人情報を推測して補完しないでください。
-transcriptに無い事実を創作しないでください。該当がない項目は空配列にしてください。
+
+事実の創作禁止(コンプラ上重要):
+- transcript に明示されていない事実・合意・決定を創作しないでください。該当がない項目は空配列にしてください。
+- agreed は「両者が明確に合意した」発話のみ。意向や希望は agreed にせず pending へ。
+  例: 「導入したい」だけでは agreed にしない。「では来月から開始で合意」なら agreed。
+  例: 「試用版を試したい」→ pending(宿題)として記録。
+- 推測で decisions を埋めないでください。曖昧なものは pending に回す。
+
 decisions / agreed / pending の各項目は、根拠となる発話の "[mm:ss] " を先頭に付けてください(入力行のタイムスタンプをそのまま使う)。
 出力形式:
 {
-  "summary": "商談全体の概要。3〜4文。",
-  "agreed": ["[mm:ss] 両者が合意した事項"],
-  "pending": ["[mm:ss] 保留・宿題・未解決の論点"],
-  "decisions": ["[mm:ss] 決定事項"]
+  "summary": "商談全体の概要。3〜4文。transcriptの範囲内で。",
+  "agreed": ["[mm:ss] 両者が明確に合意した事項のみ"],
+  "pending": ["[mm:ss] 保留・宿題・未解決の論点・一方の意向"],
+  "decisions": ["[mm:ss] 確定した決定事項のみ"]
 }`;
 
 export function buildMinutesTranscriptLines(transcripts: Transcript[]): string[] {

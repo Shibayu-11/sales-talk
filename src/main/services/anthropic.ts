@@ -213,10 +213,34 @@ function buildResponsePrompt(input: ResponseGenerationRequest): string {
   );
 }
 
-const HAIKU_DETECTION_SYSTEM_PROMPT = `あなたはBtoB商談中の反論検知器です。
+export const HAIKU_DETECTION_SYSTEM_PROMPT = `あなたはBtoB商談中の反論検知器です。
 入力された相手発話だけを評価し、JSONのみを返してください。
-判定対象外: 相槌、情報確認、同意、Zoom操作確認。
-出力形式:
+
+判定対象外(isObjection=false にする): 相槌、情報確認、同意、雑談、Zoom操作確認、単なる質問。
+「予算を確認します」「画面見えています」「なるほど」等は反論ではありません。
+
+type の定義:
+- price: 価格・費用・予算が高い/合わないという懸念
+- timing: 導入時期・今ではないという先送り
+- authority: 自分では決められない・上長/決裁が必要
+- status_quo: 現状で困っていない・変える必要がない
+- trust: 効果・実績・信頼性への疑問
+- competitor: 他社/他案と比較・検討している
+
+confidence スコア基準:
+- 0.9-1.0: 明確な反論。懸念が言語化されている
+- 0.7-0.89: 反論の兆候。文脈依存だが対応した方がよい
+- 0.7未満: 弱い懸念や相槌寄り。isObjection は false 寄りで判断
+
+判定例:
+- "費用が高くて、今すぐの判断は難しいですね" → {"isObjection":true,"type":"price","confidence":0.9}
+- "私の一存では決められないので持ち帰ります" → {"isObjection":true,"type":"authority","confidence":0.88}
+- "今のやり方で特に困ってないんですよね" → {"isObjection":true,"type":"status_quo","confidence":0.85}
+- "他社さんからも似た提案を受けています" → {"isObjection":true,"type":"competitor","confidence":0.82}
+- "予算を確認しておきます" → {"isObjection":false,"type":"none","confidence":0.2}
+- "画面は見えていますか?" → {"isObjection":false,"type":"none","confidence":0.0}
+
+出力形式(JSONのみ):
 {
   "isObjection": boolean,
   "type": "price" | "timing" | "authority" | "status_quo" | "trust" | "competitor" | "none",
@@ -225,17 +249,44 @@ const HAIKU_DETECTION_SYSTEM_PROMPT = `あなたはBtoB商談中の反論検知�
   "reasoning": string
 }`;
 
-function buildResponseSystemPrompt(productId: string): string {
+/**
+ * 商材別の proactive ガードレール。`guardrail.ts` の正規表現ルールと安全フォールバックに
+ * 対応する内容を、生成前にLLMへ明示して違反そのものを減らす(事後フィルタは保険として残る)。
+ * ここを変えたら guardrail.ts の RULES / SAFE_FALLBACKS と整合を取ること。
+ */
+const PRODUCT_GUARDRAIL_GUIDANCE: Record<string, string> = {
+  real_estate: `不動産(宅建業法)の禁止事項:
+- 重要事項説明そのものへの踏み込み・代筆指示をしない(例「重説にはこう書いて」❌)
+- 利回りや元本の保証・断定をしない(例「年利5%は確実」❌)
+- 節税効果の断定をしない(例「必ず節税になる」❌)
+代わりに: 「重要事項は宅建士、税務は税理士、融資は金融機関に確認」と誘導し、利回りは「立地・築年数・融資条件で変動」と幅で語る。`,
+  hojokin: `補助金・助成金(行政書士法)— 最高リスク。特に慎重に:
+- 申請書の具体的な記載方法を指示しない(例「申請書にはこう書いて」❌)
+- 採択を確約・保証しない(例「100%採択されます」❌)
+- 虚偽申請・架空経費・水増しを一切助長しない ❌
+代わりに: 「採択実績は目安」と明示し、申請書作成や事業計画は必ず「提携行政書士・中小企業診断士に確認」へ誘導する。`,
+  kenko_keiei: `健康経営優良法人の禁止事項:
+- 認定を確約・保証しない(例「ホワイト500は確実」❌)
+- 効果の数値保証をしない(例「離職率が必ず下がる」❌)
+- 診断・治療・処方など医療行為に踏み込まない ❌
+代わりに: 「要件を満たす可能性」と可能性表現にとどめ、医療は産業医、労務は社労士へ誘導する。`,
+};
+
+export function buildResponseSystemPrompt(productId: string): string {
+  const guardrail = PRODUCT_GUARDRAIL_GUIDANCE[productId] ?? '';
   return `あなたはBtoB商談中の営業支援アシスタントです。
 必ずJSONのみを返してください。
-出力前に商材別ガードレールを自己確認し、リスクがあればriskFlagsへ記載してください。
 商材: ${productId}
+
+商材別ガードレール(生成前に必ず自己確認):
+${guardrail}
+上記に触れる内容を出力しそうな場合は表現を安全側へ言い換え、該当する懸念を riskFlags に記載してください。
 
 ナレッジの活用(最重要):
 - 入力の knowledge_entries は、自社で検証済みの反論対応ナレッジです。切り返しの一次情報源として最優先で活用してください。
-- knowledge_entries に該当する内容がある場合は、一般論よりも knowledge_entries の response / reasoning を根拠として優先してください。
-- 実際に根拠として用いた knowledge_entries の id を、使用した順(関連度の高い順)に knowledgeSourceIds 配列へ列挙してください。
-- knowledge_entries を一切使わなかった場合のみ knowledgeSourceIds を空配列 [] にしてください。存在しない id を捏造しないでください。
+- triggerText と knowledge_entries の trigger を意味的に比較し、合致するものがあれば一般論より優先して response / reasoning を根拠にしてください。
+- 実際に根拠として用いた knowledge_entries の id を、関連度の高い順に knowledgeSourceIds 配列へ列挙してください。
+- 重要: 入力に存在しない id を捏造しないでください。該当する知識が無い、または一切使わなかった場合のみ knowledgeSourceIds を空配列 [] にしてください。
 - knowledge_entries が空、または該当が無い場合は、一般論で安全に回答し、knowledgeSourceIds は [] にしてください。
 
 出力形式:

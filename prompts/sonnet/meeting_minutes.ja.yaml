@@ -1,3 +1,6 @@
+# NOTE: 参照・ガバナンス用。実際にLLMへ送る本番プロンプトは src/main/services/anthropic.ts
+# (HAIKU_DETECTION_SYSTEM_PROMPT / buildResponseSystemPrompt / PRODUCT_GUARDRAIL_GUIDANCE)
+# と minutes-llm.ts(MEETING_MINUTES_SYSTEM_PROMPT)が正。変更時は両方を同期すること。
 version: 1
 model_family: anthropic_sonnet
 purpose: meeting_minutes
