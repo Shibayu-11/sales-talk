@@ -35,6 +35,11 @@ import { CallLibrary } from './components/CallLibrary';
 import { TranscriptBubbles } from './components/TranscriptBubbles';
 import { Onboarding } from './components/Onboarding';
 import { formatBytes } from './lib/call-view';
+import {
+  formatMonthLabel,
+  summarizeReviewTasksByMonth,
+  type MonthlyReviewSummary,
+} from './lib/monthly-report';
 
 const PRODUCTS: { id: ProductId; label: string }[] = [
   { id: 'real_estate', label: '不動産' },
@@ -1656,6 +1661,85 @@ function HistoryPanel(props: {
   );
 }
 
+function MonthlyReviewReport(props: { summaries: MonthlyReviewSummary[] }): JSX.Element {
+  if (props.summaries.length === 0) {
+    return (
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="text-sm font-medium text-zinc-400">月次レポート</h2>
+        <p className="mt-2 text-sm text-zinc-600">
+          コンプラ検知が記録されると、月別の集計がここに表示されます。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-zinc-800 p-5">
+      <h2 className="mb-1 text-sm font-medium text-zinc-400">月次レポート</h2>
+      <p className="mb-4 text-xs text-zinc-500">
+        コンプラ検知の月別集計。重大リスク件数と処理状況を管理者が一目で把握できます。
+      </p>
+      <div className="space-y-3">
+        {props.summaries.map((summary) => (
+          <div
+            key={summary.month}
+            className="rounded border border-zinc-800 bg-zinc-950/40 p-4"
+          >
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium text-zinc-200">
+                {formatMonthLabel(summary.month)}
+              </span>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-zinc-500">検知 {summary.total} 件</span>
+                {summary.highRisk > 0 && (
+                  <span className="rounded bg-overlay-objection/15 px-2 py-0.5 text-overlay-objection">
+                    重大リスク {summary.highRisk}
+                  </span>
+                )}
+                <span className="rounded bg-zinc-900 px-2 py-0.5 text-overlay-success">
+                  処理済 {Math.round(summary.resolutionRate * 100)}%
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <ReportStat label="critical" value={summary.bySeverity.critical} tone="danger" />
+              <ReportStat label="high" value={summary.bySeverity.high} tone="danger" />
+              <ReportStat label="medium" value={summary.bySeverity.medium} tone="warning" />
+              <ReportStat label="low" value={summary.bySeverity.low} tone="muted" />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+              <span>未対応 {summary.byStatus.open}</span>
+              <span>承認 {summary.byStatus.approved}</span>
+              <span>差戻し {summary.byStatus.dismissed}</span>
+              <span>要教育 {summary.byStatus.training_required}</span>
+              <span>エスカレ {summary.byStatus.escalated}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReportStat(props: {
+  label: string;
+  value: number;
+  tone: 'danger' | 'warning' | 'muted';
+}): JSX.Element {
+  const color =
+    props.tone === 'danger'
+      ? 'text-overlay-objection'
+      : props.tone === 'warning'
+        ? 'text-overlay-warning'
+        : 'text-zinc-400';
+  return (
+    <div className="rounded bg-zinc-900 p-2 text-center">
+      <div className={`text-lg font-semibold ${color}`}>{props.value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-zinc-600">{props.label}</div>
+    </div>
+  );
+}
+
 function ReviewPanel(): JSX.Element {
   const [reviewTasks, setReviewTasks] = useState<ReviewTask[]>([]);
 
@@ -1674,9 +1758,12 @@ function ReviewPanel(): JSX.Element {
   };
 
   const openTasks = reviewTasks.filter((task) => task.status === 'open');
+  const monthlySummaries = summarizeReviewTasksByMonth(reviewTasks);
 
   return (
     <div className="space-y-6">
+      <MonthlyReviewReport summaries={monthlySummaries} />
+
       <div className="rounded-lg border border-zinc-800 p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>

@@ -196,10 +196,14 @@ test('dev transcript injection drives the mock pipeline without API keys', async
       await expect(controlWindow.getByRole('button', { name: '再生成' })).toBeVisible();
 
       await controlWindow.getByRole('button', { name: 'レビュー' }).click();
+      await expect(controlWindow.getByRole('heading', { name: '月次レポート' })).toBeVisible();
+      // The injected '絶対儲かります' produced a finding → review task → this month's report.
+      await expect(controlWindow.getByText(/検知 \d+ 件/).first()).toBeVisible();
       await expect(controlWindow.getByRole('heading', { name: '管理者レビュー' })).toBeVisible();
       await expect(controlWindow.getByText('高リスク発話の確認')).toBeVisible();
       await controlWindow.getByRole('button', { name: '要教育' }).click();
-      await expect(controlWindow.locator('span').filter({ hasText: '要教育' })).toBeVisible();
+      // Exact match: avoid colliding with the monthly report's '要教育 N' count line.
+      await expect(controlWindow.locator('span').filter({ hasText: /^要教育$/ })).toBeVisible();
 
       await controlWindow.getByRole('button', { name: 'タスク' }).click();
       await controlWindow.getByLabel('タスク担当').selectOption('joint');
