@@ -1,30 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import type {
   DetectedObjection,
   ObjectionResponse,
   ObjectionResponseSource,
   SharingState,
 } from '@shared/types';
+import {
+  hasRiskFlags,
+  initialOverlayState,
+  overlayReducer,
+  type OverlayLayer,
+} from './lib/overlay-state';
 
 export function App(): JSX.Element {
-  const [layer, setLayer] = useState<1 | 2 | 3>(2);
-  const [objection, setObjection] = useState<DetectedObjection | null>(null);
-  const [response, setResponse] = useState<ObjectionResponse | null>(null);
+  const [state, dispatch] = useReducer(overlayReducer, initialOverlayState);
   const [sharing, setSharing] = useState<SharingState>({ status: 'not_sharing' });
+  const { objection, response, layer } = state;
 
   useEffect(() => {
     const offDetected = window.api.objection.onDetected((detected) => {
-      setObjection(detected);
-      setResponse(null);
-      setLayer(1);
+      dispatch({ type: 'DETECTED', objection: detected });
     });
     const offResponse = window.api.objection.onResponseReady((readyResponse) => {
-      setResponse(readyResponse);
-      setLayer(2);
+      dispatch({ type: 'RESPONSE', response: readyResponse });
     });
     const offCancelled = window.api.objection.onCancelled(() => {
-      setObjection(null);
-      setResponse(null);
+      dispatch({ type: 'CANCELLED' });
     });
     const offSharing = window.api.overlay.onSharingState(setSharing);
     return () => {
@@ -52,13 +53,21 @@ export function App(): JSX.Element {
           <span className={objection ? 'text-overlay-objection' : 'text-zinc-400'}>
             {objection ? '反論検知' : '待機中'}
           </span>
+          {hasRiskFlags(state) && (
+            <span
+              title="法務リスクあり — L3 で詳細を確認"
+              className="rounded bg-overlay-objection/20 px-1.5 py-0.5 text-[10px] text-overlay-objection"
+            >
+              ⚠ リスク
+            </span>
+          )}
         </div>
         <div className="flex gap-1">
           {[1, 2, 3].map((n) => (
             <button
               key={n}
               type="button"
-              onClick={() => setLayer(n as 1 | 2 | 3)}
+              onClick={() => dispatch({ type: 'SET_LAYER', layer: n as OverlayLayer })}
               className={`rounded px-2 py-0.5 text-xs ${
                 layer === n ? 'bg-zinc-700' : 'hover:bg-zinc-800'
               }`}
@@ -137,7 +146,15 @@ function LayerOne(props: {
         {props.objection.type}
       </div>
       <div className="text-2xl font-semibold leading-tight text-overlay-objection">{peak}</div>
-      <div className="mt-4 text-xs text-zinc-500">confidence {formatConfidence(props.objection.confidence)}</div>
+      <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
+        <span>confidence {formatConfidence(props.objection.confidence)}</span>
+        {!props.response && (
+          <span className="flex items-center gap-1 text-overlay-warning">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-overlay-warning" />
+            切り返し生成中…
+          </span>
+        )}
+      </div>
     </section>
   );
 }
