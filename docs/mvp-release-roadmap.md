@@ -116,6 +116,7 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 - [x] 3商材のナレッジ初期投入(real_estate 13 / kenko_keiei 12 / hojokin 12 = 計37件、seedLocalKnowledge)
 - [x] RAG の保存先確定(MVP は local-first 維持、Cloudflare 接続は β フェーズへ)
 - [x] 提案カードにナレッジ出典表示(overlay に「根拠ナレッジ N件」+ 関連度% 、`ObjectionResponse.sources` 経由)
+- [x] プロンプト強化: 検知 few-shot 例 + confidence 基準、商材別 proactive ガードレール(補助金=最高リスク)、ナレッジ捏造禁止、議事録の創作禁止(prompts.test.ts)
 - [ ] ガードレールの実発話テスト(禁止キーワード発話 → 差し替え/トーンダウン確認)※実機検証で
 - [ ] 実商談想定の反論 10 パターンで接地提案を確認(実機 / プロンプト評価)
 
@@ -141,7 +142,7 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 2軸計画 Phase 3〜4 に接続。
 
 - 実商談での継続利用とフィードバックループ(提案採用率の記録)
-- Cloudflare β(D1 / R2 / Queues、adapter 切替)
+- Cloudflare β(D1 / R2 / Queues、adapter 切替)— **コードはデプロイ可能(`deploy:dry` 成功)**。残りはアカウント/シークレット準備のみ → [手順](./cloudflare-beta-deploy.md)
 - Mobile Recorder PoC(iOS、Track B 入口)
 - 管理者向け月次レポート強化
 

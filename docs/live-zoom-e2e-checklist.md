@@ -6,8 +6,12 @@
 
 ## 0. 前提準備(検証当日より前に)
 
+**コード・ビルド側は 2026-06-15 に検証済み**(unit 213 + E2E 5 全グリーン、ネイティブ binary arm64 ビルド成功、
+DMG packaging 構成・反論パイプライン・レイテンシ計測・オーバーレイ reducer すべて確認)。
+残るのは「実機の生 Zoom 通話で通しで動くか」だけ。当日は下記を揃えれば即実行できる:
+
+- [x] `npm run native:audio:build && npm run native:speech:build` が成功する(検証済み・arm64)
 - [ ] macOS 26 Tahoe + Apple Silicon の実機(SpeechAnalyzer 必須要件)
-- [ ] `npm run native:audio:build && npm run native:speech:build` が成功する
 - [ ] Anthropic API キーを設定画面から登録済み(`secrets` 経由、Keychain 保存)
 - [ ] 模擬商談の相手役を確保(別端末 + ヘッドフォン推奨。AEC 検証のため最低 1 回はスピーカー出しも試す)
 - [ ] 反論セリフ台本を印刷 or 別画面に用意(§4)
