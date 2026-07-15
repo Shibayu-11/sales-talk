@@ -1,7 +1,7 @@
 # Meetily 採用計画
 
-作成日: 2026-07-15  
-対象: [Zackriya-Solutions/meetily](https://github.com/Zackriya-Solutions/meetily)  
+作成日: 2026-07-15
+対象: [Zackriya-Solutions/meetily](https://github.com/Zackriya-Solutions/meetily)
 参照時点: `0281737d87d26352fb0adc78c8c0975f691b23d1`
 
 ## 0. 結論
