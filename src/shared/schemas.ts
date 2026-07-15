@@ -70,6 +70,98 @@ export const PermissionStateSchema = z.object({
   microphone: z.boolean(),
 });
 
+export const ConnectionStateSchema = z.enum([
+  'disconnected',
+  'connecting',
+  'connected',
+  'reconnecting',
+  'failed',
+]);
+
+export const AudioCaptureSourceStatsSchema = z.object({
+  chunks: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+  lastReceivedAtMs: z.number().nullable(),
+});
+
+export const AudioCaptureStatsSchema = z.object({
+  self: AudioCaptureSourceStatsSchema,
+  counterpart: AudioCaptureSourceStatsSchema,
+  total: AudioCaptureSourceStatsSchema,
+});
+
+export const AudioPreflightOverallSchema = z.enum(['go', 'warning', 'blocked']);
+export const AudioPreflightCheckStatusSchema = z.enum([
+  'pass',
+  'warning',
+  'blocked',
+  'pending',
+]);
+export const AudioPreflightCheckIdSchema = z.enum([
+  'permissions',
+  'native_module',
+  'native_capture',
+  'stt_connection',
+  'self_audio',
+  'counterpart_audio',
+  'audio_freshness',
+]);
+
+export const AudioPreflightCheckSchema = z.object({
+  id: AudioPreflightCheckIdSchema,
+  label: z.string(),
+  status: AudioPreflightCheckStatusSchema,
+  message: z.string(),
+  action: z.string().nullable(),
+});
+
+export const AudioPreflightReportSchema = z.object({
+  overall: AudioPreflightOverallSchema,
+  checks: z.array(AudioPreflightCheckSchema),
+  startedAtMs: z.number().nullable(),
+  evaluatedAtMs: z.number(),
+});
+
+export const AudioCaptureStatusSchema = z.object({
+  nativeModule: z.object({
+    available: z.boolean(),
+    contractValid: z.boolean(),
+    modulePath: z.string(),
+    error: z.string().optional(),
+  }),
+  permissions: PermissionStateSchema,
+  stats: AudioCaptureStatsSchema,
+  sttState: ConnectionStateSchema,
+  nativeCaptureActive: z.boolean(),
+  preflight: AudioPreflightReportSchema,
+});
+
+export const AudioDiagnosticSessionResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    error: z.enum([
+      'already_running',
+      'permission_required',
+      'recording_in_progress',
+      'start_failed',
+      'not_running',
+    ]),
+  }),
+]);
+
+export const StartRecordingSessionResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    callId: z.string().uuid(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.enum(['already_recording', 'permission_required', 'start_failed']),
+    callId: z.string().uuid().optional(),
+  }),
+]);
+
 export const InterimTranscriptSchema = z.object({
   speaker: SpeakerSchema,
   text: z.string(),

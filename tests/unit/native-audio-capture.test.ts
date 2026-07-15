@@ -95,4 +95,18 @@ describe('NativeAudioCaptureService', () => {
 
     expect(module.stopCapture).toHaveBeenCalledWith('session-1');
   });
+
+  it('does not retain a partial native session when start fails', async () => {
+    const module = new FakeNativeAudioCaptureModule();
+    module.startCapture.mockRejectedValueOnce(new Error('native start failed'));
+    const service = new NativeAudioCaptureService({
+      module,
+      sendAudioChunk: vi.fn(async () => {}),
+    });
+
+    await expect(service.start()).rejects.toThrow('native start failed');
+    await service.stop();
+
+    expect(module.stopCapture).not.toHaveBeenCalled();
+  });
 });

@@ -4,6 +4,8 @@ import { writeFile } from 'node:fs/promises';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
+  AudioCaptureStatusSchema,
+  AudioDiagnosticSessionResultSchema,
   AuditLogExportInputSchema,
   AuditLogFilterSchema,
   AudioStartInputSchema,
@@ -35,6 +37,7 @@ import {
   ReviewTaskUpdateStatusInputSchema,
   SecretKeySchema,
   SecretSetInputSchema,
+  StartRecordingSessionResultSchema,
   TaskCompleteInputSchema,
   TaskCreateInputSchema,
 } from '@shared/schemas';
@@ -42,6 +45,7 @@ import type {
   ActionItemTask,
   AuditLogEntry,
   AppSettings,
+  AudioDiagnosticSessionResult,
   AudioChunk,
   AudioCaptureStatus,
   AudioImportResult,
@@ -59,6 +63,7 @@ import type {
   ReviewTask,
   SharingState,
   SttProviderKind,
+  StartRecordingSessionResult,
   Transcript,
 } from '@shared/types';
 import { logger } from '../logger';
@@ -84,6 +89,7 @@ import {
   createInitialAudioCaptureStats,
   updateAudioCaptureStats,
 } from '../audio/audio-capture-stats';
+import { evaluateAudioPreflight } from '../audio/audio-preflight';
 import {
   getNativeAudioCaptureModuleStatus,
   loadNativeAudioCaptureModule,
@@ -143,7 +149,14 @@ let activeSttProviderKind: SttProviderKind | null = null;
 let activeSttDegradedReason: string | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
 let audioCaptureStats = createInitialAudioCaptureStats();
+let audioPreflightStartedAtMs: number | null = null;
+let audioPreflightSttError: string | null = null;
+let audioPreflightNativeCaptureError: string | null = null;
 let activeCallId: string | null = null;
+let realtimeAudioOwner: 'none' | 'diagnostic' | 'call' = 'none';
+let diagnosticStartPromise: Promise<AudioDiagnosticSessionResult> | null = null;
+let recordingStartPromise: Promise<StartRecordingSessionResult> | null = null;
+let callEndPromise: Promise<void> | null = null;
 const localSessionId = randomUUID();
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
@@ -199,23 +212,17 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
   ipcMain.handle(IPC.secrets.anthropicDiagnostic, () => runAnthropicDiagnostic());
 
-  ipcMain.handle(IPC.audio.status, () => getAudioCaptureStatus());
+  ipcMain.handle(IPC.audio.status, () => AudioCaptureStatusSchema.parse(getAudioCaptureStatus()));
 
   ipcMain.handle(IPC.audio.start, async (_event, payload: unknown) => {
     const input = AudioStartInputSchema.parse(payload);
-    const context = await appRepositories.organizations.assertPermission('recording:start');
-    if (!preflightAudioCapturePermissions(windows)) {
-      return;
-    }
-    audioCaptureStats = createInitialAudioCaptureStats();
-    await tryStartSTT(windows);
-    await tryStartNativeAudioCapture(windows);
-    await appendRecordingAuditLogs(context, localSessionId, input.consent, 'audio_diagnostic');
+    return AudioDiagnosticSessionResultSchema.parse(
+      await startAudioDiagnosticSession(windows, input.consent),
+    );
   });
 
   ipcMain.handle(IPC.audio.stop, async () => {
-    await stopNativeAudioCapture();
-    await stopSTT();
+    return AudioDiagnosticSessionResultSchema.parse(await stopAudioDiagnosticSession(windows));
   });
 
   ipcMain.handle(IPC.audioAssets.import, async (_event, payload: unknown) => {
@@ -263,15 +270,17 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const input = CallStartInputSchema.parse(payload);
-    await startRecordingSession(windows, {
-      productId: input.productId,
-      consent: input.consent,
-      source: 'zoom_desktop',
-    });
+    return StartRecordingSessionResultSchema.parse(
+      await startRecordingSession(windows, {
+        productId: input.productId,
+        consent: input.consent,
+        source: 'zoom_desktop',
+      }),
+    );
   });
 
-  ipcMain.handle(IPC.call.end, () => {
-    endCurrentCall(windows);
+  ipcMain.handle(IPC.call.end, async () => {
+    await stopRecordingSession(windows);
     logger.info('call ended');
   });
 
@@ -647,9 +656,9 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     windows.getOverlayWindow()?.showInactive();
     logger.info({ productId }, 'development mock call started');
   });
-  ipcMain.handle(IPC.dev.endMockCall, () => {
+  ipcMain.handle(IPC.dev.endMockCall, async () => {
     assertDevToolsEnabled();
-    endCurrentCall(windows);
+    await endCurrentCall(windows);
     logger.info('development mock call ended');
   });
   ipcMain.handle(IPC.dev.injectTranscript, async (_event, payload: unknown) => {
@@ -679,13 +688,39 @@ export async function sendAudioChunkToSTT(chunk: AudioChunk): Promise<void> {
 }
 
 function getAudioCaptureStatus(): AudioCaptureStatus {
+  const nativeModule = getNativeAudioCaptureModuleStatus();
+  const permissions = checkPermissions();
+  const sttState = activeSttClient?.getState() ?? 'disconnected';
+
   return {
-    nativeModule: getNativeAudioCaptureModuleStatus(),
-    permissions: checkPermissions(),
+    nativeModule,
+    permissions,
     stats: audioCaptureStats,
-    sttState: activeSttClient?.getState() ?? 'disconnected',
+    sttState,
     nativeCaptureActive: activeNativeAudioCaptureService !== null,
+    preflight: evaluateAudioPreflight({
+      nativeModule,
+      nativeCaptureActive: activeNativeAudioCaptureService !== null,
+      nativeCaptureError: audioPreflightNativeCaptureError,
+      permissions,
+      stats: audioCaptureStats,
+      sttState,
+      startedAtMs: audioPreflightStartedAtMs,
+      sttError: audioPreflightSttError,
+    }),
   };
+}
+
+function startAudioPreflight(startedAtMs = Date.now()): void {
+  audioPreflightStartedAtMs = startedAtMs;
+  audioPreflightSttError = null;
+  audioPreflightNativeCaptureError = null;
+}
+
+function resetAudioPreflight(): void {
+  audioPreflightStartedAtMs = null;
+  audioPreflightSttError = null;
+  audioPreflightNativeCaptureError = null;
 }
 
 function preflightAudioCapturePermissions(windows: IpcWindowAccessors): boolean {
@@ -715,53 +750,229 @@ async function startSTT(windows: IpcWindowAccessors): Promise<void> {
     activeSttDegradedReason = configured.degradedReason;
   }
   await activeSttClient.start();
+  if (activeSttClient.getState() !== 'connected') {
+    throw new Error('STT did not reach connected state');
+  }
 }
 
-async function tryStartSTT(windows: IpcWindowAccessors): Promise<void> {
+async function tryStartSTT(windows: IpcWindowAccessors): Promise<boolean> {
   try {
     await startSTT(windows);
+    audioPreflightSttError = null;
+    return true;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    windows.getControlWindow()?.webContents.send(IPC.stt.onError, message);
+    audioPreflightSttError = 'stt_start_failed';
+    windows.getControlWindow()?.webContents.send(
+      IPC.stt.onError,
+      'STT の起動に失敗しました。設定とローカル helper の状態を確認してください。',
+    );
     logger.warn({ error }, 'stt start failed');
+    return false;
   }
 }
 
 async function stopSTT(): Promise<void> {
-  await activeSttClient?.stop();
+  const client = activeSttClient;
   activeSttClient = null;
   activeSttProviderKind = null;
   activeSttDegradedReason = null;
+  await client?.stop();
 }
 
-async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<void> {
+async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<boolean> {
   try {
-    await startNativeAudioCapture();
+    await startNativeAudioCapture(windows);
+    audioPreflightNativeCaptureError = null;
+    return true;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    windows.getControlWindow()?.webContents.send(IPC.audio.onError, message);
+    audioPreflightNativeCaptureError = 'native_capture_start_failed';
+    windows.getControlWindow()?.webContents.send(
+      IPC.audio.onError,
+      'native audio capture の起動に失敗しました。権限と Zoom の起動状態を確認してください。',
+    );
     logger.warn({ error }, 'native audio capture start failed');
+    return false;
   }
 }
 
-async function startNativeAudioCapture(): Promise<void> {
+async function startNativeAudioCapture(windows: IpcWindowAccessors): Promise<void> {
   if (!activeNativeAudioCaptureService) {
     const nativeModule = loadNativeAudioCaptureModule();
     if (!nativeModule) {
-      logger.warn('native audio capture module not found');
-      return;
+      throw new Error('Native audio capture module not found');
     }
 
     activeNativeAudioCaptureService = new NativeAudioCaptureService({
       module: nativeModule,
       sendAudioChunk: sendAudioChunkToSTT,
       onError: (error) => {
+        const message = formatNativeCaptureError(error);
+        audioPreflightNativeCaptureError = message;
+        windows.getControlWindow()?.webContents.send(
+          IPC.audio.onError,
+          'native audio capture が停止しました。診断を停止してから再実行してください。',
+        );
         logger.warn({ error }, 'native audio capture error');
       },
     });
   }
 
   await activeNativeAudioCaptureService.start();
+}
+
+function formatNativeCaptureError(error: { code: string; message: string }): string {
+  return error.code || 'native_capture_error';
+}
+
+export type RecordingStartFailureCleanupReason =
+  | 'diagnostic_audit_failed'
+  | 'call_create_failed'
+  | 'call_audit_failed';
+
+export interface RecordingStartFailureCleanupPlan {
+  stopAudioServices: true;
+  resetPreflight: true;
+  endCallId: string | null;
+  userMessage: string;
+}
+
+export function createRecordingStartFailureCleanupPlan(input: {
+  reason: RecordingStartFailureCleanupReason;
+  callId?: string | null | undefined;
+}): RecordingStartFailureCleanupPlan {
+  const userMessage =
+    input.reason === 'diagnostic_audit_failed'
+      ? '録音監査ログの記録に失敗したため、音声診断を停止しました。時間をおいて再試行してください。'
+      : input.reason === 'call_create_failed'
+        ? '録音セッションの作成に失敗しました。時間をおいて再試行してください。'
+        : '録音監査ログの記録に失敗したため、録音を開始できませんでした。時間をおいて再試行してください。';
+
+  return {
+    stopAudioServices: true,
+    resetPreflight: true,
+    endCallId: input.reason === 'call_audit_failed' ? (input.callId ?? null) : null,
+    userMessage,
+  };
+}
+
+export async function startAudioDiagnosticSession(
+  windows: IpcWindowAccessors,
+  consent: CallSession['recordingConsent'],
+): Promise<AudioDiagnosticSessionResult> {
+  if (
+    callState.status === 'in_call' ||
+    recordingStartPromise ||
+    callEndPromise ||
+    realtimeAudioOwner === 'call'
+  ) {
+    notifyAudioError(windows, '通話中または録音処理中は standalone 音声診断を開始できません。');
+    return { ok: false, error: 'recording_in_progress' };
+  }
+
+  if (diagnosticStartPromise || realtimeAudioOwner === 'diagnostic') {
+    notifyAudioError(windows, '音声診断はすでに実行中です。');
+    return { ok: false, error: 'already_running' };
+  }
+
+  diagnosticStartPromise = startAudioDiagnosticSessionOnce(windows, consent).finally(() => {
+    diagnosticStartPromise = null;
+  });
+  return diagnosticStartPromise;
+}
+
+async function startAudioDiagnosticSessionOnce(
+  windows: IpcWindowAccessors,
+  consent: CallSession['recordingConsent'],
+): Promise<AudioDiagnosticSessionResult> {
+  let context: CurrentUserContext;
+  try {
+    context = await appRepositories.organizations.assertPermission('recording:start');
+  } catch (error) {
+    logger.warn({ error }, 'audio diagnostic permission denied');
+    return { ok: false, error: 'permission_required' };
+  }
+
+  if (!preflightAudioCapturePermissions(windows)) {
+    return { ok: false, error: 'permission_required' };
+  }
+
+  startAudioPreflight();
+  audioCaptureStats = createInitialAudioCaptureStats();
+  const sttStarted = await tryStartSTT(windows);
+  const nativeCaptureStarted = sttStarted ? await tryStartNativeAudioCapture(windows) : false;
+  if (!sttStarted || !nativeCaptureStarted) {
+    await stopRealtimeAudioServices();
+    realtimeAudioOwner = 'none';
+    return { ok: false, error: 'start_failed' };
+  }
+
+  try {
+    await appendRecordingAuditLogs(context, localSessionId, consent, 'audio_diagnostic');
+  } catch (error) {
+    logger.warn({ error }, 'audio diagnostic audit log failed');
+    await runRecordingStartFailureCleanup(
+      windows,
+      createRecordingStartFailureCleanupPlan({ reason: 'diagnostic_audit_failed' }),
+    );
+    return { ok: false, error: 'start_failed' };
+  }
+
+  realtimeAudioOwner = 'diagnostic';
+  return { ok: true };
+}
+
+export async function stopAudioDiagnosticSession(
+  windows: IpcWindowAccessors,
+): Promise<AudioDiagnosticSessionResult> {
+  if (
+    callState.status === 'in_call' ||
+    recordingStartPromise ||
+    callEndPromise ||
+    realtimeAudioOwner === 'call'
+  ) {
+    notifyAudioError(windows, '通話中の録音は、商談終了操作でのみ停止します。');
+    return { ok: false, error: 'recording_in_progress' };
+  }
+
+  if (diagnosticStartPromise) {
+    notifyAudioError(windows, '音声診断の開始処理中です。完了後に停止してください。');
+    return { ok: false, error: 'already_running' };
+  }
+
+  if (realtimeAudioOwner !== 'diagnostic') {
+    notifyAudioError(windows, '停止できる standalone 音声診断はありません。');
+    return { ok: false, error: 'not_running' };
+  }
+
+  await stopRealtimeAudioServices();
+  realtimeAudioOwner = 'none';
+  resetAudioPreflight();
+  return { ok: true };
+}
+
+async function runRecordingStartFailureCleanup(
+  windows: IpcWindowAccessors,
+  plan: RecordingStartFailureCleanupPlan,
+): Promise<void> {
+  if (plan.stopAudioServices) {
+    await stopRealtimeAudioServices();
+  }
+
+  if (plan.endCallId) {
+    await appRepositories.calls.endCall(plan.endCallId).catch((error: unknown) => {
+      logger.warn({ error }, 'failed to cleanup unaudited call');
+    });
+  }
+
+  if (plan.resetPreflight) {
+    resetAudioPreflight();
+  }
+  realtimeAudioOwner = 'none';
+  notifyAudioError(windows, plan.userMessage);
+}
+
+function notifyAudioError(windows: IpcWindowAccessors, message: string): void {
+  windows.getControlWindow()?.webContents.send(IPC.audio.onError, message);
 }
 
 async function importAudioAsset(
@@ -964,8 +1175,18 @@ async function importAndProcessAudioAsset(
 }
 
 async function stopNativeAudioCapture(): Promise<void> {
-  await activeNativeAudioCaptureService?.stop();
+  const service = activeNativeAudioCaptureService;
   activeNativeAudioCaptureService = null;
+  await service?.stop();
+}
+
+async function stopRealtimeAudioServices(): Promise<void> {
+  const results = await Promise.allSettled([stopNativeAudioCapture(), stopSTT()]);
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      logger.warn({ error: result.reason }, 'audio service stop failed');
+    }
+  }
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {
@@ -1307,14 +1528,6 @@ export interface StartRecordingSessionInput {
   source: CallSession['source'];
 }
 
-export type StartRecordingSessionResult =
-  | { ok: true; callId: string }
-  | {
-      ok: false;
-      error: 'already_recording' | 'permission_required' | 'start_failed';
-      callId?: string | undefined;
-    };
-
 /**
  * Canonical recording start. Drives the singleton session state (activeCallId,
  * STT client, native capture, overlay) so the GUI button, IPC, and the
@@ -1324,10 +1537,34 @@ export async function startRecordingSession(
   windows: IpcWindowAccessors,
   input: StartRecordingSessionInput,
 ): Promise<StartRecordingSessionResult> {
-  if (callState.status === 'in_call') {
+  const pendingEnd = callEndPromise;
+  if (pendingEnd) {
+    await pendingEnd;
+  }
+
+  if (callState.status === 'in_call' || recordingStartPromise) {
     // Idempotent: a second start (e.g. Shortcut fired twice) must not spawn a
     // parallel call. Report the already-active one instead.
     return { ok: false, error: 'already_recording', callId: activeCallId ?? undefined };
+  }
+
+  recordingStartPromise = startRecordingSessionOnce(windows, input).finally(() => {
+    recordingStartPromise = null;
+  });
+  return recordingStartPromise;
+}
+
+async function startRecordingSessionOnce(
+  windows: IpcWindowAccessors,
+  input: StartRecordingSessionInput,
+): Promise<StartRecordingSessionResult> {
+  if (callState.status === 'in_call') {
+    return { ok: false, error: 'already_recording', callId: activeCallId ?? undefined };
+  }
+
+  if (diagnosticStartPromise || realtimeAudioOwner === 'diagnostic') {
+    notifyAudioError(windows, '音声診断中は録音を開始できません。診断を停止してから再試行してください。');
+    return { ok: false, error: 'start_failed' };
   }
 
   let context: CurrentUserContext;
@@ -1342,25 +1579,58 @@ export async function startRecordingSession(
     return { ok: false, error: 'permission_required' };
   }
 
-  audioCaptureStats = createInitialAudioCaptureStats();
   const startedAt = new Date();
-  const call = await appRepositories.calls.createCall({
-    tenantId: context.tenant.id,
-    organizationId: context.organization.id,
-    source: input.source,
-    industry: 'btob_sales',
-    productId: input.productId,
-    recordingConsent: input.consent,
-    startedAt,
-  });
+  startAudioPreflight(startedAt.getTime());
+  audioCaptureStats = createInitialAudioCaptureStats();
+
+  const sttStarted = await tryStartSTT(windows);
+  const nativeCaptureStarted = sttStarted ? await tryStartNativeAudioCapture(windows) : false;
+  if (!sttStarted || !nativeCaptureStarted) {
+    await stopRealtimeAudioServices();
+    windows.getControlWindow()?.webContents.send(
+      IPC.audio.onError,
+      '録音の開始に失敗しました。音声診断を確認してから再試行してください。',
+    );
+    return { ok: false, error: 'start_failed' };
+  }
+
+  let call: CallSession;
+  try {
+    call = await appRepositories.calls.createCall({
+      tenantId: context.tenant.id,
+      organizationId: context.organization.id,
+      source: input.source,
+      industry: 'btob_sales',
+      productId: input.productId,
+      recordingConsent: input.consent,
+      startedAt,
+    });
+  } catch (error) {
+    await runRecordingStartFailureCleanup(
+      windows,
+      createRecordingStartFailureCleanupPlan({ reason: 'call_create_failed' }),
+    );
+    logger.warn({ error }, 'call record creation failed after audio startup');
+    return { ok: false, error: 'start_failed' };
+  }
+
+  try {
+    await appendRecordingAuditLogs(context, call.id, input.consent, input.source);
+  } catch (error) {
+    logger.warn({ error, callId: call.id }, 'call recording audit log failed');
+    await runRecordingStartFailureCleanup(
+      windows,
+      createRecordingStartFailureCleanupPlan({ reason: 'call_audit_failed', callId: call.id }),
+    );
+    return { ok: false, error: 'start_failed' };
+  }
+
   activeCallId = call.id;
+  realtimeAudioOwner = 'call';
   callState = { status: 'in_call', productId: input.productId, startedAt: startedAt.getTime() };
-  await tryStartSTT(windows);
-  await tryStartNativeAudioCapture(windows);
   setCallModeLogging(true);
   notifyCallState(windows);
   windows.getOverlayWindow()?.showInactive();
-  await appendRecordingAuditLogs(context, call.id, input.consent, input.source);
   logger.info(
     {
       productId: input.productId,
@@ -1391,22 +1661,49 @@ async function persistCurrentTranscript(transcript: Transcript): Promise<void> {
   }
 }
 
-function endCurrentCall(windows: IpcWindowAccessors): void {
-  if (activeCallId) {
-    void appRepositories.calls.endCall(activeCallId).catch((error: unknown) => {
-      logger.warn({ error }, 'failed to persist call end');
-    });
+async function endCurrentCall(windows: IpcWindowAccessors): Promise<void> {
+  if (callEndPromise) {
+    await callEndPromise;
+    return;
   }
+
+  callEndPromise = endCurrentCallOnce(windows).finally(() => {
+    callEndPromise = null;
+  });
+  await callEndPromise;
+}
+
+async function endCurrentCallOnce(windows: IpcWindowAccessors): Promise<void> {
+  const endedCallId = activeCallId;
+  const wasCallActive =
+    endedCallId !== null || callState.status === 'in_call' || realtimeAudioOwner === 'call';
+  if (wasCallActive) {
+    activeObjectionPipelineService?.cancelActive();
+  }
+
+  const endCallPromise = endedCallId
+    ? appRepositories.calls.endCall(endedCallId).catch((error: unknown) => {
+        logger.warn({ error }, 'failed to persist call end');
+      })
+    : Promise.resolve();
+  const stopAudioPromise =
+    realtimeAudioOwner === 'call' ? stopRealtimeAudioServices() : Promise.resolve();
+
+  await Promise.all([stopAudioPromise, endCallPromise]);
+
   activeCallId = null;
+  if (realtimeAudioOwner === 'call') {
+    realtimeAudioOwner = 'none';
+  }
   callState = { status: 'idle' };
-  activeObjectionPipelineService?.cancelActive();
-  void stopNativeAudioCapture();
-  void stopSTT();
+  resetAudioPreflight();
   setCallModeLogging(false);
   notifyCallState(windows);
   windows.getOverlayWindow()?.hide();
-  for (const listener of callEndedListeners) {
-    listener();
+  if (wasCallActive) {
+    for (const listener of callEndedListeners) {
+      listener();
+    }
   }
 }
 
@@ -1420,15 +1717,22 @@ export function onCallEnded(listener: () => void): () => void {
 
 /** True while a sales call is in progress. Used by the updater to defer installs (PRD §32). */
 export function isRecordingInProgress(): boolean {
-  return callState.status === 'in_call';
+  return callState.status === 'in_call' || recordingStartPromise !== null || callEndPromise !== null;
 }
 
 /**
  * Canonical recording stop. Ends whatever session the singleton state holds —
  * so salestalk://record/stop stops a GUI-started session and vice versa.
  */
-export function stopRecordingSession(windows: IpcWindowAccessors): { ok: true; callId: string | null } {
+export async function stopRecordingSession(
+  windows: IpcWindowAccessors,
+): Promise<{ ok: true; callId: string | null }> {
+  const pendingStart = recordingStartPromise;
+  if (pendingStart) {
+    await pendingStart;
+  }
+
   const endedCallId = activeCallId;
-  endCurrentCall(windows);
+  await endCurrentCall(windows);
   return { ok: true, callId: endedCallId };
 }

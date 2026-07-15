@@ -6,6 +6,7 @@ Zoomビデオ商談中にリアルタイムで反論ハンドリングを支援�
 2軸開発計画: [docs/two-track-development-plan.md](./docs/two-track-development-plan.md)
 セルログ AI-Native 計画: [docs/selllog-ai-native-plan.md](./docs/selllog-ai-native-plan.md)
 ローカルSTT移行計画: [docs/apple-speechanalyzer-stt-plan.md](./docs/apple-speechanalyzer-stt-plan.md)
+Meetily 採用計画: [docs/meetily-adoption-plan.md](./docs/meetily-adoption-plan.md)
 エージェント協働: [CLAUDE.md](./CLAUDE.md) (Swift/macOS) / [AGENTS.md](./AGENTS.md) (TS/React/DB)
 
 ## クイックスタート
@@ -27,6 +28,7 @@ npm run dev
 | `npm run lint` | ESLint |
 | `npm run test` | Vitest(単体) |
 | `npm run test:e2e` | Playwright(E2E) |
+| `npm run license:audit` | production 依存の禁止ライセンス監査 |
 | `npm run native:audio:build` | macOS native audio capture addon をビルド |
 | `npm run native:speech:build` | Apple SpeechAnalyzer helper をビルド |
 | `npm run native:audio:smoke -- --duration-ms 5000` | 実機で microphone/system audio chunk 到達を診断 |
@@ -93,6 +95,7 @@ src/
 Mac MVP は `local_first`。Apple SpeechAnalyzer で端末上文字起こしを行い、音声データを外部STTへ送らない。
 
 - system audio と microphone は別々の SpeechAnalyzer helper で処理し、`counterpart` / `self` を入力チャネルで固定する
+- 商談前チェックで権限、native capture、STT、2音源の受信停止を Go / Warning / Blocked 判定する
 - Deepgram は fallback / Cloud β / 非Mac入口用
 - Anthropic は議事録・カンペ・レビュー生成用で、送るのは transcript テキスト
 - コンプラ判定は rule engine first、LLMは補助

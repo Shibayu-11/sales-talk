@@ -116,7 +116,7 @@ if (isCliMode) {
 
   const handleProtocolRecordStop = async (): Promise<void> => {
     const { stopRecordingSession } = await import('./ipc');
-    const result = stopRecordingSession(protocolWindows);
+    const result = await stopRecordingSession(protocolWindows);
     logger.info({ result }, 'protocol record stop');
   };
 

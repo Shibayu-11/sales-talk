@@ -22,7 +22,7 @@ Track A の週次実行計画は [MVP リリースロードマップ](./mvp-rele
 | コンプラルール | 実装済み | 会社別プリセット、商品別ルール、CRUD、承認フロー |
 | 監査ログ | 実装済み | 検索・期間フィルタ・CSV/PDF export・改ざん検証 |
 | 録音同意 | 実装済み | realtime / upload attestation の基礎あり |
-| UI診断 | 実装済み | 診断開始からlocal transcript表示までE2Eで固定 |
+| UI診断 | 実装済み | Go / Warning / Blocked、原因、復旧案、2音源stale、部分起動cleanupをunit / E2Eで固定 |
 | Mobile recorder | PWA実装済み | 録音同意gate + MediaRecorder + 署名upload、fake audio E2E済み。native iOSは保留 |
 | Cloudflare β | deploy可能 | Workers / D1 / R2 / Queues / auth実装済み。残りは本番アカウント設定と運用確認 |
 

@@ -210,16 +210,20 @@ export function App(): JSX.Element {
   const startCall = async (): Promise<void> => {
     setAudioError(null);
     setSttError(null);
-    await window.api.call.start(productId, createRealtimeConsent());
-    setRecordingConsentGranted(false);
+    const result = await window.api.call.start(productId, createRealtimeConsent());
+    if (result.ok) {
+      setRecordingConsentGranted(false);
+    }
     await refreshAudioStatus();
   };
 
   const startAudioDiagnostic = async (): Promise<void> => {
     setAudioError(null);
     setSttError(null);
-    await window.api.audio.start(createRealtimeConsent());
-    setRecordingConsentGranted(false);
+    const result = await window.api.audio.start(createRealtimeConsent());
+    if (result.ok) {
+      setRecordingConsentGranted(false);
+    }
     await refreshAudioStatus();
   };
 
@@ -478,15 +482,18 @@ function DashboardPanel(props: {
       !props.sttError.includes('Deepgram API key is not configured'),
   );
   const sttProviderLabel = sttProviderModeLabel(props.sttProviderMode);
-  const audioDiagnosticActive =
+  const realtimeAudioActive =
     Boolean(props.audioStatus?.nativeCaptureActive) ||
     props.sttState === 'connecting' ||
     props.sttState === 'connected' ||
     props.sttState === 'reconnecting';
+  const callAudioActive = props.call.status === 'in_call' && realtimeAudioActive;
+  const audioDiagnosticActive = realtimeAudioActive && !callAudioActive;
   const canStartAudioDiagnostic = Boolean(
     props.permissions?.screen &&
       props.permissions?.microphone &&
       props.recordingConsentGranted &&
+      props.call.status !== 'in_call' &&
       !audioDiagnosticActive,
   );
 
@@ -553,7 +560,8 @@ function DashboardPanel(props: {
               disabled={
                 !props.permissions?.screen ||
                 !props.permissions?.microphone ||
-                !props.recordingConsentGranted
+                !props.recordingConsentGranted ||
+                audioDiagnosticActive
               }
             >
               通話を開始
@@ -625,7 +633,11 @@ function DashboardPanel(props: {
             )}
           </div>
           <div className="flex gap-2">
-            {audioDiagnosticActive ? (
+            {callAudioActive ? (
+              <span className="rounded bg-zinc-800 px-3 py-1 text-xs text-overlay-success">
+                通話中に自動診断
+              </span>
+            ) : audioDiagnosticActive ? (
               <button
                 type="button"
                 onClick={() => void props.onStopAudioDiagnostic()}
@@ -684,6 +696,7 @@ function DashboardPanel(props: {
           <AudioStatsTile label="Counterpart audio" stats={props.audioStatus?.stats.counterpart} />
           <AudioStatsTile label="Total audio" stats={props.audioStatus?.stats.total} />
         </div>
+        <AudioPreflightPanel report={props.audioStatus?.preflight} />
         <div className="mt-3 space-y-1 text-xs text-zinc-500">
           <div>module: {props.audioStatus?.nativeModule.modulePath ?? '-'}</div>
           {props.audioStatus?.nativeModule.error && (
@@ -768,6 +781,79 @@ function CurrentObjectionPanel(props: {
       ) : (
         <p className="text-xs text-overlay-warning">切り返し生成中</p>
       )}
+    </div>
+  );
+}
+
+function AudioPreflightPanel(props: {
+  report: AudioCaptureStatus['preflight'] | undefined;
+}): JSX.Element {
+  if (!props.report) {
+    return (
+      <div className="mt-4 rounded border border-zinc-800 bg-zinc-950/40 p-4 text-xs text-zinc-500">
+        商談前チェックを取得中です。
+      </div>
+    );
+  }
+
+  const activeChecks = props.report.checks.filter((check) => check.status !== 'pass');
+  const actions = Array.from(
+    new Set(
+      activeChecks
+        .map((check) => check.action)
+        .filter((action): action is string => action !== null),
+    ),
+  );
+  const fallbackAction =
+    props.report.overall === 'go'
+      ? 'このまま商談または音声診断を続行できます。'
+      : '確認中の項目が解消するまで数秒待ってから再確認してください。';
+
+  return (
+    <div className="mt-4 rounded border border-zinc-800 bg-zinc-950/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-zinc-400">商談前チェック</div>
+        <span
+          className={`rounded px-2 py-1 text-[11px] font-semibold ${preflightOverallClass(
+            props.report.overall,
+          )}`}
+        >
+          {preflightOverallLabel(props.report.overall)}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 text-xs md:grid-cols-[1fr_1fr]">
+        <div>
+          <div className="mb-1 font-medium text-zinc-300">原因</div>
+          {activeChecks.length === 0 ? (
+            <div className="text-overlay-success">すべての商談前チェックは正常です。</div>
+          ) : (
+            <ul className="space-y-1">
+              {activeChecks.map((check) => (
+                <li key={check.id} className="flex gap-2">
+                  <span className={preflightCheckStatusClass(check.status)}>
+                    {preflightCheckStatusLabel(check.status)}
+                  </span>
+                  <span className="text-zinc-400">
+                    {check.label}: {check.message}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <div className="mb-1 font-medium text-zinc-300">次アクション</div>
+          {actions.length === 0 ? (
+            <div className="text-zinc-400">{fallbackAction}</div>
+          ) : (
+            <ul className="space-y-1 text-zinc-400">
+              {actions.map((action) => (
+                <li key={action}>・{action}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -913,6 +999,58 @@ function StatusTile(props: { label: string; value: string; ok: boolean }): JSX.E
       <div className={props.ok ? 'text-overlay-success' : 'text-zinc-400'}>{props.value}</div>
     </div>
   );
+}
+
+function preflightOverallLabel(overall: AudioCaptureStatus['preflight']['overall']): string {
+  switch (overall) {
+    case 'go':
+      return 'GO';
+    case 'warning':
+      return '要確認';
+    case 'blocked':
+      return 'BLOCKED';
+  }
+}
+
+function preflightOverallClass(overall: AudioCaptureStatus['preflight']['overall']): string {
+  switch (overall) {
+    case 'go':
+      return 'bg-overlay-success/20 text-overlay-success';
+    case 'warning':
+      return 'bg-overlay-warning/20 text-overlay-warning';
+    case 'blocked':
+      return 'bg-overlay-objection/20 text-overlay-objection';
+  }
+}
+
+function preflightCheckStatusLabel(
+  status: AudioCaptureStatus['preflight']['checks'][number]['status'],
+): string {
+  switch (status) {
+    case 'pass':
+      return '正常';
+    case 'warning':
+      return '要確認';
+    case 'blocked':
+      return '停止';
+    case 'pending':
+      return '確認中';
+  }
+}
+
+function preflightCheckStatusClass(
+  status: AudioCaptureStatus['preflight']['checks'][number]['status'],
+): string {
+  switch (status) {
+    case 'pass':
+      return 'text-overlay-success';
+    case 'warning':
+      return 'text-overlay-warning';
+    case 'blocked':
+      return 'text-overlay-objection';
+    case 'pending':
+      return 'text-zinc-500';
+  }
 }
 
 function formatLastReceivedAt(timestampMs: number | null): string {

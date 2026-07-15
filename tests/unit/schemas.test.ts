@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AudioCaptureStatusSchema,
+  AudioDiagnosticSessionResultSchema,
   AudioChunkSchema,
   CallStartInputSchema,
   CloudflareCredentialInputSchema,
@@ -8,6 +10,7 @@ import {
   OverlayLayerSchema,
   SecretSetInputSchema,
   SonnetResponseOutputSchema,
+  StartRecordingSessionResultSchema,
 } from '../../src/shared/schemas';
 
 const baseSonnetOutput = {
@@ -69,6 +72,89 @@ describe('shared schemas', () => {
         startMs: -1,
         durationMs: 0,
       }),
+    ).toThrow();
+  });
+
+  it('validates the audio status IPC output contract', () => {
+    const status = AudioCaptureStatusSchema.parse({
+      nativeModule: {
+        available: true,
+        contractValid: true,
+        modulePath: '/tmp/audio_capture.node',
+      },
+      permissions: { screen: true, microphone: true },
+      stats: {
+        self: { chunks: 1, bytes: 3200, lastReceivedAtMs: 1_000 },
+        counterpart: { chunks: 1, bytes: 3200, lastReceivedAtMs: 1_000 },
+        total: { chunks: 2, bytes: 6400, lastReceivedAtMs: 1_000 },
+      },
+      sttState: 'connected',
+      nativeCaptureActive: true,
+      preflight: {
+        overall: 'go',
+        startedAtMs: 1,
+        evaluatedAtMs: 2,
+        checks: [
+          {
+            id: 'native_capture',
+            label: 'Native capture',
+            status: 'pass',
+            message: 'native capture は active です。',
+            action: null,
+          },
+        ],
+      },
+    });
+
+    expect(status.preflight.overall).toBe('go');
+    expect(() =>
+      AudioCaptureStatusSchema.parse({
+        ...status,
+        preflight: {
+          ...status.preflight,
+          checks: [{ ...status.preflight.checks[0]!, status: 'unknown' }],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('validates recording and diagnostic result IPC output contracts', () => {
+    expect(
+      StartRecordingSessionResultSchema.parse({
+        ok: true,
+        callId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).toEqual({
+      ok: true,
+      callId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(
+      StartRecordingSessionResultSchema.parse({
+        ok: false,
+        error: 'already_recording',
+        callId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'already_recording',
+      callId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(AudioDiagnosticSessionResultSchema.parse({ ok: true })).toEqual({ ok: true });
+    expect(
+      AudioDiagnosticSessionResultSchema.parse({
+        ok: false,
+        error: 'recording_in_progress',
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'recording_in_progress',
+    });
+
+    expect(() =>
+      StartRecordingSessionResultSchema.parse({ ok: false, error: 'not_running' }),
+    ).toThrow();
+    expect(() =>
+      AudioDiagnosticSessionResultSchema.parse({ ok: false, error: 'already_recording' }),
     ).toThrow();
   });
 

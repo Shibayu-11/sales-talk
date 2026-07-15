@@ -22,6 +22,7 @@ import type {
   AudioImportProcessResult,
   CloudAudioUploadProcessResult,
   AudioSttJob,
+  AudioDiagnosticSessionResult,
   TaskOwner,
   MeetingSource,
   ComplianceRule,
@@ -37,6 +38,7 @@ import type {
   OrganizationRole,
   OrganizationUser,
   TranscriptSegment,
+  StartRecordingSessionResult,
 } from '@shared/types';
 
 // Keep preload self-contained: sandboxed preload cannot require emitted local chunks.
@@ -192,7 +194,10 @@ const api: RendererApi = {
   },
   call: {
     list: (): Promise<CallSession[]> => ipcRenderer.invoke(IPC.call.list),
-    start: (productId: ProductId, consent: RecordingConsent) =>
+    start: (
+      productId: ProductId,
+      consent: RecordingConsent,
+    ): Promise<StartRecordingSessionResult> =>
       ipcRenderer.invoke(IPC.call.start, { productId, consent }),
     end: () => ipcRenderer.invoke(IPC.call.end),
     setProduct: (productId: ProductId) => ipcRenderer.invoke(IPC.call.setProduct, productId),
@@ -208,8 +213,9 @@ const api: RendererApi = {
   },
   audio: {
     getStatus: () => ipcRenderer.invoke(IPC.audio.status),
-    start: (consent: RecordingConsent) => ipcRenderer.invoke(IPC.audio.start, { consent }),
-    stop: () => ipcRenderer.invoke(IPC.audio.stop),
+    start: (consent: RecordingConsent): Promise<AudioDiagnosticSessionResult> =>
+      ipcRenderer.invoke(IPC.audio.start, { consent }),
+    stop: (): Promise<AudioDiagnosticSessionResult> => ipcRenderer.invoke(IPC.audio.stop),
     onError: (cb) => {
       const listener = (_: unknown, message: string) => cb(message);
       ipcRenderer.on(IPC.audio.onError, listener);

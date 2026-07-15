@@ -21,7 +21,8 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 | salestalk CLI(record/transcribe/minutes、JSON 出力) | 完成 |
 | Shortcuts / Spotlight 連携(salestalk:// URL スキーム) | 完成(実機での状態共有は要検証) |
 | 提案カードのナレッジ出典表示(根拠ナレッジ N件 + 関連度%) | 完成 |
-| テスト(unit 242 + E2E 7) | 全グリーン |
+| テスト(unit 266 + E2E 7) | 全グリーン |
+| 商談前音声 preflight | 完成。Go / Warning / Blocked、原因、復旧案、部分起動cleanup、型付きIPCを自動検証済み |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
 | W5: オンボーディング + electron-updater | 完成、unit / E2E済み。実配布環境での更新確認は未実施 |
 | DMG 配布・公証 | 未着手 |
@@ -70,6 +71,8 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 
 - [x] 実機検証チェックリスト作成 → [live-zoom-e2e-checklist.md](./live-zoom-e2e-checklist.md)
 - [x] fake native audio + fake SpeechAnalyzer helper でself/counterpartの2チャネル自動E2E
+- [x] 商談前音声 preflight(権限 / native / STT / 2音源 / stale)と Go / Warning / Blocked UI
+- [x] native/STT部分起動、監査ログ失敗、start/end競合時に録音を残さないcleanup
 - [ ] Zoom テスト通話で system audio → local STT → transcript 表示を確認
 - [ ] 反論を意図的に発話 → Haiku 検知 → Sonnet 生成 → Overlay 表示の通し確認
 - [x] レイテンシ計測ログを pipeline に仕込む(`objection_pipeline_latency` メトリクス)

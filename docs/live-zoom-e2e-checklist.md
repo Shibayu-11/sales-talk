@@ -6,9 +6,10 @@
 
 ## 0. 前提準備(検証当日より前に)
 
-**コード・ビルド側は 2026-07-15 に再検証済み**(unit 242 + E2E 7 全グリーン、ネイティブ binary arm64 ビルド成功、
+**コード・ビルド側は 2026-07-15 に再検証済み**(unit 266 + E2E 7 全グリーン、ネイティブ binary arm64 ビルド成功、
 DMG packaging 構成・反論パイプライン・レイテンシ計測・オーバーレイ reducer すべて確認)。
 system audio / microphone は別々の SpeechAnalyzer helper へ送信し、self発話はpipelineを発火せず、counterpart反論だけがOverlayを発火する自動E2Eも通過済み。
+商談前チェックは権限、native module、native capture、STT、self / counterpart、音声鮮度を判定し、部分起動や監査ログ失敗時に録音を残さない。
 残るのは「実機の生 Zoom 通話で通しで動くか」だけ。当日は下記を揃えれば即実行できる:
 
 - [x] `npm run native:audio:build && npm run native:speech:build` が成功する(検証済み・arm64)
@@ -28,6 +29,8 @@ npm run dev 2>&1 | tee /tmp/salestalk-e2e-$(date +%Y%m%d-%H%M).log
 
 - [ ] Control ウィンドウが開く
 - [ ] 設定 → STT モードが `local_first` になっている
+- [ ] 同意取得後に「診断開始」→ 自分と相手の音声を出し、商談前チェックが `GO` になる
+- [ ] `要確認` / `BLOCKED` の場合は表示された原因と次アクションを記録してから復旧する
 - [ ] 起動ログに `resolved stt provider` が出て `providerKind: "apple_speech_analyzer"` である
   - `deepgram_streaming` + `degradedReason: "apple_speech_analyzer_unavailable"` の場合は縮退で動いている。原因(macOS バージョン / helper バイナリ)を記録
 

@@ -7,6 +7,7 @@ test('control dashboard loads with sandboxed preload and actionable diagnostics'
   await withSalesTalkApp(async ({ controlWindow }) => {
     await expect(controlWindow.getByText('音声 / STT 診断')).toBeVisible();
     await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
+    await expect(controlWindow.getByText('商談前チェック')).toBeVisible();
     await expect(controlWindow.getByText(/顧客へ録音・文字起こし/)).toBeVisible();
     await expect(controlWindow.getByText('Apple SpeechAnalyzer優先')).toBeVisible();
     await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
@@ -242,21 +243,39 @@ test('audio diagnostic channel-separated local-first SpeechAnalyzer routes self 
       const overlayWindow = await waitForOverlayWindow(electronApp);
 
       await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
-      await controlWindow.getByRole('button', { name: 'mock 通話開始' }).click();
-      await expect(controlWindow.getByText('状態: in_call')).toBeVisible();
-
       await controlWindow.getByLabel(/顧客へ録音・文字起こし/).check();
-      await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeEnabled();
-      await controlWindow.getByRole('button', { name: '診断開始' }).click();
+      await controlWindow.getByRole('button', { name: '通話を開始' }).click();
+      await expect(controlWindow.getByText('状態: in_call')).toBeVisible();
+      await expect(controlWindow.getByText('通話中に自動診断')).toBeVisible();
 
+      await expect
+        .poll(() =>
+          controlWindow.evaluate(async () => {
+            const status = await window.api.audio.getStatus();
+            return { nativeCaptureActive: status.nativeCaptureActive, sttState: status.sttState };
+          }),
+        )
+        .toEqual({ nativeCaptureActive: true, sttState: 'connected' });
       await expect(controlWindow.getByText('STT').locator('..').getByText('connected')).toBeVisible();
-      await expect(controlWindow.getByText('停止')).toBeVisible();
+      await expect(controlWindow.getByRole('button', { name: '停止' })).toHaveCount(0);
       await expect.poll(() => readTextFile(fakeNative.logPath)).toContain('emit:microphone');
       await expect.poll(() => readTextFile(fakeSpeech.logPath)).toContain('audio:こちらで確認します');
       await expect(controlWindow.getByText(/こちらで確認します/)).toBeVisible();
       await expect(controlWindow.getByText(/final \/ self/)).toBeVisible();
       await expect(controlWindow.getByText('検知待機中')).toBeVisible();
       await expect(overlayWindow.getByText('条件を分解')).toHaveCount(0);
+
+      await controlWindow.evaluate(async () => {
+        await window.api.audio.stop();
+      });
+      await expect
+        .poll(() =>
+          controlWindow.evaluate(async () => {
+            const status = await window.api.audio.getStatus();
+            return { nativeCaptureActive: status.nativeCaptureActive, sttState: status.sttState };
+          }),
+        )
+        .toEqual({ nativeCaptureActive: true, sttState: 'connected' });
 
       await writeFile(fakeNative.triggerSystemPath, '1', 'utf8');
 
@@ -266,11 +285,70 @@ test('audio diagnostic channel-separated local-first SpeechAnalyzer routes self 
         controlWindow.getByText('価格が高いので今は判断できません', { exact: true }).first(),
       ).toBeVisible();
       await expect(controlWindow.getByText(/final \/ counterpart/)).toBeVisible();
+      await expect(controlWindow.getByText('GO')).toBeVisible();
+      await expect
+        .poll(() =>
+          controlWindow.evaluate(async () => {
+            const status = await window.api.audio.getStatus();
+            return {
+              nativeCaptureActive: status.nativeCaptureActive,
+              sttState: status.sttState,
+              preflightOverall: status.preflight.overall,
+            };
+          }),
+        )
+        .toEqual({
+          nativeCaptureActive: true,
+          sttState: 'connected',
+          preflightOverall: 'go',
+        });
       await expect(controlWindow.getByText('confidence: 92%')).toBeVisible();
       await expect(overlayWindow.getByText('条件を分解')).toBeVisible();
 
+      await controlWindow.getByRole('button', { name: '通話を終了' }).click();
+      await expect(controlWindow.getByText('状態: idle')).toBeVisible();
+      await expect
+        .poll(() =>
+          controlWindow.evaluate(async () => {
+            const status = await window.api.audio.getStatus();
+            return {
+              nativeCaptureActive: status.nativeCaptureActive,
+              sttState: status.sttState,
+              preflightStartedAtMs: status.preflight.startedAtMs,
+            };
+          }),
+        )
+        .toEqual({
+          nativeCaptureActive: false,
+          sttState: 'disconnected',
+          preflightStartedAtMs: null,
+        });
+
+      await controlWindow.getByLabel(/顧客へ録音・文字起こし/).check();
+      await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeEnabled();
+      await controlWindow.getByRole('button', { name: '診断開始' }).click();
+      await expect(controlWindow.getByText('STT').locator('..').getByText('connected')).toBeVisible();
+      await expect(controlWindow.getByRole('button', { name: '停止' })).toBeVisible();
+      await controlWindow.getByLabel(/顧客へ録音・文字起こし/).check();
+      await expect(controlWindow.getByRole('button', { name: '通話を開始' })).toBeDisabled();
       await controlWindow.getByRole('button', { name: '停止' }).click();
       await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
+      await expect
+        .poll(() =>
+          controlWindow.evaluate(async () => {
+            const status = await window.api.audio.getStatus();
+            return {
+              nativeCaptureActive: status.nativeCaptureActive,
+              sttState: status.sttState,
+              preflightStartedAtMs: status.preflight.startedAtMs,
+            };
+          }),
+        )
+        .toEqual({
+          nativeCaptureActive: false,
+          sttState: 'disconnected',
+          preflightStartedAtMs: null,
+        });
     },
     {
       env: {
@@ -394,7 +472,6 @@ exports.onAudioChunk = (cb) => { audioCallback = cb; };
 exports.onError = (cb) => { errorCallback = cb; void errorCallback; };
 exports.startCapture = async (config) => {
   const sessionId = 'fake-native-session';
-  let systemEmitted = false;
   const emitChunk = (source, fill) => {
     appendFileSync(logPath, 'emit:' + source + '\\n');
     audioCallback?.({
@@ -408,13 +485,11 @@ exports.startCapture = async (config) => {
   emitChunk('microphone', 1);
   intervalId = setInterval(() => {
     if (!audioCallback) return;
-    if (!systemEmitted && existsSync(triggerSystemPath)) {
-      systemEmitted = true;
+    emitChunk('microphone', 1);
+    if (existsSync(triggerSystemPath)) {
       emitChunk('system', 2);
-      clearInterval(intervalId);
-      intervalId = null;
     }
-  }, 100);
+  }, 500);
   return { sessionId };
 };
 exports.stopCapture = async () => {
@@ -441,7 +516,7 @@ const selfAudioData = ${JSON.stringify(selfAudioData)};
 process.stdout.write(JSON.stringify({ type: 'ready', sampleRate: 16000 }) + '\\n');
 process.stdin.setEncoding('utf8');
 let buffer = '';
-let emitted = false;
+const emittedTexts = new Set();
 process.stdin.on('data', (chunk) => {
   buffer += chunk;
   for (;;) {
@@ -451,11 +526,12 @@ process.stdin.on('data', (chunk) => {
     buffer = buffer.slice(index + 1);
     const message = JSON.parse(line);
     if (message.type === 'stop') process.exit(0);
-    if (message.type === 'audio' && !emitted) {
-      emitted = true;
+    if (message.type === 'audio') {
       const text = message.data === selfAudioData
         ? 'こちらで確認します'
         : '価格が高いので今は判断できません';
+      if (emittedTexts.has(text)) continue;
+      emittedTexts.add(text);
       appendFileSync(logPath, 'audio:' + text + '\\n');
       process.stdout.write(JSON.stringify({
         type: 'transcript',

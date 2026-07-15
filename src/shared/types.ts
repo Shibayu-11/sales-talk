@@ -132,6 +132,32 @@ export interface AudioCaptureStats {
   total: AudioCaptureSourceStats;
 }
 
+export type AudioPreflightOverall = 'go' | 'warning' | 'blocked';
+export type AudioPreflightCheckStatus = 'pass' | 'warning' | 'blocked' | 'pending';
+export type AudioPreflightCheckId =
+  | 'permissions'
+  | 'native_module'
+  | 'native_capture'
+  | 'stt_connection'
+  | 'self_audio'
+  | 'counterpart_audio'
+  | 'audio_freshness';
+
+export interface AudioPreflightCheck {
+  id: AudioPreflightCheckId;
+  label: string;
+  status: AudioPreflightCheckStatus;
+  message: string;
+  action: string | null;
+}
+
+export interface AudioPreflightReport {
+  overall: AudioPreflightOverall;
+  checks: AudioPreflightCheck[];
+  startedAtMs: number | null;
+  evaluatedAtMs: number;
+}
+
 export interface AudioCaptureStatus {
   nativeModule: {
     available: boolean;
@@ -143,7 +169,28 @@ export interface AudioCaptureStatus {
   stats: AudioCaptureStats;
   sttState: ConnectionState;
   nativeCaptureActive: boolean;
+  preflight: AudioPreflightReport;
 }
+
+export type AudioDiagnosticSessionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error:
+        | 'already_running'
+        | 'permission_required'
+        | 'recording_in_progress'
+        | 'start_failed'
+        | 'not_running';
+    };
+
+export type StartRecordingSessionResult =
+  | { ok: true; callId: string }
+  | {
+      ok: false;
+      error: 'already_recording' | 'permission_required' | 'start_failed';
+      callId?: string | undefined;
+    };
 
 export interface AppInfo {
   bundleId: string;
@@ -581,7 +628,7 @@ export interface RendererApi {
   };
   call: {
     list(): Promise<CallSession[]>;
-    start(productId: ProductId, consent: RecordingConsent): Promise<void>;
+    start(productId: ProductId, consent: RecordingConsent): Promise<StartRecordingSessionResult>;
     end(): Promise<void>;
     setProduct(productId: ProductId): Promise<void>;
     onState(cb: (state: CallState) => void): () => void;
@@ -591,8 +638,8 @@ export interface RendererApi {
   };
   audio: {
     getStatus(): Promise<AudioCaptureStatus>;
-    start(consent: RecordingConsent): Promise<void>;
-    stop(): Promise<void>;
+    start(consent: RecordingConsent): Promise<AudioDiagnosticSessionResult>;
+    stop(): Promise<AudioDiagnosticSessionResult>;
     onError(cb: (message: string) => void): () => void;
   };
   organizations: {

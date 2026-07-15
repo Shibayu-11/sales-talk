@@ -198,8 +198,13 @@ AVAudioPCMBuffer* PCMBufferFromSampleBuffer(CMSampleBufferRef sampleBuffer) {
 - (BOOL)startWithTargetBundleId:(NSString*)targetBundleId sampleRate:(NSInteger)sampleRate error:(NSError**)error {
   self.sampleRate = sampleRate;
   BOOL microphoneStarted = [self startMicrophone:error];
+  if (!microphoneStarted) {
+    [self stop];
+    return NO;
+  }
+
   [self startSystemAudioForBundleId:targetBundleId];
-  return microphoneStarted;
+  return YES;
 }
 
 - (BOOL)startMicrophone:(NSError**)error {
@@ -377,6 +382,8 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
                                               error:&error];
   if (!started) {
     std::string message = error ? error.localizedDescription.UTF8String : "Failed to start native audio capture";
+    [controller stop];
+    controller = nil;
     deferred.Reject(Napi::Error::New(env, message).Value());
     return deferred.Promise();
   }
