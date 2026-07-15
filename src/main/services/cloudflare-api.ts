@@ -3,8 +3,13 @@ import { readFile, stat } from 'node:fs/promises';
 import type {
   AudioSttJob,
   AudioSttJobStatus,
+  CloudActionTokenResult,
   CloudAudioUploadProcessResult,
   CloudflareConnectionStatus,
+  CloudOrganization,
+  CloudOrganizationUser,
+  MembershipStatus,
+  OrganizationRole,
   ProductId,
 } from '@shared/types';
 import { secretStore } from './secrets';
@@ -118,13 +123,16 @@ export async function logoutCloudflare(
   const token = await (
     input.getSessionToken ?? (() => secretStore.get('cloudflare_session_token'))
   )();
-  if (token) {
-    await (input.fetch ?? fetch)(`${resolveApiUrl(input.apiUrl)}/v1/auth/logout`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}` },
-    });
+  try {
+    if (token) {
+      await (input.fetch ?? fetch)(`${resolveApiUrl(input.apiUrl)}/v1/auth/logout`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+      });
+    }
+  } finally {
+    await (input.deleteSessionToken ?? (() => secretStore.delete('cloudflare_session_token')))();
   }
-  await (input.deleteSessionToken ?? (() => secretStore.delete('cloudflare_session_token')))();
   return connectionStatus(resolveApiUrl(input.apiUrl), true, false, 'session_not_configured');
 }
 
@@ -163,6 +171,127 @@ export async function changeCloudflarePassword(
     nextToken,
   );
   return connectionStatus(apiUrl, true, true, null);
+}
+
+export async function acceptCloudflareInvitation(
+  input: { token: string; password: string; displayName?: string | undefined },
+  options: CloudflareApiOptions = {},
+): Promise<CloudflareConnectionStatus> {
+  return completeCloudflareTokenPasswordAction('/v1/auth/invitations/accept', input, options);
+}
+
+export async function completeCloudflarePasswordReset(
+  input: { token: string; password: string },
+  options: CloudflareApiOptions = {},
+): Promise<CloudflareConnectionStatus> {
+  return completeCloudflareTokenPasswordAction('/v1/auth/password-resets/complete', input, options);
+}
+
+export async function listCloudflareOrganizationUsers(
+  options: CloudflareApiOptions = {},
+): Promise<CloudOrganizationUser[]> {
+  const response = await authenticatedCloudflareRequest('/v1/organization/users', options);
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'cloud_users_fetch_failed'));
+  }
+  const body = await response.json();
+  if (!Array.isArray(body)) {
+    throw new Error('invalid_cloud_users_response');
+  }
+  return body.map((entry) => {
+    const user = readCloudOrganizationUser(entry);
+    if (!user) {
+      throw new Error('invalid_cloud_user_response');
+    }
+    return user;
+  });
+}
+
+export async function listCloudflareOrganizations(
+  options: CloudflareApiOptions = {},
+): Promise<CloudOrganization[]> {
+  const response = await authenticatedCloudflareRequest('/v1/organizations', options);
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'cloud_organizations_fetch_failed'));
+  }
+  const body = await response.json();
+  if (!Array.isArray(body)) {
+    throw new Error('invalid_cloud_organizations_response');
+  }
+  return body.map((entry) => {
+    const organization = readCloudOrganization(entry);
+    if (!organization) {
+      throw new Error('invalid_cloud_organization_response');
+    }
+    return organization;
+  });
+}
+
+export async function createCloudflareInvitation(
+  input: {
+    email: string;
+    displayName?: string | undefined;
+    role: OrganizationRole;
+    organizationId?: string | undefined;
+  },
+  options: CloudflareApiOptions = {},
+): Promise<CloudActionTokenResult> {
+  const response = await authenticatedCloudflareRequest('/v1/organization/invitations', options, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'invitation_create_failed'));
+  }
+  const result = readCloudActionTokenResult(await response.json());
+  if (!result) {
+    throw new Error('invalid_invitation_response');
+  }
+  return result;
+}
+
+export async function issueCloudflarePasswordReset(
+  membershipId: string,
+  options: CloudflareApiOptions = {},
+): Promise<CloudActionTokenResult> {
+  const response = await authenticatedCloudflareRequest('/v1/organization/password-resets', options, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ membershipId }),
+  });
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'password_reset_issue_failed'));
+  }
+  const result = readCloudActionTokenResult(await response.json());
+  if (!result) {
+    throw new Error('invalid_password_reset_response');
+  }
+  return result;
+}
+
+export async function setCloudflareMembershipStatus(
+  membershipId: string,
+  status: Exclude<MembershipStatus, 'invited'>,
+  options: CloudflareApiOptions = {},
+): Promise<CloudOrganizationUser> {
+  const response = await authenticatedCloudflareRequest(
+    `/v1/organization/memberships/${encodeURIComponent(membershipId)}/status`,
+    options,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'membership_status_update_failed'));
+  }
+  const user = readCloudOrganizationUser(await response.json());
+  if (!user) {
+    throw new Error('invalid_membership_status_response');
+  }
+  return user;
 }
 
 export async function uploadAudioToCloudAndProcess(
@@ -312,6 +441,55 @@ async function fetchTranscriptCount(
   return Array.isArray(body) ? body.length : 0;
 }
 
+async function completeCloudflareTokenPasswordAction(
+  path: string,
+  input: { token: string; password: string; displayName?: string | undefined },
+  options: CloudflareApiOptions,
+): Promise<CloudflareConnectionStatus> {
+  const request = options.fetch ?? fetch;
+  const apiUrl = resolveApiUrl(options.apiUrl);
+  const response = await request(`${apiUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    return connectionStatus(
+      apiUrl,
+      true,
+      false,
+      await responseError(response, 'token_password_action_failed'),
+    );
+  }
+  const token = readToken(await response.json());
+  if (!token) {
+    return connectionStatus(apiUrl, true, false, 'invalid_token_password_action_response');
+  }
+  await (options.saveSessionToken ?? ((value) => secretStore.set('cloudflare_session_token', value)))(
+    token,
+  );
+  return connectionStatus(apiUrl, true, true, null);
+}
+
+async function authenticatedCloudflareRequest(
+  path: string,
+  options: CloudflareApiOptions,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await (
+    options.getSessionToken ?? (() => secretStore.get('cloudflare_session_token'))
+  )();
+  if (!token) {
+    throw new Error('cloudflare_session_not_configured');
+  }
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${token}`);
+  return (options.fetch ?? fetch)(`${resolveApiUrl(options.apiUrl)}${path}`, {
+    ...init,
+    headers,
+  });
+}
+
 function resolveApiUrl(apiUrl?: string): string {
   return apiUrl ?? process.env.CLOUDFLARE_API_URL ?? DEFAULT_API_URL;
 }
@@ -330,6 +508,99 @@ function readToken(value: unknown): string | null {
     return null;
   }
   return value.token;
+}
+
+function readCloudActionTokenResult(value: unknown): CloudActionTokenResult | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const type = value.type === 'invite' || value.type === 'password_reset' ? value.type : null;
+  const token = readString(value.token);
+  const expiresAt = readString(value.expiresAt);
+  const membershipId = readString(value.membershipId);
+  const userId = readString(value.userId);
+  const organizationId = readString(value.organizationId);
+  if (!type || !token || !expiresAt || !membershipId || !userId || !organizationId) {
+    return null;
+  }
+  return { type, token, expiresAt, membershipId, userId, organizationId };
+}
+
+function readCloudOrganizationUser(value: unknown): CloudOrganizationUser | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = readString(value.id);
+  const email = readString(value.email);
+  const displayName = readString(value.displayName);
+  const membershipId = readString(value.membershipId);
+  const tenantId = readString(value.tenantId);
+  const organizationId = readString(value.organizationId);
+  const organizationName = readString(value.organizationName);
+  const organizationType = readString(value.organizationType);
+  const role = readOrganizationRole(value.role);
+  const status = readMembershipStatus(value.status);
+  const createdAt = readString(value.createdAt);
+  const updatedAt = readString(value.updatedAt);
+  if (
+    !id ||
+    !email ||
+    !displayName ||
+    !membershipId ||
+    !tenantId ||
+    !organizationId ||
+    !organizationName ||
+    !organizationType ||
+    !role ||
+    !status ||
+    typeof value.hasCredential !== 'boolean' ||
+    typeof value.mustResetPassword !== 'boolean' ||
+    !createdAt ||
+    !updatedAt
+  ) {
+    return null;
+  }
+  return {
+    id,
+    email,
+    displayName,
+    membershipId,
+    tenantId,
+    organizationId,
+    organizationName,
+    organizationType,
+    role,
+    status,
+    hasCredential: value.hasCredential,
+    mustResetPassword: value.mustResetPassword,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function readCloudOrganization(value: unknown): CloudOrganization | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = readString(value.id);
+  const tenantId = readString(value.tenantId);
+  const parentOrganizationId = readNullableString(value.parentOrganizationId);
+  const type = readOrganizationType(value.type);
+  const name = readString(value.name);
+  const createdAt = readString(value.createdAt);
+  const updatedAt = readString(value.updatedAt);
+  if (!id || !tenantId || !type || !name || !createdAt || !updatedAt) {
+    return null;
+  }
+  return {
+    id,
+    tenantId,
+    parentOrganizationId,
+    type,
+    name,
+    createdAt,
+    updatedAt,
+  };
 }
 
 interface UploadUrlResponse {
@@ -441,6 +712,24 @@ function readAudioSttJobStatus(value: unknown): AudioSttJobStatus | null {
   return value === 'queued' || value === 'running' || value === 'completed' || value === 'failed'
     ? value
     : null;
+}
+
+function readOrganizationRole(value: unknown): OrganizationRole | null {
+  return value === 'insurer_admin' ||
+    value === 'agency_admin' ||
+    value === 'manager' ||
+    value === 'agent' ||
+    value === 'auditor'
+    ? value
+    : null;
+}
+
+function readMembershipStatus(value: unknown): MembershipStatus | null {
+  return value === 'active' || value === 'invited' || value === 'disabled' ? value : null;
+}
+
+function readOrganizationType(value: unknown): CloudOrganization['type'] | null {
+  return value === 'insurer' || value === 'agency' || value === 'internal' ? value : null;
 }
 
 function mimeTypeForFile(fileName: string): string {

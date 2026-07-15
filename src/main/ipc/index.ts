@@ -15,7 +15,11 @@ import {
   AudioSttJobRunInputSchema,
   CallIdInputSchema,
   CallStartInputSchema,
+  CloudflareTokenPasswordInputSchema,
   CloudflareCredentialInputSchema,
+  CloudOrganizationInvitationInputSchema,
+  CloudOrganizationMembershipStatusInputSchema,
+  CloudOrganizationPasswordResetInputSchema,
   ComplianceRuleCreateInputSchema,
   ComplianceRuleDeleteInputSchema,
   ComplianceRuleUpdateInputSchema,
@@ -102,11 +106,18 @@ import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
 import { resolveImportSTTProvider } from '../services/import-stt-provider-resolver';
 import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
 import {
+  acceptCloudflareInvitation,
   bootstrapCloudflareCredential,
   changeCloudflarePassword,
+  completeCloudflarePasswordReset,
+  createCloudflareInvitation,
   getCloudflareConnectionStatus,
+  issueCloudflarePasswordReset,
+  listCloudflareOrganizations,
+  listCloudflareOrganizationUsers,
   loginCloudflare,
   logoutCloudflare,
+  setCloudflareMembershipStatus,
   uploadAudioToCloudAndProcess,
 } from '../services/cloudflare-api';
 
@@ -178,6 +189,28 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.cloudflare.changePassword, async (_event, payload: unknown) => {
     const input = CloudflareCredentialInputSchema.pick({ password: true }).parse(payload);
     return changeCloudflarePassword(input.password);
+  });
+  ipcMain.handle(IPC.cloudflare.acceptInvitation, async (_event, payload: unknown) => {
+    const input = CloudflareTokenPasswordInputSchema.parse(payload);
+    return acceptCloudflareInvitation(input);
+  });
+  ipcMain.handle(IPC.cloudflare.completePasswordReset, async (_event, payload: unknown) => {
+    const input = CloudflareTokenPasswordInputSchema.omit({ displayName: true }).parse(payload);
+    return completeCloudflarePasswordReset(input);
+  });
+  ipcMain.handle(IPC.cloudflare.organizationsList, () => listCloudflareOrganizations());
+  ipcMain.handle(IPC.cloudflare.usersList, () => listCloudflareOrganizationUsers());
+  ipcMain.handle(IPC.cloudflare.createInvitation, async (_event, payload: unknown) => {
+    const input = CloudOrganizationInvitationInputSchema.parse(payload);
+    return createCloudflareInvitation(input);
+  });
+  ipcMain.handle(IPC.cloudflare.issuePasswordReset, async (_event, payload: unknown) => {
+    const input = CloudOrganizationPasswordResetInputSchema.parse(payload);
+    return issueCloudflarePasswordReset(input.membershipId);
+  });
+  ipcMain.handle(IPC.cloudflare.setMembershipStatus, async (_event, payload: unknown) => {
+    const input = CloudOrganizationMembershipStatusInputSchema.parse(payload);
+    return setCloudflareMembershipStatus(input.membershipId, input.status);
   });
   ipcMain.handle(IPC.cloudflare.logout, () => logoutCloudflare());
 

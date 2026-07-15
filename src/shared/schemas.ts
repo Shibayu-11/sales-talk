@@ -21,6 +21,7 @@ export const OrganizationRoleSchema = z.enum([
   'agent',
   'auditor',
 ]);
+export const MembershipStatusSchema = z.enum(['active', 'invited', 'disabled']);
 export const OrganizationPermissionSchema = z.enum([
   'recording:start',
   'calls:read',
@@ -274,6 +275,11 @@ export const AuditActionSchema = z.enum([
   'review_task.status_updated',
   'call.audio_imported',
   'stt_job.created',
+  'organization.invitation_created',
+  'organization.invitation_accepted',
+  'organization.password_reset_issued',
+  'organization.password_reset_completed',
+  'organization.membership_status_updated',
 ]);
 
 export const ComplianceRuleSchema = z.object({
@@ -578,6 +584,7 @@ export const OrganizationMembershipSchema = z.object({
   organizationId: z.string().uuid(),
   userId: z.string().uuid(),
   role: OrganizationRoleSchema,
+  status: MembershipStatusSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -701,6 +708,64 @@ export const SecretKeySchema = z.enum([
 export const CloudflareCredentialInputSchema = z.object({
   email: z.string().trim().email().max(320),
   password: z.string().min(12).max(200),
+});
+
+export const CloudflareTokenPasswordInputSchema = z.object({
+  token: z.string().trim().min(32).max(512),
+  password: z.string().min(12).max(200),
+  displayName: z.string().trim().min(1).max(120).optional(),
+});
+
+export const CloudOrganizationInvitationInputSchema = z.object({
+  email: z.string().trim().email().max(320),
+  displayName: z.string().trim().min(1).max(120).optional(),
+  role: OrganizationRoleSchema,
+  organizationId: z.string().uuid().optional(),
+});
+
+export const CloudOrganizationPasswordResetInputSchema = z.object({
+  membershipId: z.string().uuid(),
+});
+
+export const CloudOrganizationMembershipStatusInputSchema = z.object({
+  membershipId: z.string().uuid(),
+  status: z.enum(['active', 'disabled']),
+});
+
+export const CloudOrganizationUserSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  displayName: z.string().min(1),
+  membershipId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  organizationName: z.string().min(1),
+  organizationType: z.string().min(1),
+  role: OrganizationRoleSchema,
+  status: MembershipStatusSchema,
+  hasCredential: z.boolean(),
+  mustResetPassword: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const CloudOrganizationSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  parentOrganizationId: z.string().uuid().nullable(),
+  type: OrganizationTypeSchema,
+  name: z.string().min(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const CloudActionTokenResultSchema = z.object({
+  type: z.enum(['invite', 'password_reset']),
+  token: z.string().min(32),
+  expiresAt: z.string(),
+  membershipId: z.string().uuid(),
+  userId: z.string().uuid(),
+  organizationId: z.string().uuid(),
 });
 
 export const SecretSetInputSchema = z.object({

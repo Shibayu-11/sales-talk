@@ -14,6 +14,7 @@ export type MeetingSource =
 export type Industry = 'btob_sales' | 'insurance';
 export type OrganizationType = 'insurer' | 'agency' | 'internal';
 export type OrganizationRole = 'insurer_admin' | 'agency_admin' | 'manager' | 'agent' | 'auditor';
+export type MembershipStatus = 'active' | 'invited' | 'disabled';
 export type OrganizationPermission =
   | 'recording:start'
   | 'calls:read'
@@ -206,6 +207,42 @@ export interface CloudflareConnectionStatus {
   error: string | null;
 }
 
+export interface CloudOrganizationUser {
+  id: string;
+  email: string;
+  displayName: string;
+  membershipId: string;
+  tenantId: string;
+  organizationId: string;
+  organizationName: string;
+  organizationType: string;
+  role: OrganizationRole;
+  status: MembershipStatus;
+  hasCredential: boolean;
+  mustResetPassword: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloudOrganization {
+  id: string;
+  tenantId: string;
+  parentOrganizationId: string | null;
+  type: OrganizationType;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloudActionTokenResult {
+  type: 'invite' | 'password_reset';
+  token: string;
+  expiresAt: string;
+  membershipId: string;
+  userId: string;
+  organizationId: string;
+}
+
 export interface AnthropicDiagnosticResult {
   configured: boolean;
   authenticated: boolean;
@@ -270,6 +307,7 @@ export interface OrganizationMembership {
   organizationId: string;
   userId: string;
   role: OrganizationRole;
+  status?: MembershipStatus | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -428,7 +466,12 @@ export type AuditAction =
   | 'review_task.created'
   | 'review_task.status_updated'
   | 'call.audio_imported'
-  | 'stt_job.created';
+  | 'stt_job.created'
+  | 'organization.invitation_created'
+  | 'organization.invitation_accepted'
+  | 'organization.password_reset_issued'
+  | 'organization.password_reset_completed'
+  | 'organization.membership_status_updated';
 
 export interface ComplianceRule {
   id: string;
@@ -618,6 +661,25 @@ export interface RendererApi {
     bootstrap(email: string, password: string): Promise<CloudflareConnectionStatus>;
     login(email: string, password: string): Promise<CloudflareConnectionStatus>;
     changePassword(password: string): Promise<CloudflareConnectionStatus>;
+    acceptInvitation(
+      token: string,
+      password: string,
+      displayName?: string,
+    ): Promise<CloudflareConnectionStatus>;
+    completePasswordReset(token: string, password: string): Promise<CloudflareConnectionStatus>;
+    listOrganizations(): Promise<CloudOrganization[]>;
+    listUsers(): Promise<CloudOrganizationUser[]>;
+    createInvitation(input: {
+      email: string;
+      displayName?: string;
+      role: OrganizationRole;
+      organizationId?: string;
+    }): Promise<CloudActionTokenResult>;
+    issuePasswordReset(membershipId: string): Promise<CloudActionTokenResult>;
+    setMembershipStatus(
+      membershipId: string,
+      status: Exclude<MembershipStatus, 'invited'>,
+    ): Promise<CloudOrganizationUser>;
     logout(): Promise<CloudflareConnectionStatus>;
   };
   permissions: {

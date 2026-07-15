@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   AppSettings,
@@ -9,7 +9,10 @@ import type {
   AuditLogFilter,
   AudioCaptureStatus,
   CallState,
+  CloudActionTokenResult,
   CloudflareConnectionStatus,
+  CloudOrganization,
+  CloudOrganizationUser,
   ConnectionState,
   ComplianceRule,
   ComplianceRuleType,
@@ -124,6 +127,9 @@ export function App(): JSX.Element {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationUsers, setOrganizationUsers] = useState<OrganizationUser[]>([]);
   const [cloudflareStatus, setCloudflareStatus] = useState<CloudflareConnectionStatus | null>(null);
+  const [cloudOrganizations, setCloudOrganizations] = useState<CloudOrganization[]>([]);
+  const [cloudOrganizationUsers, setCloudOrganizationUsers] = useState<CloudOrganizationUser[]>([]);
+  const [cloudOrganizationError, setCloudOrganizationError] = useState<string | null>(null);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
     (call.status === 'in_call' ||
@@ -140,7 +146,12 @@ export function App(): JSX.Element {
     void window.api.organizations.getCurrentContext().then(setCurrentUserContext);
     void window.api.organizations.list().then(setOrganizations);
     void window.api.organizations.listUsers().then(setOrganizationUsers);
-    void window.api.cloudflare.getStatus().then(setCloudflareStatus);
+    void window.api.cloudflare.getStatus().then((status) => {
+      setCloudflareStatus(status);
+      if (status.authenticated) {
+        void refreshCloudOrganizationUsers();
+      }
+    });
     void window.api.settings.get().then((loadedSettings) => {
       setSettings(loadedSettings);
       if (loadedSettings.selectedProductId) setProductId(loadedSettings.selectedProductId);
@@ -323,6 +334,32 @@ export function App(): JSX.Element {
     );
   };
 
+  const refreshCloudOrganizationUsers = async (): Promise<void> => {
+    try {
+      const [organizationsResult, usersResult] = await Promise.all([
+        window.api.cloudflare.listOrganizations(),
+        window.api.cloudflare.listUsers(),
+      ]);
+      setCloudOrganizations(organizationsResult);
+      setCloudOrganizationUsers(usersResult);
+      setCloudOrganizationError(null);
+    } catch (error) {
+      setCloudOrganizations([]);
+      setCloudOrganizationUsers([]);
+      setCloudOrganizationError(errorMessage(error));
+    }
+  };
+
+  const updateCloudflareStatus = (status: CloudflareConnectionStatus): void => {
+    setCloudflareStatus(status);
+    if (status.authenticated) {
+      void refreshCloudOrganizationUsers();
+    } else {
+      setCloudOrganizations([]);
+      setCloudOrganizationUsers([]);
+    }
+  };
+
   // Show onboarding until settings load and confirm it was completed. Guard on
   // settings !== null so the overlay doesn't flash before the first load.
   const showOnboarding = settings !== null && settings.onboardingCompletedAt === null;
@@ -425,9 +462,16 @@ export function App(): JSX.Element {
               currentUserContext={currentUserContext}
               organizations={organizations}
               organizationUsers={organizationUsers}
+              cloudOrganizations={cloudOrganizations}
+              cloudOrganizationUsers={cloudOrganizationUsers}
+              cloudOrganizationError={cloudOrganizationError}
               cloudflareStatus={cloudflareStatus}
-              onRefreshCloudflare={() => window.api.cloudflare.getStatus().then(setCloudflareStatus)}
-              onCloudflareStatusChange={setCloudflareStatus}
+              onRefreshCloudflare={async () => {
+                const status = await window.api.cloudflare.getStatus();
+                updateCloudflareStatus(status);
+              }}
+              onRefreshCloudOrganizationUsers={refreshCloudOrganizationUsers}
+              onCloudflareStatusChange={updateCloudflareStatus}
               onUpdateUserRole={updateOrganizationUserRole}
               onSettingsChange={async (patch) => {
                 await window.api.settings.set(patch);
@@ -1081,8 +1125,12 @@ function SettingsPanel(props: {
   currentUserContext: CurrentUserContext | null;
   organizations: Organization[];
   organizationUsers: OrganizationUser[];
+  cloudOrganizations: CloudOrganization[];
+  cloudOrganizationUsers: CloudOrganizationUser[];
+  cloudOrganizationError: string | null;
   cloudflareStatus: CloudflareConnectionStatus | null;
   onRefreshCloudflare: () => Promise<void>;
+  onRefreshCloudOrganizationUsers: () => Promise<void>;
   onCloudflareStatusChange: (status: CloudflareConnectionStatus) => void;
   onUpdateUserRole: (membershipId: string, role: OrganizationRole) => Promise<void>;
   onSettingsChange: (patch: Partial<AppSettings>) => Promise<void>;
@@ -1092,9 +1140,59 @@ function SettingsPanel(props: {
   const [cloudflareEmail, setCloudflareEmail] = useState('agency-admin@example.local');
   const [cloudflarePassword, setCloudflarePassword] = useState('');
   const [cloudflareAuthPending, setCloudflareAuthPending] = useState(false);
+  const [cloudToken, setCloudToken] = useState('');
+  const [cloudTokenPassword, setCloudTokenPassword] = useState('');
+  const [cloudTokenDisplayName, setCloudTokenDisplayName] = useState('');
+  const [cloudInviteEmail, setCloudInviteEmail] = useState('');
+  const [cloudInviteDisplayName, setCloudInviteDisplayName] = useState('');
+  const [cloudInviteRole, setCloudInviteRole] = useState<OrganizationRole>('agent');
+  const [cloudInviteOrganizationId, setCloudInviteOrganizationId] = useState('');
+  const [cloudAdminPending, setCloudAdminPending] = useState(false);
+  const [cloudAdminError, setCloudAdminError] = useState<string | null>(null);
+  const [oneTimeCloudToken, setOneTimeCloudToken] = useState<CloudActionTokenResult | null>(null);
   const [anthropicDiagnostic, setAnthropicDiagnostic] =
     useState<AnthropicDiagnosticResult | null>(null);
   const [anthropicDiagnosticPending, setAnthropicDiagnosticPending] = useState(false);
+
+  const clearCloudTokenInputs = useCallback((): void => {
+    setCloudToken('');
+    setCloudTokenPassword('');
+    setCloudTokenDisplayName('');
+  }, []);
+
+  const clearGeneratedCloudToken = useCallback((): void => {
+    setOneTimeCloudToken(null);
+  }, []);
+
+  useEffect(() => {
+    if (!props.cloudflareStatus?.authenticated) {
+      clearCloudTokenInputs();
+      clearGeneratedCloudToken();
+      setCloudInviteOrganizationId('');
+    }
+  }, [clearCloudTokenInputs, clearGeneratedCloudToken, props.cloudflareStatus?.authenticated]);
+
+  useEffect(() => {
+    if (
+      cloudInviteOrganizationId &&
+      !props.cloudOrganizations.some((organization) => organization.id === cloudInviteOrganizationId)
+    ) {
+      setCloudInviteOrganizationId('');
+    }
+  }, [cloudInviteOrganizationId, props.cloudOrganizations]);
+
+  useEffect(() => {
+    if (!oneTimeCloudToken) {
+      return undefined;
+    }
+    const expiresInMs = Date.parse(oneTimeCloudToken.expiresAt) - Date.now();
+    if (expiresInMs <= 0) {
+      clearGeneratedCloudToken();
+      return undefined;
+    }
+    const timeout = window.setTimeout(clearGeneratedCloudToken, expiresInMs);
+    return () => window.clearTimeout(timeout);
+  }, [clearGeneratedCloudToken, oneTimeCloudToken]);
 
   const runCloudflareAuth = async (
     action: (email: string, password: string) => Promise<CloudflareConnectionStatus>,
@@ -1114,6 +1212,105 @@ function SettingsPanel(props: {
       setAnthropicDiagnostic(await window.api.secrets.checkAnthropic());
     } finally {
       setAnthropicDiagnosticPending(false);
+    }
+  };
+
+  const completeTokenFlow = async (kind: 'invite' | 'password_reset'): Promise<void> => {
+    setCloudflareAuthPending(true);
+    try {
+      const status =
+        kind === 'invite'
+          ? await window.api.cloudflare.acceptInvitation(
+              cloudToken,
+              cloudTokenPassword,
+              cloudTokenDisplayName.trim() || undefined,
+            )
+          : await window.api.cloudflare.completePasswordReset(cloudToken, cloudTokenPassword);
+      props.onCloudflareStatusChange(status);
+      if (status.authenticated) {
+        clearCloudTokenInputs();
+      }
+    } finally {
+      setCloudflareAuthPending(false);
+    }
+  };
+
+  const logoutCloudflare = async (): Promise<void> => {
+    setCloudflareAuthPending(true);
+    try {
+      props.onCloudflareStatusChange(await window.api.cloudflare.logout());
+    } catch (error) {
+      props.onCloudflareStatusChange({
+        apiUrl: props.cloudflareStatus?.apiUrl ?? '-',
+        healthy: props.cloudflareStatus?.healthy ?? false,
+        authenticated: false,
+        error: errorMessage(error),
+      });
+    } finally {
+      setCloudflarePassword('');
+      clearCloudTokenInputs();
+      clearGeneratedCloudToken();
+      setCloudflareAuthPending(false);
+    }
+  };
+
+  const createCloudInvitation = async (): Promise<void> => {
+    setCloudAdminPending(true);
+    setCloudAdminError(null);
+    try {
+      const invitationInput: {
+        email: string;
+        displayName?: string;
+        role: OrganizationRole;
+        organizationId?: string;
+      } = {
+        email: cloudInviteEmail,
+        role: cloudInviteRole,
+      };
+      if (cloudInviteDisplayName.trim()) {
+        invitationInput.displayName = cloudInviteDisplayName.trim();
+      }
+      if (cloudInviteOrganizationId) {
+        invitationInput.organizationId = cloudInviteOrganizationId;
+      }
+      const result = await window.api.cloudflare.createInvitation(invitationInput);
+      setOneTimeCloudToken(result);
+      setCloudInviteEmail('');
+      setCloudInviteDisplayName('');
+      await props.onRefreshCloudOrganizationUsers();
+    } catch (error) {
+      setCloudAdminError(errorMessage(error));
+    } finally {
+      setCloudAdminPending(false);
+    }
+  };
+
+  const issuePasswordReset = async (membershipId: string): Promise<void> => {
+    setCloudAdminPending(true);
+    setCloudAdminError(null);
+    try {
+      setOneTimeCloudToken(await window.api.cloudflare.issuePasswordReset(membershipId));
+      await props.onRefreshCloudOrganizationUsers();
+    } catch (error) {
+      setCloudAdminError(errorMessage(error));
+    } finally {
+      setCloudAdminPending(false);
+    }
+  };
+
+  const setCloudMembershipStatus = async (
+    membershipId: string,
+    status: 'active' | 'disabled',
+  ): Promise<void> => {
+    setCloudAdminPending(true);
+    setCloudAdminError(null);
+    try {
+      await window.api.cloudflare.setMembershipStatus(membershipId, status);
+      await props.onRefreshCloudOrganizationUsers();
+    } catch (error) {
+      setCloudAdminError(errorMessage(error));
+    } finally {
+      setCloudAdminPending(false);
     }
   };
 
@@ -1199,18 +1396,265 @@ function SettingsPanel(props: {
           <button
             type="button"
             disabled={cloudflareAuthPending || !props.cloudflareStatus?.authenticated}
-            onClick={() =>
-              void window.api.cloudflare.logout().then(props.onCloudflareStatusChange)
-            }
+            onClick={() => void logoutCloudflare()}
             className="rounded border border-zinc-700 px-3 py-2 text-xs disabled:opacity-40"
           >
             ログアウト
           </button>
         </div>
+        <div className="mt-4 border-t border-zinc-800 pt-4">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            β / 手動配送 token
+          </h3>
+          <p className="mt-1 text-xs text-zinc-600">
+            管理者から受け取った一回限りの bearer token と新しいパスワードで SaaS セッションを発行します。
+            管理者が token を見られる手動配送はβ用で、一般本番には検証済みメール配送が必要です。
+          </p>
+          <div className="mt-3 grid gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
+            <input
+              aria-label="Cloudflare action token"
+              value={cloudToken}
+              onChange={(event) => setCloudToken(event.currentTarget.value)}
+              className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+              placeholder="招待または再設定 token"
+            />
+            <input
+              aria-label="Cloudflare token password"
+              type="password"
+              value={cloudTokenPassword}
+              onChange={(event) => setCloudTokenPassword(event.currentTarget.value)}
+              className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+              placeholder="新しいパスワード"
+            />
+            <input
+              aria-label="Cloudflare invite display name"
+              value={cloudTokenDisplayName}
+              onChange={(event) => setCloudTokenDisplayName(event.currentTarget.value)}
+              className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+              placeholder="表示名（招待時のみ任意）"
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={
+                cloudflareAuthPending ||
+                cloudToken.trim().length < 32 ||
+                cloudTokenPassword.length < 12
+              }
+              onClick={() => void completeTokenFlow('invite')}
+              className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 disabled:opacity-40"
+            >
+              招待を承諾
+            </button>
+            <button
+              type="button"
+              disabled={
+                cloudflareAuthPending ||
+                cloudToken.trim().length < 32 ||
+                cloudTokenPassword.length < 12
+              }
+              onClick={() => void completeTokenFlow('password_reset')}
+              className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40"
+            >
+              パスワード再設定を完了
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5">
-        <h2 className="mb-3 text-sm font-medium text-zinc-400">組織・ユーザー権限</h2>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-medium text-zinc-400">Cloudflare SaaS ユーザー管理</h2>
+            <p className="mt-1 text-xs text-zinc-600">
+              招待・停止・再設定 token は Worker/D1 側のアカウントライフサイクルを操作します。
+              token の手動表示はβ用で、見た管理者は受信者として操作できる点に注意してください。
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={!props.cloudflareStatus?.authenticated}
+            onClick={() => void props.onRefreshCloudOrganizationUsers()}
+            className="rounded bg-zinc-800 px-3 py-2 text-xs disabled:opacity-40"
+          >
+            SaaSユーザー更新
+          </button>
+        </div>
+        {props.cloudflareStatus?.authenticated ? (
+          <>
+            <div className="mt-4 grid gap-2 md:grid-cols-[1.2fr_1fr_160px_1fr_auto]">
+              <input
+                aria-label="Cloudflare invitation email"
+                type="email"
+                value={cloudInviteEmail}
+                onChange={(event) => setCloudInviteEmail(event.currentTarget.value)}
+                className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                placeholder="招待メールアドレス"
+              />
+              <input
+                aria-label="Cloudflare invitation display name"
+                value={cloudInviteDisplayName}
+                onChange={(event) => setCloudInviteDisplayName(event.currentTarget.value)}
+                className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                placeholder="表示名"
+              />
+              <select
+                aria-label="Cloudflare invitation role"
+                value={cloudInviteRole}
+                onChange={(event) => setCloudInviteRole(event.currentTarget.value as OrganizationRole)}
+                className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+              >
+                <option value="agency_admin">agency_admin</option>
+                <option value="manager">manager</option>
+                <option value="agent">agent</option>
+                <option value="auditor">auditor</option>
+                <option value="insurer_admin">insurer_admin</option>
+              </select>
+              <select
+                aria-label="Cloudflare invitation organization"
+                value={cloudInviteOrganizationId}
+                onChange={(event) => setCloudInviteOrganizationId(event.currentTarget.value)}
+                className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+              >
+                <option value="">自組織</option>
+                {props.cloudOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={cloudAdminPending || !cloudInviteEmail.includes('@')}
+                onClick={() => void createCloudInvitation()}
+                className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 disabled:opacity-40"
+              >
+                招待発行
+              </button>
+            </div>
+            {oneTimeCloudToken && (
+              <div className="mt-4 rounded border border-overlay-warning/40 bg-amber-950/20 p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="font-medium text-amber-100">
+                      {oneTimeCloudToken.type === 'invite' ? '招待 token' : '再設定 token'}
+                    </span>
+                    <span className="ml-2 text-zinc-500">
+                      期限: {new Date(oneTimeCloudToken.expiresAt).toLocaleString('ja-JP')}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard.writeText(oneTimeCloudToken.token)}
+                    className="rounded bg-zinc-100 px-3 py-1 text-[11px] font-medium text-zinc-900"
+                  >
+                    コピー
+                  </button>
+                </div>
+                <div className="mt-2 break-all rounded bg-zinc-950 p-2 font-mono text-[11px] text-amber-100">
+                  {oneTimeCloudToken.token}
+                </div>
+                <p className="mt-2 text-zinc-500">
+                  この bearer token は再表示されず、期限到来で自動消去されます。手動配送はβ用で、
+                  管理者が受信者になりすませるため一般本番には検証済みメール配送が必要です。
+                </p>
+              </div>
+            )}
+            {(cloudAdminError || props.cloudOrganizationError) && (
+              <div className="mt-3 rounded border border-overlay-objection/40 bg-red-950/20 p-3 text-xs text-red-100">
+                {cloudAdminError ?? props.cloudOrganizationError}
+              </div>
+            )}
+            <div className="mt-4 overflow-hidden rounded border border-zinc-800">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-zinc-900 text-zinc-500">
+                  <tr>
+                    <th className="px-3 py-2">ユーザー</th>
+                    <th className="px-3 py-2">状態</th>
+                    <th className="px-3 py-2">ロール</th>
+                    <th className="px-3 py-2">組織</th>
+                    <th className="px-3 py-2">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {props.cloudOrganizationUsers.map((user) => (
+                    <tr key={user.membershipId} className="border-t border-zinc-800">
+                      <td className="px-3 py-2">
+                        {user.displayName}
+                        <div className="text-zinc-600">{user.email}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={cloudMembershipStatusClass(user.status)}>
+                          {user.status}
+                        </span>
+                        {user.mustResetPassword && (
+                          <div className="mt-1 text-[11px] text-overlay-warning">
+                            reset required
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">{user.role}</td>
+                      <td className="px-3 py-2">
+                        {user.organizationName}
+                        <div className="font-mono text-zinc-600">{user.organizationId.slice(0, 8)}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-2">
+                          {user.status === 'disabled' ? (
+                            <button
+                              type="button"
+                              disabled={cloudAdminPending}
+                              onClick={() => void setCloudMembershipStatus(user.membershipId, 'active')}
+                              className="rounded bg-zinc-100 px-2 py-1 text-[11px] text-zinc-900 disabled:opacity-40"
+                            >
+                              有効化
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={cloudAdminPending || user.status === 'invited'}
+                              onClick={() => void setCloudMembershipStatus(user.membershipId, 'disabled')}
+                              className="rounded bg-overlay-objection px-2 py-1 text-[11px] text-white disabled:opacity-40"
+                            >
+                              停止
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={cloudAdminPending || user.status !== 'active' || !user.hasCredential}
+                            onClick={() => void issuePasswordReset(user.membershipId)}
+                            className="rounded bg-zinc-800 px-2 py-1 text-[11px] disabled:opacity-40"
+                          >
+                            reset発行
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {props.cloudOrganizationUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-zinc-600">
+                        SaaS ユーザーは未取得です。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="mt-4 rounded border border-zinc-800 p-4 text-sm text-zinc-600">
+            ログイン後に招待・停止・パスワード再設定を操作できます。
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 p-5">
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">ローカル組織・ユーザー権限</h2>
+        <p className="mb-3 text-xs text-zinc-600">
+          この表は端末内のローカル権限モデルです。Cloudflare SaaS の管理ユーザーとは別です。
+        </p>
         <div className="grid gap-4 text-sm md:grid-cols-2">
           <div className="rounded border border-zinc-800 p-3">
             <div className="text-xs text-zinc-500">現在の利用者</div>
@@ -1738,6 +2182,21 @@ function cleanAuditFilter(filter: AuditLogFilter): AuditLogFilter {
   return Object.fromEntries(
     Object.entries(filter).filter(([, value]) => typeof value === 'string' && value.trim()),
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown_error';
+}
+
+function cloudMembershipStatusClass(status: CloudOrganizationUser['status']): string {
+  switch (status) {
+    case 'active':
+      return 'text-overlay-success';
+    case 'invited':
+      return 'text-overlay-warning';
+    case 'disabled':
+      return 'text-overlay-objection';
+  }
 }
 
 function HistoryPanel(props: {

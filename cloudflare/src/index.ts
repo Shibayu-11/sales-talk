@@ -8,29 +8,24 @@ import {
   type PasswordCredential,
   type SessionPayload,
 } from './auth';
+import {
+  AccountLifecycleError,
+  acceptInvitation,
+  assertLoginAccountAllowed,
+  assertSessionAccountAllowed,
+  completePasswordReset,
+  createInvitation,
+  issuePasswordReset,
+  listManageableOrganizations,
+  listOrganizationUsers,
+  setMembershipStatus,
+  assertD1MutationChanged,
+  type AuthenticatedContext,
+  type MembershipStatus,
+  type OrganizationRole,
+  type RequestContext,
+} from './account-lifecycle';
 import { transcribeWithDeepgram, type SttQueueMessage, type TranscriptSegmentInput } from './stt';
-
-interface RequestContext {
-  tenantId: string;
-  organizationId: string;
-  userId: string;
-  membershipId: string;
-  role: string;
-}
-
-interface AuthenticatedContext extends RequestContext {
-  sessionVersion: number;
-}
-
-interface AuditLogInput {
-  action: string;
-  targetType: string;
-  targetId: string;
-  metadata: Record<string, string | number | boolean | null>;
-  previousHash: string | null;
-  hash: string;
-  createdAt: string;
-}
 
 interface AudioUploadResult {
   callId: string;
@@ -76,7 +71,8 @@ interface AuthUserRow {
   tenant_id: string;
   organization_id: string;
   membership_id: string;
-  role: string;
+  role: OrganizationRole;
+  membership_status: MembershipStatus;
   password_hash: string;
   salt: string;
   iterations: number;
@@ -84,6 +80,7 @@ interface AuthUserRow {
   locked_until: string | null;
   login_failed_count: number;
   session_version: number;
+  must_reset_password: number;
 }
 
 export default {
@@ -107,6 +104,26 @@ export default {
             parseCredentialInput(await request.json()),
             requiredSecret(env.SESSION_SIGNING_KEY, 'session_signing_key_not_configured'),
           ),
+        );
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/auth/invitations/accept') {
+        return json(
+          await acceptInvitation(
+            env.DB,
+            parseTokenPasswordInput(await request.json()),
+            requiredSecret(env.SESSION_SIGNING_KEY, 'session_signing_key_not_configured'),
+          ),
+          201,
+        );
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/auth/password-resets/complete') {
+        return json(
+          await completePasswordReset(
+            env.DB,
+            parseTokenPasswordInput(await request.json()),
+            requiredSecret(env.SESSION_SIGNING_KEY, 'session_signing_key_not_configured'),
+          ),
+          201,
         );
       }
       if (request.method === 'PUT' && url.pathname.startsWith('/v1/audio-upload-urls/')) {
@@ -140,16 +157,45 @@ export default {
         await invalidateSessions(env.DB, context.userId);
         return json({ ok: true });
       }
+      if (request.method === 'GET' && url.pathname === '/v1/organization/users') {
+        return json(await listOrganizationUsers(env.DB, context));
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/organizations') {
+        return json(await listManageableOrganizations(env.DB, context));
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/organization/invitations') {
+        return json(
+          await createInvitation(env.DB, context, parseInvitationInput(await request.json())),
+          201,
+        );
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/organization/password-resets') {
+        return json(
+          await issuePasswordReset(
+            env.DB,
+            context,
+            parsePasswordResetInput(await request.json()).membershipId,
+          ),
+          201,
+        );
+      }
+      const membershipStatusMatch =
+        /^\/v1\/organization\/memberships\/([^/]+)\/status$/.exec(url.pathname);
+      if (request.method === 'POST' && membershipStatusMatch?.[1]) {
+        return json(
+          await setMembershipStatus(
+            env.DB,
+            context,
+            decodeURIComponent(membershipStatusMatch[1]),
+            parseMembershipStatusInput(await request.json()).status,
+          ),
+        );
+      }
       if (request.method === 'GET' && url.pathname === '/v1/rule-sets') {
         return json(await listRuleSets(env.DB, context));
       }
       if (request.method === 'GET' && url.pathname === '/v1/audit-logs') {
         return json(await listAuditLogs(env.DB, context));
-      }
-      if (request.method === 'POST' && url.pathname === '/v1/audit-logs') {
-        const input = parseAuditLogInput(await request.json());
-        await insertAuditLog(env.DB, context, input);
-        return json({ ok: true }, 201);
       }
       if (request.method === 'POST' && url.pathname === '/v1/audio-assets') {
         return json(await uploadAudioAsset(request, env, context), 201);
@@ -188,16 +234,23 @@ async function resolveSessionContext(
 ): Promise<AuthenticatedContext> {
   const membership = await database
     .prepare(
-      `SELECT m.id, m.role, c.session_version
+      `SELECT m.id, m.role, m.status AS membership_status, c.session_version, c.must_reset_password
        FROM organization_memberships m
        JOIN auth_credentials c ON c.user_id = m.user_id
        WHERE m.id = ? AND m.tenant_id = ? AND m.organization_id = ? AND m.user_id = ?`,
     )
     .bind(session.membershipId, session.tenantId, session.organizationId, session.userId)
-    .first<{ id: string; role: string; session_version: number }>();
+    .first<{
+      id: string;
+      role: OrganizationRole;
+      membership_status: MembershipStatus;
+      session_version: number;
+      must_reset_password: number;
+    }>();
   if (!membership || membership.session_version !== session.sessionVersion) {
     throw new HttpError(403, 'organization_membership_not_found');
   }
+  assertSessionAccountAllowed(membership);
   return {
     tenantId: session.tenantId,
     organizationId: session.organizationId,
@@ -230,41 +283,12 @@ async function listAuditLogs(database: D1Database, context: RequestContext): Pro
       `SELECT *
        FROM audit_logs
        WHERE tenant_id = ? AND (? = 1 OR organization_id = ?)
-       ORDER BY created_at DESC
+       ORDER BY sequence IS NULL ASC, sequence DESC, created_at DESC, id DESC
        LIMIT 1000`,
     )
     .bind(context.tenantId, insurerAdmin ? 1 : 0, context.organizationId)
     .all();
   return result.results;
-}
-
-async function insertAuditLog(
-  database: D1Database,
-  context: RequestContext,
-  input: AuditLogInput,
-): Promise<void> {
-  await database
-    .prepare(
-      `INSERT INTO audit_logs (
-        id, tenant_id, organization_id, actor_type, actor_user_id, actor_membership_id,
-        action, target_type, target_id, metadata_json, previous_hash, hash, created_at
-      ) VALUES (?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      crypto.randomUUID(),
-      context.tenantId,
-      context.organizationId,
-      context.userId,
-      context.membershipId,
-      input.action,
-      input.targetType,
-      input.targetId,
-      JSON.stringify(input.metadata),
-      input.previousHash,
-      input.hash,
-      input.createdAt,
-    )
-    .run();
 }
 
 async function uploadAudioAsset(
@@ -715,18 +739,20 @@ async function login(
         m.organization_id,
         m.id AS membership_id,
         m.role,
+        m.status AS membership_status,
         c.password_hash,
         c.salt,
         c.iterations,
         c.algorithm,
         c.locked_until,
         c.login_failed_count,
-        c.session_version
+        c.session_version,
+        c.must_reset_password
       FROM users u
       JOIN auth_credentials c ON c.user_id = u.id
       JOIN organization_memberships m ON m.user_id = u.id
       WHERE lower(u.email) = lower(?)
-      ORDER BY m.created_at ASC
+      ORDER BY CASE WHEN m.status = 'active' THEN 0 ELSE 1 END, m.created_at ASC
       LIMIT 1`,
     )
     .bind(input.email)
@@ -747,6 +773,7 @@ async function login(
     await recordFailedLogin(database, user);
     throw new HttpError(401, 'invalid_credentials');
   }
+  assertLoginAccountAllowed(user);
   await database
     .prepare(
       'UPDATE auth_credentials SET login_failed_count = 0, locked_until = NULL, updated_at = ? WHERE user_id = ?',
@@ -782,12 +809,13 @@ async function changePassword(
   const credential = await createPasswordCredential(password);
   const nextSessionVersion = context.sessionVersion + 1;
   const timestamp = new Date().toISOString();
-  await database
+  const result = await database
     .prepare(
       `UPDATE auth_credentials
        SET password_hash = ?, salt = ?, iterations = ?, algorithm = ?, password_updated_at = ?,
-           login_failed_count = 0, locked_until = NULL, session_version = ?, updated_at = ?
-       WHERE user_id = ?`,
+           login_failed_count = 0, locked_until = NULL,
+           session_version = ?, updated_at = ?
+       WHERE user_id = ? AND session_version = ? AND must_reset_password = 0`,
     )
     .bind(
       credential.passwordHash,
@@ -798,8 +826,10 @@ async function changePassword(
       nextSessionVersion,
       timestamp,
       context.userId,
+      context.sessionVersion,
     )
     .run();
+  assertD1MutationChanged(result, 'password_change_conflict');
   const session = await createSessionToken(
     {
       userId: context.userId,
@@ -823,14 +853,16 @@ async function invalidateSessions(database: D1Database, userId: string): Promise
 }
 
 async function recordFailedLogin(database: D1Database, user: AuthUserRow): Promise<void> {
-  const failedCount = user.login_failed_count + 1;
-  const lockedUntil =
-    failedCount >= 5 ? new Date(Date.now() + 15 * 60 * 1_000).toISOString() : null;
+  const lockedUntil = new Date(Date.now() + 15 * 60 * 1_000).toISOString();
   await database
     .prepare(
-      'UPDATE auth_credentials SET login_failed_count = ?, locked_until = ?, updated_at = ? WHERE user_id = ?',
+      `UPDATE auth_credentials
+       SET login_failed_count = login_failed_count + 1,
+           locked_until = CASE WHEN login_failed_count + 1 >= 5 THEN ? ELSE locked_until END,
+           updated_at = ?
+       WHERE user_id = ?`,
     )
-    .bind(failedCount, lockedUntil, new Date().toISOString(), user.user_id)
+    .bind(lockedUntil, new Date().toISOString(), user.user_id)
     .run();
 }
 
@@ -849,33 +881,6 @@ async function constantTimeEqual(left: string, right: string): Promise<boolean> 
   return difference === 0;
 }
 
-function parseAuditLogInput(value: unknown): AuditLogInput {
-  if (!isRecord(value)) {
-    throw new HttpError(400, 'invalid_audit_log');
-  }
-  const metadata = value.metadata;
-  if (
-    typeof value.action !== 'string' ||
-    typeof value.targetType !== 'string' ||
-    typeof value.targetId !== 'string' ||
-    !isRecord(metadata) ||
-    (value.previousHash !== null && typeof value.previousHash !== 'string') ||
-    typeof value.hash !== 'string' ||
-    typeof value.createdAt !== 'string'
-  ) {
-    throw new HttpError(400, 'invalid_audit_log');
-  }
-  return {
-    action: value.action,
-    targetType: value.targetType,
-    targetId: value.targetId,
-    metadata: metadata as AuditLogInput['metadata'],
-    previousHash: value.previousHash,
-    hash: value.hash,
-    createdAt: value.createdAt,
-  };
-}
-
 function parseCredentialInput(value: unknown): { email: string; password: string } {
   if (
     !isRecord(value) ||
@@ -889,6 +894,71 @@ function parseCredentialInput(value: unknown): { email: string; password: string
     throw new HttpError(400, 'invalid_credentials_input');
   }
   return { email: value.email.trim().toLowerCase(), password: value.password };
+}
+
+function parseInvitationInput(value: unknown): {
+  email: string;
+  displayName?: string | undefined;
+  role: OrganizationRole;
+  organizationId?: string | undefined;
+} {
+  if (
+    !isRecord(value) ||
+    typeof value.email !== 'string' ||
+    !value.email.includes('@') ||
+    value.email.length > 320 ||
+    !isOrganizationRole(value.role) ||
+    (value.displayName !== undefined && typeof value.displayName !== 'string') ||
+    (value.organizationId !== undefined && typeof value.organizationId !== 'string')
+  ) {
+    throw new HttpError(400, 'invalid_invitation_input');
+  }
+  return {
+    email: value.email.trim().toLowerCase(),
+    displayName: value.displayName?.trim() || undefined,
+    role: value.role,
+    organizationId: value.organizationId?.trim() || undefined,
+  };
+}
+
+function parseTokenPasswordInput(value: unknown): {
+  token: string;
+  password: string;
+  displayName?: string | undefined;
+} {
+  if (
+    !isRecord(value) ||
+    typeof value.token !== 'string' ||
+    value.token.trim().length < 32 ||
+    typeof value.password !== 'string' ||
+    value.password.length < 12 ||
+    value.password.length > 200 ||
+    (value.displayName !== undefined && typeof value.displayName !== 'string')
+  ) {
+    throw new HttpError(400, 'invalid_token_password_input');
+  }
+  return {
+    token: value.token.trim(),
+    password: value.password,
+    displayName: value.displayName?.trim() || undefined,
+  };
+}
+
+function parsePasswordResetInput(value: unknown): { membershipId: string } {
+  if (!isRecord(value) || typeof value.membershipId !== 'string' || !value.membershipId) {
+    throw new HttpError(400, 'invalid_password_reset_input');
+  }
+  return { membershipId: value.membershipId };
+}
+
+function parseMembershipStatusInput(value: unknown): { status: 'active' | 'disabled' } {
+  if (
+    !isRecord(value) ||
+    (value.status !== 'active' && value.status !== 'disabled')
+  ) {
+    throw new HttpError(400, 'invalid_membership_status_input');
+  }
+  return { status: value.status };
 }
 
 function parsePasswordInput(value: unknown): string {
@@ -1038,11 +1108,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isOrganizationRole(value: unknown): value is OrganizationRole {
+  return (
+    value === 'insurer_admin' ||
+    value === 'agency_admin' ||
+    value === 'manager' ||
+    value === 'agent' ||
+    value === 'auditor'
+  );
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'internal_error';
 }
 
 function errorStatus(error: unknown): number {
+  if (error instanceof AccountLifecycleError) {
+    return error.status;
+  }
   return error instanceof HttpError ? error.status : 500;
 }
 

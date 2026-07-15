@@ -6,7 +6,10 @@ import type {
   AppSettings,
   AnthropicDiagnosticResult,
   CallSession,
+  CloudActionTokenResult,
   CloudflareConnectionStatus,
+  CloudOrganization,
+  CloudOrganizationUser,
   ProductId,
   KnowledgeEntry,
   Transcript,
@@ -49,6 +52,13 @@ const IPC = {
     bootstrap: 'cloudflare:bootstrap',
     login: 'cloudflare:login',
     changePassword: 'cloudflare:change-password',
+    acceptInvitation: 'cloudflare:accept-invitation',
+    completePasswordReset: 'cloudflare:complete-password-reset',
+    organizationsList: 'cloudflare:organizations-list',
+    usersList: 'cloudflare:users-list',
+    createInvitation: 'cloudflare:create-invitation',
+    issuePasswordReset: 'cloudflare:issue-password-reset',
+    setMembershipStatus: 'cloudflare:set-membership-status',
     logout: 'cloudflare:logout',
   },
   permissions: {
@@ -180,6 +190,27 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.cloudflare.login, { email, password }),
     changePassword: (password: string): Promise<CloudflareConnectionStatus> =>
       ipcRenderer.invoke(IPC.cloudflare.changePassword, { password }),
+    acceptInvitation: (
+      token: string,
+      password: string,
+      displayName?: string,
+    ): Promise<CloudflareConnectionStatus> =>
+      ipcRenderer.invoke(IPC.cloudflare.acceptInvitation, { token, password, displayName }),
+    completePasswordReset: (
+      token: string,
+      password: string,
+    ): Promise<CloudflareConnectionStatus> =>
+      ipcRenderer.invoke(IPC.cloudflare.completePasswordReset, { token, password }),
+    listOrganizations: (): Promise<CloudOrganization[]> =>
+      ipcRenderer.invoke(IPC.cloudflare.organizationsList),
+    listUsers: (): Promise<CloudOrganizationUser[]> =>
+      ipcRenderer.invoke(IPC.cloudflare.usersList),
+    createInvitation: (input): Promise<CloudActionTokenResult> =>
+      ipcRenderer.invoke(IPC.cloudflare.createInvitation, input),
+    issuePasswordReset: (membershipId: string): Promise<CloudActionTokenResult> =>
+      ipcRenderer.invoke(IPC.cloudflare.issuePasswordReset, { membershipId }),
+    setMembershipStatus: (membershipId, status): Promise<CloudOrganizationUser> =>
+      ipcRenderer.invoke(IPC.cloudflare.setMembershipStatus, { membershipId, status }),
     logout: (): Promise<CloudflareConnectionStatus> => ipcRenderer.invoke(IPC.cloudflare.logout),
   },
   permissions: {

@@ -21,6 +21,26 @@ export type SignedPayloadValue = string | number | boolean | null;
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 100_000;
 const BYTE_ARRAY_CHUNK_SIZE = 32_768;
+const ACTION_TOKEN_BYTES = 32;
+
+export async function createActionToken(): Promise<{ token: string; tokenHash: string }> {
+  const rawToken = crypto.getRandomValues(new Uint8Array(ACTION_TOKEN_BYTES));
+  const token = base64UrlEncode(rawToken);
+  return {
+    token,
+    tokenHash: await hashActionToken(token),
+  };
+}
+
+export async function hashActionToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return hexEncode(new Uint8Array(digest));
+}
+
+export async function verifyActionTokenHash(token: string, expectedHash: string): Promise<boolean> {
+  const actualHash = await hashActionToken(token);
+  return constantTimeStringEqual(actualHash, expectedHash);
+}
 
 export async function createPasswordCredential(password: string): Promise<PasswordCredential> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -225,6 +245,16 @@ function constantTimeBytesEqual(left: Uint8Array, right: Uint8Array): boolean {
     difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
   }
   return difference === 0;
+}
+
+function constantTimeStringEqual(left: string, right: string): boolean {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  return constantTimeBytesEqual(leftBytes, rightBytes);
+}
+
+function hexEncode(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {

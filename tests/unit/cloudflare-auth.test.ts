@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createActionToken,
   createPasswordCredential,
   createSignedPayloadToken,
   createSessionToken,
+  hashActionToken,
   verifySignedPayloadToken,
+  verifyActionTokenHash,
   verifyPassword,
   verifySessionToken,
 } from '../../cloudflare/src/auth';
@@ -15,6 +18,17 @@ describe('Cloudflare auth', () => {
     expect(credential.passwordHash).not.toContain('strong-password');
     await expect(verifyPassword('strong-password', credential)).resolves.toBe(true);
     await expect(verifyPassword('wrong-password', credential)).resolves.toBe(false);
+  });
+
+  it('creates base64url one-time action tokens and stores only SHA-256 hashes', async () => {
+    const actionToken = await createActionToken();
+
+    expect(actionToken.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(actionToken.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(actionToken.tokenHash).not.toContain(actionToken.token);
+    await expect(verifyActionTokenHash(actionToken.token, actionToken.tokenHash)).resolves.toBe(true);
+    await expect(verifyActionTokenHash(`${actionToken.token}x`, actionToken.tokenHash)).resolves.toBe(false);
+    await expect(hashActionToken(actionToken.token)).resolves.toBe(actionToken.tokenHash);
   });
 
   it('signs, verifies, and expires user sessions', async () => {

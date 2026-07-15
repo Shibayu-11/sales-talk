@@ -4,7 +4,13 @@ import {
   AudioDiagnosticSessionResultSchema,
   AudioChunkSchema,
   CallStartInputSchema,
+  CloudActionTokenResultSchema,
   CloudflareCredentialInputSchema,
+  CloudflareTokenPasswordInputSchema,
+  CloudOrganizationInvitationInputSchema,
+  CloudOrganizationSchema,
+  CloudOrganizationMembershipStatusInputSchema,
+  CloudOrganizationUserSchema,
   KnowledgeSearchInputSchema,
   ObjectionResponseSchema,
   OverlayLayerSchema,
@@ -37,6 +43,71 @@ describe('shared schemas', () => {
         password: 'short',
       }),
     ).toThrow();
+  });
+
+  it('validates Cloudflare account lifecycle IPC contracts', () => {
+    expect(
+      CloudflareTokenPasswordInputSchema.parse({
+        token: 'a'.repeat(43),
+        password: 'long-enough-password',
+        displayName: 'New User',
+      }),
+    ).toMatchObject({ token: 'a'.repeat(43), displayName: 'New User' });
+    expect(() =>
+      CloudOrganizationInvitationInputSchema.parse({
+        email: 'user@example.local',
+        role: 'insurer_admin',
+        organizationId: 'not-a-uuid',
+      }),
+    ).toThrow();
+    expect(
+      CloudOrganizationMembershipStatusInputSchema.parse({
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        status: 'disabled',
+      }),
+    ).toEqual({
+      membershipId: '00000000-0000-4000-8000-000000000005',
+      status: 'disabled',
+    });
+    expect(
+      CloudActionTokenResultSchema.parse({
+        type: 'invite',
+        token: 'b'.repeat(43),
+        expiresAt: '2026-07-18T00:00:00.000Z',
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        userId: '00000000-0000-4000-8000-000000000004',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+      }).token,
+    ).toHaveLength(43);
+    expect(
+      CloudOrganizationUserSchema.parse({
+        id: '00000000-0000-4000-8000-000000000004',
+        email: 'agency-admin@example.local',
+        displayName: 'Agency Admin',
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+        organizationName: 'Agency',
+        organizationType: 'agency',
+        role: 'agency_admin',
+        status: 'active',
+        hasCredential: true,
+        mustResetPassword: false,
+        createdAt: '2026-07-15T00:00:00.000Z',
+        updatedAt: '2026-07-15T00:00:00.000Z',
+      }).status,
+    ).toBe('active');
+    expect(
+      CloudOrganizationSchema.parse({
+        id: '00000000-0000-4000-8000-000000000002',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        parentOrganizationId: '00000000-0000-4000-8000-000000000003',
+        type: 'agency',
+        name: 'Agency',
+        createdAt: '2026-07-15T00:00:00.000Z',
+        updatedAt: '2026-07-15T00:00:00.000Z',
+      }).type,
+    ).toBe('agency');
   });
 
   it('normalizes knowledge search query limits', () => {

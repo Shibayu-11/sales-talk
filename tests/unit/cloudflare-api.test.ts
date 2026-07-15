@@ -3,11 +3,18 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  acceptCloudflareInvitation,
   bootstrapCloudflareCredential,
   changeCloudflarePassword,
+  completeCloudflarePasswordReset,
+  createCloudflareInvitation,
   getCloudflareConnectionStatus,
+  issueCloudflarePasswordReset,
+  listCloudflareOrganizations,
+  listCloudflareOrganizationUsers,
   loginCloudflare,
   logoutCloudflare,
+  setCloudflareMembershipStatus,
   uploadAudioToCloudAndProcess,
 } from '../../src/main/services/cloudflare-api';
 
@@ -103,6 +110,204 @@ describe('getCloudflareConnectionStatus', () => {
     expect(saveSessionToken).toHaveBeenCalledWith('next-session');
   });
 
+  it('accepts invitation tokens and stores the returned session', async () => {
+    const saveSessionToken = vi.fn(async () => undefined);
+    const request = vi.fn(async () => Response.json({ token: 'invite-session' }, { status: 201 }));
+
+    await expect(
+      acceptCloudflareInvitation(
+        { token: 'a'.repeat(43), password: 'next-strong-password', displayName: 'Invited User' },
+        {
+          apiUrl: 'https://example.workers.dev',
+          fetch: request,
+          saveSessionToken,
+        },
+      ),
+    ).resolves.toMatchObject({ authenticated: true });
+
+    expect(request).toHaveBeenCalledWith(
+      'https://example.workers.dev/v1/auth/invitations/accept',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(saveSessionToken).toHaveBeenCalledWith('invite-session');
+  });
+
+  it('completes password reset tokens and stores the rotated session', async () => {
+    const saveSessionToken = vi.fn(async () => undefined);
+
+    await expect(
+      completeCloudflarePasswordReset(
+        { token: 'b'.repeat(43), password: 'next-strong-password' },
+        {
+          apiUrl: 'https://example.workers.dev',
+          fetch: async () => Response.json({ token: 'reset-session' }, { status: 201 }),
+          saveSessionToken,
+        },
+      ),
+    ).resolves.toMatchObject({ authenticated: true });
+    expect(saveSessionToken).toHaveBeenCalledWith('reset-session');
+  });
+
+  it('lists cloud organization users with an authenticated session', async () => {
+    const request = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      Response.json([
+        {
+          id: '00000000-0000-4000-8000-000000000004',
+          email: 'agency-admin@example.local',
+          displayName: 'Agency Admin',
+          membershipId: '00000000-0000-4000-8000-000000000005',
+          tenantId: '00000000-0000-4000-8000-000000000001',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+          organizationName: 'Local Agency',
+          organizationType: 'agency',
+          role: 'agency_admin',
+          status: 'active',
+          hasCredential: true,
+          mustResetPassword: false,
+          createdAt: '2026-07-15T00:00:00.000Z',
+          updatedAt: '2026-07-15T00:00:00.000Z',
+        },
+      ]),
+    );
+
+    await expect(
+      listCloudflareOrganizationUsers({
+        apiUrl: 'https://example.workers.dev',
+        getSessionToken: async () => 'signed-session',
+        fetch: request,
+      }),
+    ).resolves.toMatchObject([{ status: 'active', hasCredential: true }]);
+    expect(request).toHaveBeenCalledWith(
+      'https://example.workers.dev/v1/organization/users',
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      }),
+    );
+    const firstInit = request.mock.calls[0]?.[1];
+    expect((firstInit?.headers as Headers).get('authorization')).toBe('Bearer signed-session');
+  });
+
+  it('lists Cloud organization invitation options from the Worker', async () => {
+    const request = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      Response.json([
+        {
+          id: '00000000-0000-4000-8000-000000000002',
+          tenantId: '00000000-0000-4000-8000-000000000001',
+          parentOrganizationId: '00000000-0000-4000-8000-000000000003',
+          type: 'agency',
+          name: 'Local Agency',
+          createdAt: '2026-07-15T00:00:00.000Z',
+          updatedAt: '2026-07-15T00:00:00.000Z',
+        },
+      ]),
+    );
+
+    await expect(
+      listCloudflareOrganizations({
+        apiUrl: 'https://example.workers.dev',
+        getSessionToken: async () => 'signed-session',
+        fetch: request,
+      }),
+    ).resolves.toMatchObject([{ type: 'agency', name: 'Local Agency' }]);
+    expect(request).toHaveBeenCalledWith(
+      'https://example.workers.dev/v1/organizations',
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      }),
+    );
+  });
+
+  it('creates invitations and returns the one-time token exactly once', async () => {
+    const requests: RequestInit[] = [];
+    const request = vi.fn(async (_input, init) => {
+      requests.push(init ?? {});
+      return Response.json(
+        {
+          type: 'invite',
+          token: 'c'.repeat(43),
+          expiresAt: '2026-07-18T00:00:00.000Z',
+          membershipId: '00000000-0000-4000-8000-000000000005',
+          userId: '00000000-0000-4000-8000-000000000004',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+        },
+        { status: 201 },
+      );
+    });
+
+    await expect(
+      createCloudflareInvitation(
+        {
+          email: 'agent@example.local',
+          displayName: 'Agent',
+          role: 'agent',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+        },
+        {
+          apiUrl: 'https://example.workers.dev',
+          getSessionToken: async () => 'signed-session',
+          fetch: request,
+        },
+      ),
+    ).resolves.toMatchObject({ type: 'invite', token: 'c'.repeat(43) });
+    expect(JSON.parse(String(requests[0]?.body))).toMatchObject({
+      email: 'agent@example.local',
+      role: 'agent',
+    });
+  });
+
+  it('issues password reset tokens and updates membership status via admin routes', async () => {
+    const request = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/v1/organization/password-resets')) {
+        return Response.json(
+          {
+            type: 'password_reset',
+            token: 'd'.repeat(43),
+            expiresAt: '2026-07-15T00:30:00.000Z',
+            membershipId: '00000000-0000-4000-8000-000000000005',
+            userId: '00000000-0000-4000-8000-000000000004',
+            organizationId: '00000000-0000-4000-8000-000000000002',
+          },
+          { status: 201 },
+        );
+      }
+      return Response.json({
+        id: '00000000-0000-4000-8000-000000000004',
+        email: 'agency-admin@example.local',
+        displayName: 'Agency Admin',
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+        organizationName: 'Local Agency',
+        organizationType: 'agency',
+        role: 'agency_admin',
+        status: 'disabled',
+        hasCredential: true,
+        mustResetPassword: true,
+        createdAt: '2026-07-15T00:00:00.000Z',
+        updatedAt: '2026-07-15T00:00:00.000Z',
+      });
+    });
+
+    await expect(
+      issueCloudflarePasswordReset('00000000-0000-4000-8000-000000000005', {
+        apiUrl: 'https://example.workers.dev',
+        getSessionToken: async () => 'signed-session',
+        fetch: request,
+      }),
+    ).resolves.toMatchObject({ type: 'password_reset', token: 'd'.repeat(43) });
+    await expect(
+      setCloudflareMembershipStatus('00000000-0000-4000-8000-000000000005', 'disabled', {
+        apiUrl: 'https://example.workers.dev',
+        getSessionToken: async () => 'signed-session',
+        fetch: request,
+      }),
+    ).resolves.toMatchObject({ status: 'disabled', mustResetPassword: true });
+  });
+
   it('invalidates the remote session before deleting the local session', async () => {
     const deleteSessionToken = vi.fn(async () => undefined);
     const request = vi.fn(async () => Response.json({ ok: true }));
@@ -121,6 +326,23 @@ describe('getCloudflareConnectionStatus', () => {
         headers: { authorization: 'Bearer current-session' },
       }),
     );
+    expect(deleteSessionToken).toHaveBeenCalledOnce();
+  });
+
+  it('deletes the local session even when remote logout throws', async () => {
+    const deleteSessionToken = vi.fn(async () => undefined);
+
+    await expect(
+      logoutCloudflare({
+        apiUrl: 'https://example.workers.dev',
+        getSessionToken: async () => 'current-session',
+        deleteSessionToken,
+        fetch: async () => {
+          throw new Error('network_down');
+        },
+      }),
+    ).rejects.toThrow('network_down');
+
     expect(deleteSessionToken).toHaveBeenCalledOnce();
   });
 

@@ -18,6 +18,13 @@ export const IPC = {
     bootstrap: 'cloudflare:bootstrap',
     login: 'cloudflare:login',
     changePassword: 'cloudflare:change-password',
+    acceptInvitation: 'cloudflare:accept-invitation',
+    completePasswordReset: 'cloudflare:complete-password-reset',
+    organizationsList: 'cloudflare:organizations-list',
+    usersList: 'cloudflare:users-list',
+    createInvitation: 'cloudflare:create-invitation',
+    issuePasswordReset: 'cloudflare:issue-password-reset',
+    setMembershipStatus: 'cloudflare:set-membership-status',
     logout: 'cloudflare:logout',
   },
 
