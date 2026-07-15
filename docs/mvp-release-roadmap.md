@@ -4,15 +4,14 @@
 目的: Mac 商談支援(Track A)を実商談で使える品質に仕上げ、β配布まで到達する週次実行計画。
 戦略の上位文書は [2軸開発計画](./two-track-development-plan.md)。本書はその Phase 5(Mac リアルタイム高度化)〜配布を実行レベルに分解したもの。
 
-## 0. 現在地(2026-06-12 実態調査)
+## 0. 現在地(2026-07-15 実態調査)
 
-Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week 3/4 機能を消化)。
-残る最大の不確実性は実機検証(M1)と β 配布(M5)。
+Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の不確実性は、実Zoomでの品質検証(M1)と署名・公証を含むβ配布(M5)。
 
 | 領域 | 状態 |
 |---|---|
 | Swift 音声キャプチャ(ScreenCaptureKit + AVAudioEngine + NAPI) | 完成・ビルド済み |
-| STT(Apple SpeechAnalyzer local realtime + batch/file + Deepgram fallback) | 完成、実機ビルド検証済み |
+| STT(Apple SpeechAnalyzer local realtime + batch/file + Deepgram fallback) | 完成。self/counterpart別helper + 自動E2E済み、実Zoom品質は未確認 |
 | 反論検知パイプライン(XState / Haiku 検知 / Sonnet 投機生成 + レイテンシ計測) | 完成 |
 | 法務ガードレール(3商材 risk_flags + 安全フォールバック) | 完成 |
 | Electron Main(IPC / サービス層) | 完成 |
@@ -22,9 +21,9 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 | salestalk CLI(record/transcribe/minutes、JSON 出力) | 完成 |
 | Shortcuts / Spotlight 連携(salestalk:// URL スキーム) | 完成(実機での状態共有は要検証) |
 | 提案カードのナレッジ出典表示(根拠ナレッジ N件 + 関連度%) | 完成 |
-| テスト(unit 189 + E2E 4) | 全グリーン |
+| テスト(unit 242 + E2E 7) | 全グリーン |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
-| W5: オンボーディング + electron-updater | **保留中(cowork で次に着手予定だった)** |
+| W5: オンボーディング + electron-updater | 完成、unit / E2E済み。実配布環境での更新確認は未実施 |
 | DMG 配布・公証 | 未着手 |
 
 ## 1. 競合ベンチマーク: Kanary v2
@@ -39,11 +38,11 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 |---|---|---|
 | Bot 不要のシステム音声録音 | あり | あり(ScreenCaptureKit) |
 | ローカル文字起こし(SpeechAnalyzer) | あり | あり |
-| 話者分離(自分 / 相手) | あり(チャンネル分離) | あり(2ストリーム) |
-| 商談後の議事録自動要約(決定事項・宿題・懸念) | あり | プロンプトあり(`meeting_minutes.ja.yaml`)、ワンクリック導線が未整備 |
-| 音声ファイル取込 → 文字起こし | あり | あり(ただし local STT batch 未接続) |
-| CLI / Agent Skill 連携 | あり(v2.1) | なし |
-| Spotlight / Shortcuts 起動 | あり(v2.1.4) | なし |
+| 話者分離(自分 / 相手) | あり(チャンネル分離) | あり(system/mic別helper、自動E2E済み) |
+| 商談後の議事録自動要約(決定事項・宿題・懸念) | あり | あり(LLM + ヒューリスティック縮退、ワンクリック導線) |
+| 音声ファイル取込 → 文字起こし | あり | あり(local STT batch + fallback) |
+| CLI / Agent Skill 連携 | あり(v2.1) | あり(JSON出力CLI) |
+| Spotlight / Shortcuts 起動 | あり(v2.1.4) | あり(`salestalk://` URL scheme) |
 | 価格 | 無料 | — |
 
 ### Kanary が持たない機能(= 勝ち筋、既にほぼ実装済み)
@@ -70,6 +69,7 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 目的: 「実際の Zoom 商談で通しで動くか」に答えを出す。
 
 - [x] 実機検証チェックリスト作成 → [live-zoom-e2e-checklist.md](./live-zoom-e2e-checklist.md)
+- [x] fake native audio + fake SpeechAnalyzer helper でself/counterpartの2チャネル自動E2E
 - [ ] Zoom テスト通話で system audio → local STT → transcript 表示を確認
 - [ ] 反論を意図的に発話 → Haiku 検知 → Sonnet 生成 → Overlay 表示の通し確認
 - [x] レイテンシ計測ログを pipeline に仕込む(`objection_pipeline_latency` メトリクス)
@@ -84,9 +84,9 @@ Mac アプリ単体では **約90%** が実装済み(2026-06 中旬時点、Week
 
 目的: Week 1 で見つかった問題を潰し、コア体験を磨く。
 
-- [ ] Week 1 検出バグの修正
-- [ ] 反論検知の precision 確認(模擬商談 transcript でプロンプト評価、誤検知・過検知の調整)
-- [ ] Overlay UX 改善(表示タイミング、自動消去、クリックスルー、ホバー操作)
+- [x] 自動検証で発見したlocal STT話者混同を2helper構成で修正
+- [x] 反論検知の precision 回帰基盤(ラベル付きコーパス + 評価ハーネス)
+- [x] Overlay UX 改善(L1 loading、risk badge、レイヤー遷移安定化)
 - [ ] 相槌・短文の検知抑制と連投抑制の実機チューニング
 - [ ] Deepgram fallback の実機切替確認(SpeechAnalyzer 不可環境の擬似テスト)
 

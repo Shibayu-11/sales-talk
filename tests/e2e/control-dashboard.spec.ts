@@ -233,22 +233,41 @@ test('dev transcript injection drives the mock pipeline without API keys', async
   );
 });
 
-test('audio diagnostic shows local-first SpeechAnalyzer transcripts in the UI', async () => {
+test('audio diagnostic channel-separated local-first SpeechAnalyzer routes self and counterpart independently', async () => {
   const fakeNative = await createFakeNativeAudioModule();
   const fakeSpeech = await createFakeSpeechAnalyzerHelper();
 
   await withSalesTalkApp(
-    async ({ controlWindow }) => {
+    async ({ controlWindow, electronApp }) => {
+      const overlayWindow = await waitForOverlayWindow(electronApp);
+
+      await expect(controlWindow.getByText('Dev transcript injection')).toBeVisible();
+      await controlWindow.getByRole('button', { name: 'mock 通話開始' }).click();
+      await expect(controlWindow.getByText('状態: in_call')).toBeVisible();
+
       await controlWindow.getByLabel(/顧客へ録音・文字起こし/).check();
       await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeEnabled();
       await controlWindow.getByRole('button', { name: '診断開始' }).click();
 
       await expect(controlWindow.getByText('STT').locator('..').getByText('connected')).toBeVisible();
       await expect(controlWindow.getByText('停止')).toBeVisible();
-      await expect.poll(() => readTextFile(fakeNative.logPath)).toContain('emit');
-      await expect.poll(() => readTextFile(fakeSpeech.logPath)).toContain('audio');
-      await expect(controlWindow.getByText(/価格が高いので今は判断できません/)).toBeVisible();
+      await expect.poll(() => readTextFile(fakeNative.logPath)).toContain('emit:microphone');
+      await expect.poll(() => readTextFile(fakeSpeech.logPath)).toContain('audio:こちらで確認します');
+      await expect(controlWindow.getByText(/こちらで確認します/)).toBeVisible();
+      await expect(controlWindow.getByText(/final \/ self/)).toBeVisible();
+      await expect(controlWindow.getByText('検知待機中')).toBeVisible();
+      await expect(overlayWindow.getByText('条件を分解')).toHaveCount(0);
+
+      await writeFile(fakeNative.triggerSystemPath, '1', 'utf8');
+
+      await expect.poll(() => readTextFile(fakeNative.logPath)).toContain('emit:system');
+      await expect.poll(() => readTextFile(fakeSpeech.logPath)).toContain('audio:価格が高いので今は判断できません');
+      await expect(
+        controlWindow.getByText('価格が高いので今は判断できません', { exact: true }).first(),
+      ).toBeVisible();
       await expect(controlWindow.getByText(/final \/ counterpart/)).toBeVisible();
+      await expect(controlWindow.getByText('confidence: 92%')).toBeVisible();
+      await expect(overlayWindow.getByText('条件を分解')).toBeVisible();
 
       await controlWindow.getByRole('button', { name: '停止' }).click();
       await expect(controlWindow.getByRole('button', { name: '診断開始' })).toBeVisible();
@@ -256,7 +275,9 @@ test('audio diagnostic shows local-first SpeechAnalyzer transcripts in the UI', 
     {
       env: {
         SALES_TALK_AUDIO_CAPTURE_MODULE: fakeNative.modulePath,
+        SALES_TALK_ENABLE_DEV_TOOLS: '1',
         SALES_TALK_FORCE_AUDIO_PERMISSIONS: '1',
+        SALES_TALK_MOCK_LLM: '1',
         SALES_TALK_SPEECH_ANALYZER_HELPER: fakeSpeech.helperPath,
       },
     },
@@ -351,15 +372,21 @@ async function waitForOverlayWindow(electronApp: ElectronApplication): Promise<P
   return overlayWindow;
 }
 
-async function createFakeNativeAudioModule(): Promise<{ modulePath: string; logPath: string }> {
+async function createFakeNativeAudioModule(): Promise<{
+  modulePath: string;
+  logPath: string;
+  triggerSystemPath: string;
+}> {
   const directory = await mkdtemp(join(tmpdir(), 'sales-talk-fake-native-'));
   const modulePath = join(directory, 'audio_capture.cjs');
   const logPath = join(directory, 'native.log');
+  const triggerSystemPath = join(directory, 'emit-system');
   await writeFile(
     modulePath,
     `
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, existsSync } = require('node:fs');
 const logPath = ${JSON.stringify(logPath)};
+const triggerSystemPath = ${JSON.stringify(triggerSystemPath)};
 let audioCallback = null;
 let errorCallback = null;
 let intervalId = null;
@@ -367,31 +394,27 @@ exports.onAudioChunk = (cb) => { audioCallback = cb; };
 exports.onError = (cb) => { errorCallback = cb; void errorCallback; };
 exports.startCapture = async (config) => {
   const sessionId = 'fake-native-session';
-  let emitted = 0;
-  const emitChunk = () => {
-    emitted += 1;
-    appendFileSync(logPath, 'emit\\n');
+  let systemEmitted = false;
+  const emitChunk = (source, fill) => {
+    appendFileSync(logPath, 'emit:' + source + '\\n');
     audioCallback?.({
-      source: 'system',
-      data: Buffer.alloc(3200),
+      source,
+      data: Buffer.alloc(3200, fill),
       timestamp: Date.now(),
       durationMs: 100,
       sampleRate: config.sampleRate ?? 16000,
     });
   };
-  emitChunk();
-  setTimeout(() => {
-    if (!audioCallback) return;
-    emitChunk();
-  }, 500);
+  emitChunk('microphone', 1);
   intervalId = setInterval(() => {
     if (!audioCallback) return;
-    emitChunk();
-    if (emitted >= 5 && intervalId) {
+    if (!systemEmitted && existsSync(triggerSystemPath)) {
+      systemEmitted = true;
+      emitChunk('system', 2);
       clearInterval(intervalId);
       intervalId = null;
     }
-  }, 500);
+  }, 100);
   return { sessionId };
 };
 exports.stopCapture = async () => {
@@ -401,18 +424,20 @@ exports.stopCapture = async () => {
 `,
     'utf8',
   );
-  return { modulePath, logPath };
+  return { modulePath, logPath, triggerSystemPath };
 }
 
 async function createFakeSpeechAnalyzerHelper(): Promise<{ helperPath: string; logPath: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'sales-talk-fake-speech-'));
   const helperPath = join(directory, 'speech-analyzer-helper');
   const logPath = join(directory, 'speech.log');
+  const selfAudioData = Buffer.alloc(3200, 1).toString('base64');
   await writeFile(
     helperPath,
     `#!/usr/bin/env node
 const { appendFileSync } = require('node:fs');
 const logPath = ${JSON.stringify(logPath)};
+const selfAudioData = ${JSON.stringify(selfAudioData)};
 process.stdout.write(JSON.stringify({ type: 'ready', sampleRate: 16000 }) + '\\n');
 process.stdin.setEncoding('utf8');
 let buffer = '';
@@ -428,11 +453,14 @@ process.stdin.on('data', (chunk) => {
     if (message.type === 'stop') process.exit(0);
     if (message.type === 'audio' && !emitted) {
       emitted = true;
-      appendFileSync(logPath, 'audio\\n');
+      const text = message.data === selfAudioData
+        ? 'こちらで確認します'
+        : '価格が高いので今は判断できません';
+      appendFileSync(logPath, 'audio:' + text + '\\n');
       process.stdout.write(JSON.stringify({
         type: 'transcript',
         speaker: 'counterpart',
-        text: '価格が高いので今は判断できません',
+        text,
         isFinal: true,
         startMs: message.startMs,
         endMs: message.startMs + 100

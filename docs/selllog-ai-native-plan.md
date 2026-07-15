@@ -1,7 +1,7 @@
 # セルログ AI-Native 業務API 計画
 
 作成日: 2026-05-26
-更新日: 2026-06-11
+更新日: 2026-07-15
 目的: SalesTalk を「Mac商談支援」だけでなく、保険営業向けの `セルログ` として成立する AI-Native 業務システムへ再設計する。
 
 ## 1. 結論
@@ -12,7 +12,7 @@
 
 UI、スマホ録音、Macリアルタイム支援、AIチャット、将来の音声エージェントは、すべて同じ業務APIを使うクライアントとして扱う。
 
-2026-06-11 時点では、Mac側の入口を **Apple SpeechAnalyzer local-first STT** へ寄せる方針転換を実装済み。これは方向転換ではなく、セルログの価値である「音声を外部に預けず、transcript以降を業務APIで処理する」を強める変更である。
+2026-07-15 時点では、Mac側の入口を **Apple SpeechAnalyzer local-first STT** へ寄せ、system audio / microphoneを別helperで処理する2チャネル分離まで実装済み。これは別プロダクトへの作り直しではなく、セルログの価値である「音声を外部に預けず、正しい話者情報を持つtranscript以降を業務APIで処理する」を強める進化である。
 
 ```txt
 ユーザー
@@ -247,13 +247,19 @@ Supabase 前提は外す。Repository interface を先に切る。
 
 詳細は [Apple SpeechAnalyzer ローカルSTT移行計画](./apple-speechanalyzer-stt-plan.md) を正とする。
 
-2026-06-11 実装済み:
+2026-07-15 実装済み:
 
 - Apple SpeechAnalyzer provider
 - Swift `speech-analyzer-helper`
 - `local_first` / `deepgram_fallback` / `deepgram_only` / `manual_only` のprovider切替
 - local STT smoke
 - UIの「診断開始」から transcript 表示までのE2E
+- system / microphoneを独立helperへ流すself / counterpart分離
+- self発話はpipelineを発火せず、counterpart反論だけがOverlayへ進む自動E2E
+- Apple SpeechAnalyzer batch/import provider
+- Mobile Recorder PWA + 署名upload + fake audio E2E
+- Cloudflare Workers / D1 / R2 / Queues / authのβ実装
+- 月次コンプラレポートと検知精度回帰ハーネス
 
 これにより、Mac MVPでは「音声は外部送信しない」を実装レベルで言える状態になった。Anthropic等へ送るのは、同意・PIIマスク後の transcript テキストに限定する。
 
@@ -384,24 +390,23 @@ Cloudflare はセルログの β 版に向いている。
 
 ### P0: すぐやる
 
-1. 実アプリUIで `local_first` 音声診断を確認
-2. Zoom / system audio 由来の transcript 品質確認
-3. `stt.provider=apple_speech_analyzer` を transcript / audit metadata に保存
-4. local transcript から議事録 / コンプラ判定をワンクリック実行
-5. SpeechAnalyzer progressive / final transcript の重複表示を調整
-6. model asset 未準備 / unsupported / helper missing の Dashboard UX 整理
-7. E2E: local STT transcript → 議事録 → 要レビュー表示
+1. 実Zoomでself / counterpart話者分離、音質、AEC、30分安定性を確認
+2. Zoom / system audio 由来の transcript 品質とSTT確定遅延を実測
+3. 実音声importで local STT → 議事録 → コンプラ判定を通す
+4. SpeechAnalyzer progressive / final transcript の重複表示を実測に基づき調整
+5. model asset 未準備 / unsupported / helper missing の Dashboard UX 整理
+6. DMG署名・公証・クリーンMac導入を完了
+7. 実代理店ルールを投入して募集管理担当のレビューを受ける
 
 ### P1: 次にやる
 
-1. Apple SpeechAnalyzer の batch/import provider
-2. audio import の既定を local-first STT に変更
-3. `CallRepository` / `MinutesRepository` / `ComplianceRepository` の境界整理
-4. local adapter と Cloudflare adapter の責務分離
-5. スマホ録音アップロード PoC
-6. 管理者向け提出レポート条件指定
-7. 保険代理店向け会社別ルールサンプル
-8. AI Operator tool schema の最小実装
+1. Cloudflare βの本番アカウントdeployと実スマホupload確認
+2. `CallRepository` / `MinutesRepository` / `ComplianceRepository` のlocal / cloud責務を実運用で検証
+3. 管理者向け提出レポート条件指定の追加
+4. 保険代理店向け会社別ルールサンプル
+5. βユーザーの誤検知・レビュー時間・提案採用率の計測
+6. AI Operator tool schema の最小実装
+7. PWA制約を確認し、native iOS recorderの要否を判断
 
 ### P2: β化
 

@@ -1,12 +1,12 @@
 # Apple SpeechAnalyzer ローカルSTT移行計画
 
 作成日: 2026-06-10
-更新日: 2026-06-11
+更新日: 2026-07-15
 目的: SalesTalk / セルログの文字起こし基盤を、Deepgram中心から Apple SpeechAnalyzer 中心へ切り替える。
 
 ## 0. 現在地
 
-2026-06-11 時点で、方針転換後の基礎実装は完了している。
+2026-07-15 時点で、方針転換後の基礎実装と入力チャネル別の話者分離は完了している。
 
 完了済み:
 
@@ -19,13 +19,16 @@
 - `npm run native:audio:local-stt-smoke` を追加
 - 実機で `native capture → Apple SpeechAnalyzer → transcript` を確認
 - UI E2E で「診断開始 → STT connected → transcript表示」を確認
+- realtime は system audio / microphone ごとに独立した helper process を使い、`counterpart` / `self` を入力チャネルで固定
+- 自動E2Eで self 発話は transcript 表示のみ、counterpart の反論だけが pipeline / Overlay を発火することを確認
+- batch/import provider を接続し、upload 音声の local-first STT 経路を実装
 
 直近の残タスク:
 
 - 実アプリ操作で本人の声・Zoom音声を使った transcript 品質確認
 - progressive result の確定タイミング調整
 - transcript を商談履歴・議事録・コンプラレビューへ保存する運用確認
-- system audio / microphone のspeaker扱いを実商談で確認
+- system audio / microphone の音質・AEC・長時間安定性を実商談で確認
 - model asset 未準備時のUXをDashboardへ出す
 
 ## 1. 結論
@@ -234,17 +237,17 @@ Swift speech-analyzer-helper
 
 ### 5.3 Speaker扱い
 
-SpeechAnalyzer単体で商談相手/自分を完全分離できる前提にはしない。
+SpeechAnalyzerのdiarizationには依存せず、音声入力チャネルを分離してspeakerを確定する。
 
-MVPでは現実的に以下で進める。
+realtimeでは system audio / microphone ごとに独立した helper process を持つ。timestampはセッション共通originで揃え、音声連続性とfinal重複抑制はチャネルごとに独立させる。
 
 | 入力 | speaker |
 ---|---|
 | Zoom/system audio | `counterpart` |
 | microphone | `self` |
-| mixed audio | `counterpart` 近似、後で改善 |
+| mixed audio / import | `counterpart` 近似。必要時に後処理diarizationを検討 |
 
-speaker diarization はMVP必須にしない。保険コンプラ価値はまず「発話テキストの取得」と「NG表現検知」で出す。
+helperが返すspeaker値は信用せず、TS側の割当チャネルで上書きする。speaker diarization はMVP必須にしない。
 
 ## 6. 開発フェーズ
 
@@ -279,6 +282,7 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 4. [x] Dashboardに現在のSTT provider表示
 5. [x] Deepgram key未設定warningをlocal-first表示へ変更
 6. [x] E2E更新
+7. [x] self / counterpart の2チャネル分離と自動E2E
 
 完了条件:
 
@@ -292,11 +296,11 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 
 タスク:
 
-1. [ ] realtime transcript保存のprovider metadata整理
+1. [x] realtime transcript保存とprovider metadata整理
 2. [ ] local transcript → minutes generation の実データ確認
 3. [ ] local transcript → compliance analysis の実データ確認
-4. [ ] audit log に `stt.provider=apple_speech_analyzer` を記録
-5. [ ] export / review UI へ接続
+4. [x] audit log に `sttProvider=apple_speech_analyzer` を記録
+5. [x] export / review UI へ接続
 
 完了条件:
 
@@ -310,7 +314,7 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 |---|---|---|
 | OS要件 | SpeechAnalyzer が最新OS前提 | 対応OSをMVP要件に明記、Deepgram fallback |
 | モデルasset | 初回に言語asset downloadが必要 | onboardingで事前準備、診断画面で状態表示 |
-| 話者分離 | SpeechAnalyzer単体ではspeaker分離が不足する可能性 | system/mic入力別speaker、diarizationはPhase 2 |
+| 話者分離 | mixed音声やAEC条件で話者が混ざる可能性 | realtimeはsystem/micを別helperへ分離、実Zoomで音質確認、mixed importはPhase 2 |
 | 精度 | 保険用語・固有名詞で誤認識 | ルール側を表記揺れ対応、必要ならfallback STT |
 | Swift実装量 | async sequence / audio format変換が必要 | helper方式で分離、smoke/E2Eで固定 |
 | progressive result | live STTの確定タイミングが不安定 | TS側で短いprefix重複を抑制、実商談で調整 |
@@ -318,14 +322,14 @@ speaker diarization はMVP必須にしない。保険コンプラ価値はまず
 
 ## 8. 直近タスク
 
-2026-06-11 時点の次タスク。
+2026-07-15 時点の次タスク。
 
-1. 実アプリを起動し、本人の声で「診断開始 → transcript表示」を手動確認
-2. Zoom / system audio source で transcript が取れるか確認
-3. transcript の重複・確定タイミングをUI上で調整
-4. `stt.provider` / `stt.localOnly` を transcript metadata / audit log に残す
-5. local transcript から議事録・コンプラレビュー生成までワンクリック確認
-6. model asset 未準備・非対応OS・helper missing のDashboard UXを整理
+1. 実Zoomで system audio=`counterpart` / microphone=`self` の音質・AEC・長時間安定性を確認
+2. 発話終了からfinal transcriptまでのSTT確定遅延を実測
+3. transcript の重複・確定タイミングを実測結果に基づいて調整
+4. local transcript から議事録・コンプラレビュー生成まで実データで確認
+5. model asset 未準備・非対応OS・helper missing のDashboard UXを整理
+6. DMG公証後のクリーンMacでhelper 2processの起動・終了を確認
 
 ## 9. 方針変更の扱い
 

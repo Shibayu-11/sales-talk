@@ -6,11 +6,13 @@
 
 ## 0. 前提準備(検証当日より前に)
 
-**コード・ビルド側は 2026-06-15 に検証済み**(unit 213 + E2E 5 全グリーン、ネイティブ binary arm64 ビルド成功、
+**コード・ビルド側は 2026-07-15 に再検証済み**(unit 242 + E2E 7 全グリーン、ネイティブ binary arm64 ビルド成功、
 DMG packaging 構成・反論パイプライン・レイテンシ計測・オーバーレイ reducer すべて確認)。
+system audio / microphone は別々の SpeechAnalyzer helper へ送信し、self発話はpipelineを発火せず、counterpart反論だけがOverlayを発火する自動E2Eも通過済み。
 残るのは「実機の生 Zoom 通話で通しで動くか」だけ。当日は下記を揃えれば即実行できる:
 
 - [x] `npm run native:audio:build && npm run native:speech:build` が成功する(検証済み・arm64)
+- [x] fake native audioでself/counterpart 2チャネル分離とcounterpart限定pipeline発火を自動検証
 - [ ] macOS 26 Tahoe + Apple Silicon の実機(SpeechAnalyzer 必須要件)
 - [ ] Anthropic API キーを設定画面から登録済み(`secrets` 経由、Keychain 保存)
 - [ ] 模擬商談の相手役を確保(別端末 + ヘッドフォン推奨。AEC 検証のため最低 1 回はスピーカー出しも試す)
@@ -42,6 +44,7 @@ Zoom 通話を開始し、Control ウィンドウから商談開始(商材: 任�
 - [ ] 商談開始でオーバーレイが表示される(`待機中` 表示)
 - [ ] **相手の発話**が transcript に出る(system audio 経由、speaker=counterpart)
 - [ ] **自分の発話**が transcript に出る(mic 経由、speaker=self)
+- [ ] 自分と相手が交互に話してもspeakerが入れ替わらず、両helper processが安定して動く
 - [ ] 相手役に §4 の反論セリフを言ってもらう → 検知バッジ → 切り返し候補が L1→L2 と表示される
 - [ ] 相槌(「はい」「なるほど」)では検知が**発火しない**
 - [ ] 雑談では検知が発火しない(誤検知したら transcript と一緒に記録)

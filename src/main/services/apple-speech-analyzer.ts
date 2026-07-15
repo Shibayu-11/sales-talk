@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface } from 'node:readline';
 import type { AudioChunk, Transcript } from '@shared/types';
 import type { STTProvider } from './stt';
+import { ChannelSeparatedAppleSpeechAnalyzerSTTProvider } from './channel-separated-apple-speech-analyzer';
 
 const HELPER_RESOURCE_PATH = join('native', 'audio-capture', 'speech-analyzer-helper');
 const HELPER_DEV_PATH = join(
@@ -52,6 +53,7 @@ export interface AppleSpeechAnalyzerSTTProviderOptions {
   locale?: string | undefined;
   sampleRate?: number | undefined;
   spawnProcess?: typeof spawn | undefined;
+  resolveTimelineOriginMs?: ((chunkStartMs: number) => number) | undefined;
 }
 
 export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
@@ -66,11 +68,15 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
   private readonly helperPath: string;
   private readonly sampleRate: number;
   private readonly spawnProcess: typeof spawn;
+  private readonly resolveSharedTimelineOriginMs:
+    | ((chunkStartMs: number) => number)
+    | undefined;
 
   constructor(options: AppleSpeechAnalyzerSTTProviderOptions = {}) {
     this.helperPath = options.helperPath ?? resolveSpeechAnalyzerHelperPath();
     this.sampleRate = options.sampleRate ?? 16_000;
     this.spawnProcess = options.spawnProcess ?? spawn;
+    this.resolveSharedTimelineOriginMs = options.resolveTimelineOriginMs;
   }
 
   async connect(): Promise<void> {
@@ -227,11 +233,16 @@ export class AppleSpeechAnalyzerSTTProvider implements STTProvider {
   }
 
   private normalizeAudioStartMs(chunk: AudioChunk): number {
-    this.timelineOriginMs ??= chunk.startMs;
-    const relativeStartMs = Math.max(0, chunk.startMs - this.timelineOriginMs);
+    const timelineOriginMs = this.resolveSharedTimelineOriginMs?.(chunk.startMs) ?? this.resolveLocalTimelineOriginMs(chunk.startMs);
+    const relativeStartMs = Math.max(0, chunk.startMs - timelineOriginMs);
     const startMs = Math.max(relativeStartMs, this.nextAudioStartMs);
     this.nextAudioStartMs = startMs + Math.max(1, chunk.durationMs);
     return startMs;
+  }
+
+  private resolveLocalTimelineOriginMs(chunkStartMs: number): number {
+    this.timelineOriginMs ??= chunkStartMs;
+    return this.timelineOriginMs;
   }
 
   private shouldSuppressTranscript(message: HelperTranscriptMessage): boolean {
@@ -275,13 +286,19 @@ async function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: num
   });
 }
 
-export async function createAppleSpeechAnalyzerSTTProvider(): Promise<AppleSpeechAnalyzerSTTProvider | null> {
+export async function createAppleSpeechAnalyzerSTTProvider(): Promise<STTProvider | null> {
   const helperPath = resolveSpeechAnalyzerHelperPath();
   if (!existsSync(helperPath)) {
     return null;
   }
 
-  return new AppleSpeechAnalyzerSTTProvider({ helperPath });
+  return new ChannelSeparatedAppleSpeechAnalyzerSTTProvider({
+    createChildProvider: (_speaker, context) =>
+      new AppleSpeechAnalyzerSTTProvider({
+        helperPath,
+        resolveTimelineOriginMs: context.resolveTimelineOriginMs,
+      }),
+  });
 }
 
 export function resolveSpeechAnalyzerHelperPath(): string {

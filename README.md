@@ -32,7 +32,7 @@ npm run dev
 | `npm run native:audio:smoke -- --duration-ms 5000` | 実機で microphone/system audio chunk 到達を診断 |
 | `npm run native:audio:local-stt-smoke -- --duration-ms 8000` | 実機 audio chunk を Apple SpeechAnalyzer へ流してlocal STT疎通確認 |
 | `DEEPGRAM_API_KEY=... npm run native:audio:stt-smoke -- --duration-ms 8000` | fallback 用に実機 audio chunk を Deepgram へ送信して STT 疎通確認 |
-| `npm run package:mac` | macOS DMG ビルド(universal) |
+| `npm run package:mac` | macOS DMG ビルド(Apple Silicon / arm64) |
 
 ### Native audio / local STT smoke test
 
@@ -56,10 +56,10 @@ npm run native:speech:build
 npm run native:audio:local-stt-smoke -- --duration-ms 8000 --source microphone --require-transcript
 ```
 
-pipelineまで確認する場合は `--require-pipeline` を付ける。
+pipelineまで確認する場合は、反論検知対象である system audio (`counterpart`) を選び、`--require-pipeline` を付ける。microphone (`self`) は文字起こしだけ行い、反論pipelineを発火しない。
 
 ```bash
-npm run native:audio:local-stt-smoke -- --duration-ms 10000 --source microphone --require-transcript --require-pipeline
+npm run native:audio:local-stt-smoke -- --duration-ms 10000 --source system --require-transcript --require-pipeline
 ```
 
 Deepgram まで含めた実通し確認は fallback 用。`DEEPGRAM_API_KEY` を環境変数で渡す。発話が必要なため、文字起こし必須確認では実行中にマイクへ話す。
@@ -92,6 +92,7 @@ src/
 
 Mac MVP は `local_first`。Apple SpeechAnalyzer で端末上文字起こしを行い、音声データを外部STTへ送らない。
 
+- system audio と microphone は別々の SpeechAnalyzer helper で処理し、`counterpart` / `self` を入力チャネルで固定する
 - Deepgram は fallback / Cloud β / 非Mac入口用
 - Anthropic は議事録・カンペ・レビュー生成用で、送るのは transcript テキスト
 - コンプラ判定は rule engine first、LLMは補助

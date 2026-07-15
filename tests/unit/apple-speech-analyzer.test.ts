@@ -2,7 +2,11 @@ import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AppleSpeechAnalyzerSTTProvider } from '../../src/main/services/apple-speech-analyzer';
+import {
+  AppleSpeechAnalyzerSTTProvider,
+  createAppleSpeechAnalyzerSTTProvider,
+} from '../../src/main/services/apple-speech-analyzer';
+import { ChannelSeparatedAppleSpeechAnalyzerSTTProvider } from '../../src/main/services/channel-separated-apple-speech-analyzer';
 import type { Transcript } from '../../src/shared/types';
 
 describe('AppleSpeechAnalyzerSTTProvider', () => {
@@ -37,6 +41,23 @@ describe('AppleSpeechAnalyzerSTTProvider', () => {
     const provider = new AppleSpeechAnalyzerSTTProvider({ helperPath: '/tmp/sales-talk-missing-helper' });
 
     await expect(provider.connect()).rejects.toThrow('Apple SpeechAnalyzer helper was not found');
+  });
+
+  it('creates the channel-separated provider from the realtime factory', async () => {
+    const helperPath = await createFakeSpeechAnalyzerHelper();
+    const previousHelperPath = process.env.SALES_TALK_SPEECH_ANALYZER_HELPER;
+    process.env.SALES_TALK_SPEECH_ANALYZER_HELPER = helperPath;
+
+    try {
+      const provider = await createAppleSpeechAnalyzerSTTProvider();
+      expect(provider).toBeInstanceOf(ChannelSeparatedAppleSpeechAnalyzerSTTProvider);
+    } finally {
+      if (previousHelperPath === undefined) {
+        delete process.env.SALES_TALK_SPEECH_ANALYZER_HELPER;
+      } else {
+        process.env.SALES_TALK_SPEECH_ANALYZER_HELPER = previousHelperPath;
+      }
+    }
   });
 });
 

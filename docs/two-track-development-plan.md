@@ -1,7 +1,7 @@
 # SalesTalk / セルログ 2軸開発計画
 
 作成日: 2026-05-25
-更新日: 2026-06-11
+更新日: 2026-07-15
 目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ業務API基盤で進める。
 
 中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
@@ -12,21 +12,21 @@ Track A の週次実行計画は [MVP リリースロードマップ](./mvp-rele
 
 方向転換後も軸はぶれていない。入口の優先順位を変えただけで、中核は `transcript → rule engine → minutes → review → audit` の共通業務APIである。
 
-2026-06-11 時点の実装状況:
+2026-07-15 時点の実装状況:
 
 | 領域 | 状態 | メモ |
 |---|---|---|
-| Mac local STT | 実装済み | Apple SpeechAnalyzer helper + TS provider + UI診断E2E |
+| Mac local STT | 実装済み | Apple SpeechAnalyzerをsystem/mic別helperで分離、TS provider + UI診断E2E |
 | Deepgram | fallback化済み | `deepgram_fallback` / `deepgram_only` で明示利用 |
-| 音声import→STT job | 実装済み | Deepgram prerecorded / Cloud worker側の基礎あり |
+| 音声import→STT job | 実装済み | Apple batch local-first + Deepgram prerecorded fallback + Cloud worker |
 | コンプラルール | 実装済み | 会社別プリセット、商品別ルール、CRUD、承認フロー |
 | 監査ログ | 実装済み | 検索・期間フィルタ・CSV/PDF export・改ざん検証 |
 | 録音同意 | 実装済み | realtime / upload attestation の基礎あり |
 | UI診断 | 実装済み | 診断開始からlocal transcript表示までE2Eで固定 |
-| Mobile recorder | 未着手 | 次以降の入口開発 |
-| Cloudflare β | 一部実装済み | R2 upload / Queues / auth基礎あり、運用化は次段階 |
+| Mobile recorder | PWA実装済み | 録音同意gate + MediaRecorder + 署名upload、fake audio E2E済み。native iOSは保留 |
+| Cloudflare β | deploy可能 | Workers / D1 / R2 / Queues / auth実装済み。残りは本番アカウント設定と運用確認 |
 
-直近は **Track A のlocal-first STTを実アプリで品質確認しつつ、Track B の訪問録音・保険コンプラ議事録へ下流を接続する**。
+直近は **Track A の実Zoom品質・配布可否を実測しつつ、Track B は実代理店ルールとβ運用で価値検証する**。
 
 ## 1. 方針
 
@@ -253,24 +253,26 @@ Mac MVP の文字起こしは local-first に変更する。
 - [x] Apple SpeechAnalyzer / Deepgram batch / Deepgram streaming を切り替えられる抽象化
 - [x] transcript を meeting session に紐付け
 - [x] コンプラ議事録生成
-- [ ] Apple SpeechAnalyzer batch/import provider の本接続
+- [x] Apple SpeechAnalyzer batch/import provider の本接続
 
 完了条件:
 
 - [x] iPhone ボイスメモ等で録った音声を取り込める
 - [x] 保険コンプラレポートが生成される
-- [ ] local STT だけでupload音声を処理できる
+- [x] local STT だけでupload音声を処理できるコード経路がある
+- [ ] 実音声ファイルでlocal STT → 議事録 → コンプラ結果を実機確認
 
 ### MVP 4: Mobile Recorder
 
 目的: 訪問営業で録音開始からアップロードまで完結する。
 
-- iOS 優先
-- 録音開始 / 停止
-- 顧客同意チェック
-- 録音メタデータ入力
-- アップロード
-- 処理状況表示
+- [x] PWAで録音開始 / 停止
+- [x] 顧客同意チェック
+- [x] 録音メタデータ入力
+- [x] 署名URLアップロード
+- [x] fake audio deviceでE2E
+- [ ] 実スマホで録音・upload・処理状況を確認
+- [ ] native iOS化は需要確認後に判断
 
 完了条件:
 
@@ -325,17 +327,18 @@ Mac MVP の文字起こしは local-first に変更する。
 - [x] transcript 保存
 - [x] compliance report 生成
 - [x] CSV / PDF export の検討
-- [ ] Apple SpeechAnalyzer batch/import 処理
+- [x] Apple SpeechAnalyzer batch/import 処理
 
 ### Phase 3: Mobile Recorder MVP
 
 期間目安: 3〜4週
 
-- iOS 録音アプリ
-- 認証または簡易テナントコード
-- 音声アップロード
-- 処理ステータス
-- 同意取得チェック
+- [x] PWA録音アプリ
+- [x] 認証基礎
+- [x] 音声アップロード
+- [x] 同意取得チェック
+- [ ] 実スマホで処理ステータスまで通し確認
+- [ ] native iOS化はβフィードバック後に判断
 
 ### Phase 4: Cloudflare β
 
@@ -364,16 +367,16 @@ Mac MVP の文字起こしは local-first に変更する。
 
 次に手を動かす順番。完了済みの土台を前提に、実商談品質とTrack Bへ寄せる。
 
-1. 実アプリで本人音声・Zoom system audio のlocal STT品質確認
-2. transcript metadata / audit log に `stt.provider=apple_speech_analyzer` を残す
-3. local STT transcript から議事録・コンプラレビューをワンクリック確認
-4. Apple SpeechAnalyzer batch/import provider を追加
-5. 音声importの既定providerを local-first に変更
-6. Mobile recorder PoC の録音/同意/アップロード最小実装
-7. Cloudflare API とmobile uploadの接続
-8. 管理者向け月次レポート・提出用exportの条件指定強化
-9. 実代理店ルールのサンプル投入
-10. iOS recorder PoC
+1. 実Zoomで本人音声=self / system audio=counterpart の品質・AEC・長時間安定性を確認
+2. 発話終了 → final transcript → Overlay表示の実レイテンシを計測
+3. 実音声importでlocal STT → 議事録 → コンプラレビューを通す
+4. model asset未準備・非対応OS・helper missingのDashboard UXを整理
+5. DMG署名・Apple Notarize・クリーンMac導入を通す
+6. Cloudflare βを本番アカウントへdeployし、実スマホuploadを確認
+7. 実代理店ルールのサンプル投入と募集管理担当レビュー
+8. βユーザーで誤検知・レビュー時間・提案採用率を計測
+9. AI Operator tool schemaの最小実装
+10. native iOS recorderは需要とPWA制約を見て判断
 
 ## 8. あなたがやる必要がある作業
 

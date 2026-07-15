@@ -8,6 +8,7 @@ import {
   resolveNativeAudioCaptureModulePath,
 } from '../src/main/audio/native-module-loader';
 import { AppleSpeechAnalyzerSTTProvider } from '../src/main/services/apple-speech-analyzer';
+import { ChannelSeparatedAppleSpeechAnalyzerSTTProvider } from '../src/main/services/channel-separated-apple-speech-analyzer';
 import { ObjectionLlmService, type LlmProvider } from '../src/main/services/llm';
 import { ObjectionPipelineService } from '../src/main/services/objection-pipeline';
 import { EmptyKnowledgeRepository, KnowledgeSearchService } from '../src/main/services/knowledge';
@@ -141,14 +142,22 @@ async function runLocalSttSmoke(options: LocalSttSmokeOptions): Promise<number> 
 
   const stats = createStats();
   const pipeline = createSmokePipeline(stats);
-  const provider = new AppleSpeechAnalyzerSTTProvider({
-    helperPath: options.helperPath ?? undefined,
-    sampleRate: options.sampleRate,
+  const provider = new ChannelSeparatedAppleSpeechAnalyzerSTTProvider({
+    createChildProvider: (_speaker, context) =>
+      new AppleSpeechAnalyzerSTTProvider({
+        helperPath: options.helperPath ?? undefined,
+        sampleRate: options.sampleRate,
+        resolveTimelineOriginMs: context.resolveTimelineOriginMs,
+      }),
   });
   provider.setTranscriptHandler((transcript) => {
     stats.transcripts.push(transcript);
-    console.info(`[audio-local-stt-smoke] transcript final=${transcript.isFinal} text=${transcript.text}`);
-    void pipeline.handleTranscript(transcript);
+    console.info(
+      `[audio-local-stt-smoke] transcript speaker=${transcript.speaker} final=${transcript.isFinal} text=${transcript.text}`,
+    );
+    if (transcript.speaker === 'counterpart') {
+      void pipeline.handleTranscript(transcript);
+    }
   });
 
   let sessionId: string | null = null;
