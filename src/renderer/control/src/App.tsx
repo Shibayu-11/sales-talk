@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   AppSettings,
@@ -1148,6 +1148,7 @@ function SettingsPanel(props: {
   const [cloudInviteRole, setCloudInviteRole] = useState<OrganizationRole>('agent');
   const [cloudInviteOrganizationId, setCloudInviteOrganizationId] = useState('');
   const [cloudAdminPending, setCloudAdminPending] = useState(false);
+  const passwordResetPendingMembershipRef = useRef<string | null>(null);
   const [cloudAdminError, setCloudAdminError] = useState<string | null>(null);
   const [oneTimeCloudToken, setOneTimeCloudToken] = useState<CloudActionTokenResult | null>(null);
   const [anthropicDiagnostic, setAnthropicDiagnostic] =
@@ -1286,6 +1287,10 @@ function SettingsPanel(props: {
   };
 
   const issuePasswordReset = async (membershipId: string): Promise<void> => {
+    if (passwordResetPendingMembershipRef.current === membershipId) {
+      return;
+    }
+    passwordResetPendingMembershipRef.current = membershipId;
     setCloudAdminPending(true);
     setCloudAdminError(null);
     try {
@@ -1294,6 +1299,7 @@ function SettingsPanel(props: {
     } catch (error) {
       setCloudAdminError(errorMessage(error));
     } finally {
+      passwordResetPendingMembershipRef.current = null;
       setCloudAdminPending(false);
     }
   };
@@ -1404,11 +1410,11 @@ function SettingsPanel(props: {
         </div>
         <div className="mt-4 border-t border-zinc-800 pt-4">
           <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            β / 手動配送 token
+            メール受信 token
           </h3>
           <p className="mt-1 text-xs text-zinc-600">
-            管理者から受け取った一回限りの bearer token と新しいパスワードで SaaS セッションを発行します。
-            管理者が token を見られる手動配送はβ用で、一般本番には検証済みメール配送が必要です。
+            招待メールまたは再設定メールで届いた一回限りの token と新しいパスワードで SaaS セッションを発行します。
+            メールには deep link を含めず、アプリへ token を貼り付けます。
           </p>
           <div className="mt-3 grid gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
             <input
@@ -1416,7 +1422,7 @@ function SettingsPanel(props: {
               value={cloudToken}
               onChange={(event) => setCloudToken(event.currentTarget.value)}
               className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
-              placeholder="招待または再設定 token"
+              placeholder="メールで届いた token"
             />
             <input
               aria-label="Cloudflare token password"
@@ -1468,8 +1474,8 @@ function SettingsPanel(props: {
           <div>
             <h2 className="text-sm font-medium text-zinc-400">Cloudflare SaaS ユーザー管理</h2>
             <p className="mt-1 text-xs text-zinc-600">
-              招待・停止・再設定 token は Worker/D1 側のアカウントライフサイクルを操作します。
-              token の手動表示はβ用で、見た管理者は受信者として操作できる点に注意してください。
+              招待・停止・再設定メールは Worker/D1 側のアカウントライフサイクルを操作します。
+              email mode では管理者画面に raw token を表示しません。
             </p>
           </div>
           <button
@@ -1530,36 +1536,54 @@ function SettingsPanel(props: {
                 onClick={() => void createCloudInvitation()}
                 className="rounded bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 disabled:opacity-40"
               >
-                招待発行
+                招待メール送信
               </button>
             </div>
             {oneTimeCloudToken && (
-              <div className="mt-4 rounded border border-overlay-warning/40 bg-amber-950/20 p-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <span className="font-medium text-amber-100">
-                      {oneTimeCloudToken.type === 'invite' ? '招待 token' : '再設定 token'}
-                    </span>
-                    <span className="ml-2 text-zinc-500">
-                      期限: {new Date(oneTimeCloudToken.expiresAt).toLocaleString('ja-JP')}
-                    </span>
+              oneTimeCloudToken.mode === 'email' ? (
+                <div className="mt-4 rounded border border-emerald-500/40 bg-emerald-950/20 p-3 text-xs">
+                  <div className="font-medium text-emerald-100">送信受付済み</div>
+                  <p className="mt-2 text-zinc-400">
+                    {oneTimeCloudToken.type === 'invite' ? '招待' : '再設定'}メールを
+                    {oneTimeCloudToken.recipient.emailMasked} 宛に受付しました。最終到達はメールログで確認してください。
+                  </p>
+                  <div className="mt-2 font-mono text-[11px] text-zinc-500">
+                    deliveryId: {oneTimeCloudToken.deliveryId}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void navigator.clipboard.writeText(oneTimeCloudToken.token)}
-                    className="rounded bg-zinc-100 px-3 py-1 text-[11px] font-medium text-zinc-900"
-                  >
-                    コピー
-                  </button>
+                  {oneTimeCloudToken.trackingDegraded && (
+                    <p className="mt-2 text-overlay-warning">
+                      Cloudflare への受付後に D1 tracking 更新が失敗しました。token は画面に表示していません。
+                    </p>
+                  )}
                 </div>
-                <div className="mt-2 break-all rounded bg-zinc-950 p-2 font-mono text-[11px] text-amber-100">
-                  {oneTimeCloudToken.token}
+              ) : (
+                <div className="mt-4 rounded border border-overlay-warning/40 bg-amber-950/20 p-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <span className="font-medium text-amber-100">
+                        {oneTimeCloudToken.type === 'invite' ? '招待 token' : '再設定 token'}
+                      </span>
+                      <span className="ml-2 text-zinc-500">
+                        期限: {new Date(oneTimeCloudToken.expiresAt).toLocaleString('ja-JP')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(oneTimeCloudToken.token)}
+                      className="rounded bg-zinc-100 px-3 py-1 text-[11px] font-medium text-zinc-900"
+                    >
+                      コピー
+                    </button>
+                  </div>
+                  <div className="mt-2 break-all rounded bg-zinc-950 p-2 font-mono text-[11px] text-amber-100">
+                    {oneTimeCloudToken.token}
+                  </div>
+                  <p className="mt-2 text-zinc-500">
+                    manual_beta の bearer token は再表示されず、期限到来で自動消去されます。
+                    見た管理者は受信者になりすませるため本番では使用しません。
+                  </p>
                 </div>
-                <p className="mt-2 text-zinc-500">
-                  この bearer token は再表示されず、期限到来で自動消去されます。手動配送はβ用で、
-                  管理者が受信者になりすませるため一般本番には検証済みメール配送が必要です。
-                </p>
-              </div>
+              )
             )}
             {(cloudAdminError || props.cloudOrganizationError) && (
               <div className="mt-3 rounded border border-overlay-objection/40 bg-red-950/20 p-3 text-xs text-red-100">
@@ -1626,7 +1650,7 @@ function SettingsPanel(props: {
                             onClick={() => void issuePasswordReset(user.membershipId)}
                             className="rounded bg-zinc-800 px-2 py-1 text-[11px] disabled:opacity-40"
                           >
-                            reset発行
+                            再設定メール送信
                           </button>
                         </div>
                       </td>

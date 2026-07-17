@@ -280,6 +280,9 @@ export const AuditActionSchema = z.enum([
   'organization.password_reset_issued',
   'organization.password_reset_completed',
   'organization.membership_status_updated',
+  'organization.auth_delivery_accepted',
+  'organization.auth_delivery_failed',
+  'organization.auth_delivery_cancelled',
 ]);
 
 export const ComplianceRuleSchema = z.object({
@@ -759,14 +762,40 @@ export const CloudOrganizationSchema = z.object({
   updatedAt: z.string(),
 });
 
-export const CloudActionTokenResultSchema = z.object({
+const CloudActionResultBaseSchema = z.object({
   type: z.enum(['invite', 'password_reset']),
-  token: z.string().min(32),
   expiresAt: z.string(),
   membershipId: z.string().uuid(),
   userId: z.string().uuid(),
   organizationId: z.string().uuid(),
 });
+
+const CurrentCloudActionTokenResultSchema = z.discriminatedUnion('mode', [
+  CloudActionResultBaseSchema.extend({
+    mode: z.literal('manual_beta'),
+    token: z.string().min(32),
+    deliveryId: z.string().uuid().optional(),
+  }).strict(),
+  CloudActionResultBaseSchema.extend({
+    mode: z.literal('email'),
+    status: z.literal('accepted'),
+    deliveryId: z.string().uuid(),
+    recipient: z.object({ emailMasked: z.string().min(3) }),
+    providerMessageId: z.string().min(1).optional(),
+    trackingDegraded: z.boolean(),
+  }).strict(),
+]);
+
+const LegacyCloudActionTokenResultSchema = CloudActionResultBaseSchema.extend({
+  token: z.string().min(32),
+})
+  .strict()
+  .transform((value) => ({ ...value, mode: 'manual_beta' as const }));
+
+export const CloudActionTokenResultSchema = z.union([
+  CurrentCloudActionTokenResultSchema,
+  LegacyCloudActionTokenResultSchema,
+]);
 
 export const SecretSetInputSchema = z.object({
   key: SecretKeySchema,

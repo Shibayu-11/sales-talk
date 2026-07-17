@@ -226,12 +226,14 @@ describe('getCloudflareConnectionStatus', () => {
       requests.push(init ?? {});
       return Response.json(
         {
+          mode: 'manual_beta',
           type: 'invite',
           token: 'c'.repeat(43),
           expiresAt: '2026-07-18T00:00:00.000Z',
           membershipId: '00000000-0000-4000-8000-000000000005',
           userId: '00000000-0000-4000-8000-000000000004',
           organizationId: '00000000-0000-4000-8000-000000000002',
+          deliveryId: '00000000-0000-4000-8000-000000000006',
         },
         { status: 201 },
       );
@@ -251,10 +253,42 @@ describe('getCloudflareConnectionStatus', () => {
           fetch: request,
         },
       ),
-    ).resolves.toMatchObject({ type: 'invite', token: 'c'.repeat(43) });
+    ).resolves.toMatchObject({ mode: 'manual_beta', type: 'invite', token: 'c'.repeat(43) });
     expect(JSON.parse(String(requests[0]?.body))).toMatchObject({
       email: 'agent@example.local',
       role: 'agent',
+    });
+  });
+
+  it('normalizes a legacy Worker token response as manual_beta', async () => {
+    await expect(
+      createCloudflareInvitation(
+        { email: 'agent@example.local', role: 'agent' },
+        {
+          apiUrl: 'https://example.workers.dev',
+          getSessionToken: async () => 'signed-session',
+          fetch: async () =>
+            Response.json(
+              {
+                type: 'invite',
+                token: 'l'.repeat(43),
+                expiresAt: '2026-07-18T00:00:00.000Z',
+                membershipId: '00000000-0000-4000-8000-000000000005',
+                userId: '00000000-0000-4000-8000-000000000004',
+                organizationId: '00000000-0000-4000-8000-000000000002',
+              },
+              { status: 201 },
+            ),
+        },
+      ),
+    ).resolves.toEqual({
+      mode: 'manual_beta',
+      type: 'invite',
+      token: 'l'.repeat(43),
+      expiresAt: '2026-07-18T00:00:00.000Z',
+      membershipId: '00000000-0000-4000-8000-000000000005',
+      userId: '00000000-0000-4000-8000-000000000004',
+      organizationId: '00000000-0000-4000-8000-000000000002',
     });
   });
 
@@ -264,12 +298,16 @@ describe('getCloudflareConnectionStatus', () => {
       if (url.endsWith('/v1/organization/password-resets')) {
         return Response.json(
           {
+            mode: 'email',
             type: 'password_reset',
-            token: 'd'.repeat(43),
+            status: 'accepted',
             expiresAt: '2026-07-15T00:30:00.000Z',
             membershipId: '00000000-0000-4000-8000-000000000005',
             userId: '00000000-0000-4000-8000-000000000004',
             organizationId: '00000000-0000-4000-8000-000000000002',
+            deliveryId: '00000000-0000-4000-8000-000000000006',
+            recipient: { emailMasked: 'a***@e***.local' },
+            trackingDegraded: false,
           },
           { status: 201 },
         );
@@ -298,7 +336,7 @@ describe('getCloudflareConnectionStatus', () => {
         getSessionToken: async () => 'signed-session',
         fetch: request,
       }),
-    ).resolves.toMatchObject({ type: 'password_reset', token: 'd'.repeat(43) });
+    ).resolves.toMatchObject({ mode: 'email', type: 'password_reset', status: 'accepted' });
     await expect(
       setCloudflareMembershipStatus('00000000-0000-4000-8000-000000000005', 'disabled', {
         apiUrl: 'https://example.workers.dev',

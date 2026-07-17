@@ -1,3 +1,8 @@
 API_TOKEN=replace-with-a-local-development-token
 SESSION_SIGNING_KEY=replace-with-a-local-session-signing-key
 DEEPGRAM_API_KEY=replace-with-a-local-deepgram-api-key
+AUTH_EMAIL_DELIVERY_MODE=manual_beta
+# Equivalent one-off override: npx wrangler dev --var AUTH_EMAIL_DELIVERY_MODE:manual_beta
+# For local email mode, set AUTH_EMAIL_DELIVERY_MODE=email and use an onboarded sender domain.
+AUTH_EMAIL_FROM=noreply@recustep.com
+AUTH_EMAIL_FROM_NAME=SalesTalk

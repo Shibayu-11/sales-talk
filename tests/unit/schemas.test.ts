@@ -69,16 +69,44 @@ describe('shared schemas', () => {
       membershipId: '00000000-0000-4000-8000-000000000005',
       status: 'disabled',
     });
-    expect(
-      CloudActionTokenResultSchema.parse({
+    const manualAction = CloudActionTokenResultSchema.parse({
+        mode: 'manual_beta',
         type: 'invite',
         token: 'b'.repeat(43),
         expiresAt: '2026-07-18T00:00:00.000Z',
         membershipId: '00000000-0000-4000-8000-000000000005',
         userId: '00000000-0000-4000-8000-000000000004',
         organizationId: '00000000-0000-4000-8000-000000000002',
-      }).token,
-    ).toHaveLength(43);
+        deliveryId: '00000000-0000-4000-8000-000000000006',
+      });
+    expect(manualAction.mode).toBe('manual_beta');
+    if (manualAction.mode === 'manual_beta') {
+      expect(manualAction.token).toHaveLength(43);
+    }
+    expect(
+      CloudActionTokenResultSchema.parse({
+        type: 'password_reset',
+        token: 'c'.repeat(43),
+        expiresAt: '2026-07-18T00:00:00.000Z',
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        userId: '00000000-0000-4000-8000-000000000004',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+      }),
+    ).toMatchObject({ mode: 'manual_beta', token: 'c'.repeat(43) });
+    expect(
+      CloudActionTokenResultSchema.parse({
+        mode: 'email',
+        type: 'password_reset',
+        status: 'accepted',
+        expiresAt: '2026-07-18T00:00:00.000Z',
+        membershipId: '00000000-0000-4000-8000-000000000005',
+        userId: '00000000-0000-4000-8000-000000000004',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+        deliveryId: '00000000-0000-4000-8000-000000000006',
+        recipient: { emailMasked: 'u***@e***.com' },
+        trackingDegraded: false,
+      }),
+    ).not.toHaveProperty('token');
     expect(
       CloudOrganizationUserSchema.parse({
         id: '00000000-0000-4000-8000-000000000004',

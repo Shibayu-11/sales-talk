@@ -4,10 +4,21 @@
   "main": "cloudflare/src/index.ts",
   "compatibility_date": "2026-06-08",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AUTH_EMAIL_DELIVERY_MODE": "email",
+    "AUTH_EMAIL_FROM": "noreply@recustep.com",
+    "AUTH_EMAIL_FROM_NAME": "SalesTalk"
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "send_email": [
+    {
+      "name": "AUTH_EMAIL",
+      "allowed_sender_addresses": ["noreply@recustep.com"]
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

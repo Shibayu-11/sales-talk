@@ -25,6 +25,11 @@ import {
   type OrganizationRole,
   type RequestContext,
 } from './account-lifecycle';
+import {
+  AuthEmailDeliveryError,
+  assertAuthEmailDeliveryConfigured,
+  sendAuthActionEmail,
+} from './auth-email';
 import { transcribeWithDeepgram, type SttQueueMessage, type TranscriptSegmentInput } from './stt';
 
 interface AudioUploadResult {
@@ -164,18 +169,28 @@ export default {
         return json(await listManageableOrganizations(env.DB, context));
       }
       if (request.method === 'POST' && url.pathname === '/v1/organization/invitations') {
+        const emailEnv = authEmailEnv(env);
+        assertAuthEmailDeliveryConfigured(emailEnv);
+        const invitation = await createInvitation(
+          env.DB,
+          context,
+          parseInvitationInput(await request.json()),
+        );
         return json(
-          await createInvitation(env.DB, context, parseInvitationInput(await request.json())),
+          await sendAuthActionEmail(emailEnv, invitation),
           201,
         );
       }
       if (request.method === 'POST' && url.pathname === '/v1/organization/password-resets') {
+        const emailEnv = authEmailEnv(env);
+        assertAuthEmailDeliveryConfigured(emailEnv);
+        const reset = await issuePasswordReset(
+          env.DB,
+          context,
+          parsePasswordResetInput(await request.json()).membershipId,
+        );
         return json(
-          await issuePasswordReset(
-            env.DB,
-            context,
-            parsePasswordResetInput(await request.json()).membershipId,
-          ),
+          await sendAuthActionEmail(emailEnv, reset),
           201,
         );
       }
@@ -1104,6 +1119,22 @@ function publicContext(context: RequestContext): RequestContext {
   };
 }
 
+function authEmailEnv(env: Env): Parameters<typeof sendAuthActionEmail>[0] {
+  const extra = env as Env & {
+    AUTH_EMAIL_FROM?: string | undefined;
+    AUTH_EMAIL_FROM_NAME?: string | undefined;
+  };
+  return {
+    DB: env.DB,
+    AUTH_EMAIL: env.AUTH_EMAIL
+      ? { send: async (message) => env.AUTH_EMAIL.send(message) }
+      : undefined,
+    AUTH_EMAIL_DELIVERY_MODE: env.AUTH_EMAIL_DELIVERY_MODE,
+    AUTH_EMAIL_FROM: extra.AUTH_EMAIL_FROM,
+    AUTH_EMAIL_FROM_NAME: extra.AUTH_EMAIL_FROM_NAME,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1124,6 +1155,9 @@ function errorMessage(error: unknown): string {
 
 function errorStatus(error: unknown): number {
   if (error instanceof AccountLifecycleError) {
+    return error.status;
+  }
+  if (error instanceof AuthEmailDeliveryError) {
     return error.status;
   }
   return error instanceof HttpError ? error.status : 500;

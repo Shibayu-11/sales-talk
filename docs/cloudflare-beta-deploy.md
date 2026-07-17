@@ -12,8 +12,8 @@ D1 / R2 / Queue の全バインディングを解決することを確認済み�
 | 要素 | 状態 |
 |---|---|
 | Worker(`cloudflare/src/index.ts`、account lifecycle + STT endpoints + Queue consumer) | 実装済み |
-| 認証(PBKDF2 + 署名セッション、アカウントロック、招待 / reset token) | 実装済み |
-| D1 マイグレーション 7本 | 実装済み |
+| 認証(PBKDF2 + 署名セッション、アカウントロック、招待 / reset token email delivery) | 実装済み |
+| D1 マイグレーション 8本 | 実装済み |
 | 署名付きアップロードURL → R2 → STT job → transcript | 実装済み・テスト済み |
 | Electron クライアント(`cloudflare-api.ts`) | 実装済み・テスト済み |
 | `wrangler.jsonc`(root、D1/R2/Queue バインディング) | 設定済み |
@@ -42,7 +42,7 @@ npx wrangler queues create sales-talk-stt-jobs
 
 `wrangler.jsonc` の `database_id` を新しい値に更新する(name は同じでよい)。
 
-## 3. シークレット設定(必須・3種)
+## 3. シークレット設定(必須・3種 + email mode)
 
 **リポジトリにもコマンド引数にも残さない。** wrangler の対話入力を使う。
 
@@ -57,10 +57,21 @@ openssl rand -hex 24 | npx wrangler secret put API_TOKEN
 npx wrangler secret put DEEPGRAM_API_KEY
 ```
 
+Email delivery を使う場合:
+
+```bash
+npx wrangler email sending list
+npx wrangler email sending enable recustep.com
+npx wrangler email sending dns get recustep.com
+```
+
+現時点の実アカウントは `npx wrangler email sending list` が `No zones found` なので、`recustep.com` の送信 domain onboarding / DNS が未完了。Cloudflare Email Sending は Public Beta かつ Workers Paid plan が前提。root `wrangler.jsonc` は production の `AUTH_EMAIL_DELIVERY_MODE=email`、送信元 `noreply@recustep.com`、`allowed_sender_addresses` 同値で固定する。別domainを使う場合は送信元2箇所を同時に変更する。
+
 ## 4. マイグレーションとデプロイ
 
 ```bash
 npm run cloudflare:typecheck       # 型チェック(緑を確認)
+npm run cloudflare:guard:production # productionがemail modeか確認
 npm run cloudflare:deploy:dry      # バンドル検証(認証不要)
 npm run cloudflare:migrate:remote  # D1 スキーマ適用(デプロイ後)
 npx wrangler deploy                # 本番デプロイ
@@ -71,6 +82,16 @@ npx wrangler deploy                # 本番デプロイ
 `audit_logs.sequence`、および MVP の `organization_memberships(user_id)` UNIQUE 制約を追加するため、
 既存稼働環境では **migration → deploy** の順で適用する。
 既存 Worker は追加カラムを参照しないので、先に migration しても互換性がある。
+`0008_auth_email_delivery.sql` は `auth_action_deliveries` と `auth_credentials.active_password_reset_token_id` を追加する。delivery table には平文 token / 本文 / 宛先メールを保存しない。
+
+互換性を守るproduction rollout順:
+
+1. 旧Workerがmanual responseを返している間に、新Electron appを先行配布する
+2. `0008` migrationを適用する
+3. tokenなしemail responseを返す新Workerをdeployする
+4. domain onboarding/DNS完了後、production email modeで通し確認する
+
+新appは旧Workerの `mode` / `deliveryId` なしtoken responseを `manual_beta` として読みます。旧appは新email Workerのtokenなしresponseを扱えないため、**新app → Worker → email mode** の順序を崩しません。
 
 疎通確認:
 
@@ -88,26 +109,32 @@ curl https://<your-worker>.workers.dev/health
 3. `初回資格情報設定` でseed済みユーザーのメール + パスワードを登録(未設定ユーザーに一度だけ)
 4. 以降は `ログイン` で署名セッションを取得(Main プロセスが safeStorage 保管、Renderer 非公開)
 
-β / 手動配送 SaaS 管理:
+Email delivery SaaS 管理:
 
 1. admin でログイン
-2. Settings → `Cloudflare SaaS ユーザー管理` で `email / displayName / role / organization` を指定して `招待発行`
-3. 表示された招待 bearer token を一度だけコピーし、対象ユーザーへ手動共有
-4. 対象ユーザーは Settings の `招待 / パスワード再設定トークン` に token + 新パスワードを入力し `招待を承諾`
-5. reset は admin が `reset発行` → token 手動共有 → 対象ユーザーが `パスワード再設定を完了`
+2. Settings → `Cloudflare SaaS ユーザー管理` で `email / displayName / role / organization` を指定して `招待メール送信`
+3. email mode では管理者 UI に raw token は出ず、`送信受付済み` と masked recipient / deliveryId のみ表示
+4. 対象ユーザーはメール本文の token を Settings の `メールで届いた token` に貼り付け、新パスワードで `招待を承諾`
+5. reset は admin が `再設定メール送信` → 対象ユーザーがメールの token で `パスワード再設定を完了`
 6. 商談履歴の「Cloudへアップロード」で音声 → クラウド STT → transcript を確認
 
 接続先 URL が既定と違う場合は `cloudflare-api.ts` の `DEFAULT_API_URL` を自分の Worker URL に変更。
 
-招待 / reset token は raw 値を D1 に保存しない。Worker は32 random bytesをbase64url化して一度だけ返し、D1にはSHA-256 hashとclaim request idのみ保存する。
-token をメールやチャットで共有する場合、期限(招待72h / reset30m)と操作種別を明記し、使用後は破棄する。
-ただし手動配送 token は bearer secret であり、token を見た管理者は受信者として承諾 / reset 完了できる。この caveat は未解決なので、一般本番前に検証済みメール配送へ置き換えること。
+招待 / reset token は raw 値を D1 に保存しない。Worker は32 random bytesをbase64url化し、D1にはSHA-256 hashとclaim request idのみ保存する。email mode は raw token を admin API response / Electron UI に返さない。Email Service の戻り値は送信受付であり、最終到達ではない。
+
+manual_beta 互換:
+
+- `AUTH_EMAIL_DELIVERY_MODE=manual_beta` を明示した場合のみ raw token を一度だけ返す。
+- token 手動共有は bearer secret の共有なので本番不可。
+- manual_beta でも delivery record は `cancelled` として残し、email delivery への切替漏れを監査可能にする。
+- production guardがroot configのmanual_betaを拒否するため、ローカルだけ `.dev.vars` または `npx wrangler dev --var AUTH_EMAIL_DELIVERY_MODE:manual_beta` で明示する。
 
 ## 6. ローカル開発(任意)
 
 ```bash
 npm run cloudflare:migrate:local   # miniflare のローカル D1 にスキーマ適用
 npm run cloudflare:dev             # wrangler dev(ローカル Worker)
+# または: npx wrangler dev --var AUTH_EMAIL_DELIVERY_MODE:manual_beta
 ```
 
 ローカルではシークレットを `.dev.vars`(gitignore 済みであること)に置く。
@@ -121,8 +148,8 @@ npm run cloudflare:dev             # wrangler dev(ローカル Worker)
 - [ ] `wrangler deploy` 成功
 - [ ] `/health` が ok
 - [ ] Electron: bootstrap互換またはadmin招待 → ログイン → 音声アップロード → transcript 取得まで通し
-- [ ] Admin: 招待発行 → 承諾 → users一覧 active 反映
-- [ ] Admin: reset発行 → 通常ログイン拒否 → reset完了 → 新session取得
+- [ ] Admin: 招待メール送信 → 送信受付済み → メール token 承諾 → users一覧 active 反映
+- [ ] Admin: 再設定メール送信 → 通常ログイン拒否 → メール token reset完了 → 新session取得
 - [ ] Admin: disable → 既存session失効 / 未使用 invite-reset token 消費 / `must_reset_password=0` 復帰 / self-disable と last active admin が拒否される
 - [ ] Deepgram `mip_opt_out=true`(Model Improvement Program オプトアウト)を確認(PRD §4.2)
 
@@ -133,5 +160,6 @@ npm run cloudflare:dev             # wrangler dev(ローカル Worker)
 - アカウントライフサイクル token / password / session はログや監査metadataへ平文保存しない。監査ログには actor、scope、target、token種別、token ID、期限のみを残す。
 - token 完了監査の actor は target user ではなく `action_token`。発行管理者 ID は metadata に残す。
 - membership disable 監査には、未使用 token 消費と `must_reset_password` 解除を metadata に残す。再有効化後に古い reset 要求でログイン不能にならないことを確認する。
-- 現行UIの token 手動配送はβ用。検証済みメール配送が入るまで、一般本番としては扱わない。
+- email mode では API/UI に raw token を出さない。manual_beta は明示設定時だけの互換で、本番不可。
+- 同一membershipへのreset並行発行は、後続tokenが先行tokenを失効させた後に先行メールだけ受付されるstale emailが起こり得る既知P2制約。Electron UIはglobal pendingと同一membership guardで連打を抑止するが、複数管理者/API間のserializationは未実装。
 - β は Cloudflare、Enterprise は AWS adapter を想定(2軸計画 §3.4)。`Repository` interface で差し替え可能。

@@ -514,16 +514,57 @@ function readCloudActionTokenResult(value: unknown): CloudActionTokenResult | nu
   if (!isRecord(value)) {
     return null;
   }
+  const explicitMode = value.mode === 'manual_beta' || value.mode === 'email' ? value.mode : null;
+  const legacyManual = value.mode === undefined && value.deliveryId === undefined;
+  const mode = explicitMode ?? (legacyManual ? 'manual_beta' : null);
   const type = value.type === 'invite' || value.type === 'password_reset' ? value.type : null;
-  const token = readString(value.token);
   const expiresAt = readString(value.expiresAt);
   const membershipId = readString(value.membershipId);
   const userId = readString(value.userId);
   const organizationId = readString(value.organizationId);
-  if (!type || !token || !expiresAt || !membershipId || !userId || !organizationId) {
+  const deliveryId = readString(value.deliveryId);
+  if (!mode || !type || !expiresAt || !membershipId || !userId || !organizationId) {
     return null;
   }
-  return { type, token, expiresAt, membershipId, userId, organizationId };
+  if (mode === 'manual_beta') {
+    const token = readString(value.token);
+    if (!token) {
+      return null;
+    }
+    return {
+      mode,
+      type,
+      token,
+      expiresAt,
+      membershipId,
+      userId,
+      organizationId,
+      ...(deliveryId ? { deliveryId } : {}),
+    };
+  }
+  if (
+    !deliveryId ||
+    value.status !== 'accepted' ||
+    !isRecord(value.recipient) ||
+    typeof value.recipient.emailMasked !== 'string' ||
+    typeof value.trackingDegraded !== 'boolean'
+  ) {
+    return null;
+  }
+  const providerMessageId = readString(value.providerMessageId);
+  return {
+    mode,
+    type,
+    status: value.status,
+    expiresAt,
+    membershipId,
+    userId,
+    organizationId,
+    deliveryId,
+    recipient: { emailMasked: value.recipient.emailMasked },
+    providerMessageId: providerMessageId ?? undefined,
+    trackingDegraded: value.trackingDegraded,
+  };
 }
 
 function readCloudOrganizationUser(value: unknown): CloudOrganizationUser | null {

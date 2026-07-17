@@ -62,10 +62,15 @@ export interface CloudOrganization {
 export interface ActionTokenIssueResult {
   type: ActionTokenType;
   token: string;
+  tokenId: string;
+  deliveryId: string;
+  tenantId: string;
   expiresAt: string;
   membershipId: string;
   userId: string;
   organizationId: string;
+  recipientEmail: string;
+  recipientDisplayName: string;
 }
 
 export interface SessionIssueResult {
@@ -89,6 +94,7 @@ export interface TokenPasswordInput {
 
 const INVITE_TTL_MS = 72 * 60 * 60 * 1_000;
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1_000;
+const AUTH_DELIVERY_AUDIT_RETRY_ATTEMPTS = 3;
 const ADMIN_ROLES = new Set<OrganizationRole>(['insurer_admin', 'agency_admin']);
 
 export class AccountLifecycleError extends Error {
@@ -311,6 +317,7 @@ export async function createInvitation(
   const membershipId = existingMembership?.id ?? crypto.randomUUID();
   const actionToken = await createActionToken();
   const tokenId = crypto.randomUUID();
+  const deliveryId = crypto.randomUUID();
   const issueRequestId = crypto.randomUUID();
   const audit = await createLifecycleAuditStatement(database, {
     scope: { tenantId: context.tenantId, organizationId: targetOrganization.id },
@@ -404,16 +411,38 @@ export async function createInvitation(
         timestamp,
         timestamp,
       ),
+    database
+      .prepare(
+        `INSERT INTO auth_action_deliveries (
+          id, status, provider_message_id, error_code, attempted_at, accepted_at, failed_at,
+          token_id, tenant_id, organization_id, user_id, membership_id, created_at, updated_at
+        ) VALUES (?, 'pending', NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        deliveryId,
+        tokenId,
+        context.tenantId,
+        targetOrganization.id,
+        userId,
+        membershipId,
+        timestamp,
+        timestamp,
+      ),
     audit,
   );
   await database.batch(statements);
   return {
     type: 'invite',
     token: actionToken.token,
+    tokenId,
+    deliveryId,
+    tenantId: context.tenantId,
     expiresAt,
     membershipId,
     userId,
     organizationId: targetOrganization.id,
+    recipientEmail: email,
+    recipientDisplayName: displayName,
   };
 }
 
@@ -536,6 +565,7 @@ export async function issuePasswordReset(
 
   const actionToken = await createActionToken();
   const tokenId = crypto.randomUUID();
+  const deliveryId = crypto.randomUUID();
   const issueRequestId = crypto.randomUUID();
   const timestamp = now.toISOString();
   const expiresAt = new Date(now.getTime() + PASSWORD_RESET_TTL_MS).toISOString();
@@ -566,13 +596,6 @@ export async function issuePasswordReset(
       .bind(timestamp, issueRequestId, timestamp, target.membership_id),
     database
       .prepare(
-        `UPDATE auth_credentials
-         SET must_reset_password = 1, session_version = session_version + 1, updated_at = ?
-         WHERE user_id = ?`,
-      )
-      .bind(timestamp, target.user_id),
-    database
-      .prepare(
         `INSERT INTO auth_action_tokens (
           id, type, token_hash, tenant_id, organization_id, user_id, membership_id,
           expires_at, consumed_at, consumed_by_request_id,
@@ -592,18 +615,51 @@ export async function issuePasswordReset(
         timestamp,
         timestamp,
       ),
+    database
+      .prepare(
+        `UPDATE auth_credentials
+         SET must_reset_password = 1,
+             session_version = session_version + 1,
+             active_password_reset_token_id = ?,
+             updated_at = ?
+         WHERE user_id = ?`,
+      )
+      .bind(tokenId, timestamp, target.user_id),
+    database
+      .prepare(
+        `INSERT INTO auth_action_deliveries (
+          id, status, provider_message_id, error_code, attempted_at, accepted_at, failed_at,
+          token_id, tenant_id, organization_id, user_id, membership_id, created_at, updated_at
+        ) VALUES (?, 'pending', NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        deliveryId,
+        tokenId,
+        target.tenant_id,
+        target.organization_id,
+        target.user_id,
+        target.membership_id,
+        timestamp,
+        timestamp,
+      ),
     audit,
   ]);
-  assertD1MutationChanged(results[1], 'password_reset_flag_update_failed');
-  assertD1MutationChanged(results[2], 'password_reset_token_insert_failed');
-  assertD1MutationChanged(results[3], 'audit_log_insert_failed');
+  assertD1MutationChanged(results[1], 'password_reset_token_insert_failed');
+  assertD1MutationChanged(results[2], 'password_reset_flag_update_failed');
+  assertD1MutationChanged(results[3], 'password_reset_delivery_insert_failed');
+  assertD1MutationChanged(results[4], 'audit_log_insert_failed');
   return {
     type: 'password_reset',
     token: actionToken.token,
+    tokenId,
+    deliveryId,
+    tenantId: target.tenant_id,
     expiresAt,
     membershipId: target.membership_id,
     userId: target.user_id,
     organizationId: target.organization_id,
+    recipientEmail: target.email,
+    recipientDisplayName: target.display_name,
   };
 }
 
@@ -657,8 +713,10 @@ export async function completePasswordReset(
         `UPDATE auth_credentials
          SET password_hash = ?, salt = ?, iterations = ?, algorithm = ?, password_updated_at = ?,
              login_failed_count = 0, locked_until = NULL, must_reset_password = 0,
+             active_password_reset_token_id = NULL,
              session_version = ?, updated_at = ?
          WHERE user_id = ? AND must_reset_password = 1 AND session_version = ?
+           AND active_password_reset_token_id = ?
            AND EXISTS (
              SELECT 1 FROM auth_action_tokens
              WHERE token_hash = ? AND consumed_by_request_id = ?
@@ -674,6 +732,7 @@ export async function completePasswordReset(
         timestamp,
         row.user_id,
         row.session_version,
+        row.token_id,
         tokenHash,
         claimRequestId,
       ),
@@ -812,7 +871,10 @@ export async function setMembershipStatus(
         database
           .prepare(
             `UPDATE auth_credentials
-             SET session_version = session_version + 1, must_reset_password = 0, updated_at = ?
+             SET session_version = session_version + 1,
+                 must_reset_password = 0,
+                 active_password_reset_token_id = NULL,
+                 updated_at = ?
              WHERE user_id = ?
                AND EXISTS (${statusMutationExistsSql})`,
           )
@@ -845,6 +907,215 @@ export async function setMembershipStatus(
   assertD1MutationChanged(results[results.length - 1], 'audit_log_insert_failed');
   const refreshed = await findMembershipForAdmin(database, context, membershipId);
   return mapMembershipRow(refreshed);
+}
+
+export async function recordAuthActionDeliveryAccepted(
+  database: D1Database,
+  input: {
+    type: ActionTokenType;
+    tokenId: string;
+    deliveryId: string;
+    tenantId: string;
+    organizationId: string;
+    providerMessageId: string | null;
+    acceptedAt: Date;
+  },
+): Promise<void> {
+  const timestamp = input.acceptedAt.toISOString();
+  const audit = await createLifecycleAuditStatement(database, {
+    scope: { tenantId: input.tenantId, organizationId: input.organizationId },
+    actor: { type: 'system' },
+    action: 'organization.auth_delivery_accepted',
+    targetType: 'auth_action_delivery',
+    targetId: input.deliveryId,
+    metadata: {
+      tokenType: input.type,
+      tokenId: input.tokenId,
+      deliveryId: input.deliveryId,
+      status: 'accepted',
+      providerMessageId: input.providerMessageId,
+    },
+    createdAt: timestamp,
+  });
+  const results = await database.batch([
+    database
+      .prepare(
+        `UPDATE auth_action_deliveries
+         SET status = 'accepted',
+             provider_message_id = ?,
+             error_code = NULL,
+             attempted_at = COALESCE(attempted_at, ?),
+             accepted_at = ?,
+             failed_at = NULL,
+             updated_at = ?
+         WHERE id = ? AND token_id = ? AND status = 'pending'`,
+      )
+      .bind(
+        input.providerMessageId,
+        timestamp,
+        timestamp,
+        timestamp,
+        input.deliveryId,
+        input.tokenId,
+      ),
+    audit,
+  ]);
+  assertD1MutationChanged(results[0], 'auth_delivery_accept_update_failed');
+  assertD1MutationChanged(results[1], 'audit_log_insert_failed');
+}
+
+export async function recordAuthActionDeliveryFailed(
+  database: D1Database,
+  input: {
+    type: ActionTokenType;
+    tokenId: string;
+    deliveryId: string;
+    tenantId: string;
+    organizationId: string;
+    userId: string;
+    errorCode: string;
+    failedAt: Date;
+  },
+): Promise<void> {
+  const timestamp = input.failedAt.toISOString();
+  const failureRequestId = crypto.randomUUID();
+  const statements: D1PreparedStatement[] = [
+    database
+      .prepare(
+        `UPDATE auth_action_tokens
+         SET consumed_at = ?, consumed_by_request_id = ?, updated_at = ?
+         WHERE id = ? AND consumed_at IS NULL`,
+      )
+      .bind(timestamp, failureRequestId, timestamp, input.tokenId),
+    database
+      .prepare(
+        `UPDATE auth_action_deliveries
+         SET status = 'failed',
+             error_code = ?,
+             attempted_at = COALESCE(attempted_at, ?),
+             failed_at = ?,
+             updated_at = ?
+         WHERE id = ? AND token_id = ? AND status = 'pending'`,
+      )
+      .bind(input.errorCode, timestamp, timestamp, timestamp, input.deliveryId, input.tokenId),
+  ];
+  if (input.type === 'password_reset') {
+    statements.push(
+      database
+        .prepare(
+          `UPDATE auth_credentials
+           SET must_reset_password = 0,
+               active_password_reset_token_id = NULL,
+               updated_at = ?
+           WHERE user_id = ? AND active_password_reset_token_id = ?`,
+        )
+        .bind(timestamp, input.userId, input.tokenId),
+    );
+  }
+  const results = await database.batch(statements);
+  assertD1MutationChanged(results[1], 'auth_delivery_fail_update_failed');
+  const tokenConsumedByFailure = results[0]?.meta.changes === 1;
+  const passwordResetCompensated =
+    input.type === 'password_reset' && results[2]?.meta.changes === 1;
+  const superseded =
+    !tokenConsumedByFailure ||
+    (input.type === 'password_reset' && !passwordResetCompensated);
+
+  await recordAuthDeliveryFailureAudit(database, input, timestamp, {
+    tokenConsumedByFailure,
+    passwordResetCompensated,
+    superseded,
+  });
+}
+
+async function recordAuthDeliveryFailureAudit(
+  database: D1Database,
+  input: {
+    type: ActionTokenType;
+    tokenId: string;
+    deliveryId: string;
+    tenantId: string;
+    organizationId: string;
+    errorCode: string;
+  },
+  timestamp: string,
+  mutation: {
+    tokenConsumedByFailure: boolean;
+    passwordResetCompensated: boolean;
+    superseded: boolean;
+  },
+): Promise<void> {
+  for (let attempt = 0; attempt < AUTH_DELIVERY_AUDIT_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const audit = await createLifecycleAuditStatement(database, {
+        scope: { tenantId: input.tenantId, organizationId: input.organizationId },
+        actor: { type: 'system' },
+        action: 'organization.auth_delivery_failed',
+        targetType: 'auth_action_delivery',
+        targetId: input.deliveryId,
+        metadata: {
+          tokenType: input.type,
+          tokenId: input.tokenId,
+          deliveryId: input.deliveryId,
+          status: 'failed',
+          errorCode: input.errorCode,
+          tokenConsumedByFailure: mutation.tokenConsumedByFailure,
+          passwordResetCompensated: mutation.passwordResetCompensated,
+          superseded: mutation.superseded,
+        },
+        createdAt: timestamp,
+      });
+      assertD1MutationChanged(await audit.run(), 'audit_log_insert_failed');
+      return;
+    } catch {
+      // Re-read the audit chain head and recalculate its hash on the next attempt.
+    }
+  }
+  console.error(JSON.stringify({ message: 'auth_delivery_failure_audit_degraded' }));
+}
+
+export async function recordAuthActionDeliveryCancelled(
+  database: D1Database,
+  input: {
+    type: ActionTokenType;
+    tokenId: string;
+    deliveryId: string;
+    tenantId: string;
+    organizationId: string;
+    reason: string;
+    cancelledAt: Date;
+  },
+): Promise<void> {
+  const timestamp = input.cancelledAt.toISOString();
+  const audit = await createLifecycleAuditStatement(database, {
+    scope: { tenantId: input.tenantId, organizationId: input.organizationId },
+    actor: { type: 'system' },
+    action: 'organization.auth_delivery_cancelled',
+    targetType: 'auth_action_delivery',
+    targetId: input.deliveryId,
+    metadata: {
+      tokenType: input.type,
+      tokenId: input.tokenId,
+      deliveryId: input.deliveryId,
+      status: 'cancelled',
+      reason: input.reason,
+    },
+    createdAt: timestamp,
+  });
+  const results = await database.batch([
+    database
+      .prepare(
+        `UPDATE auth_action_deliveries
+         SET status = 'cancelled',
+             error_code = ?,
+             updated_at = ?
+         WHERE id = ? AND token_id = ? AND status = 'pending'`,
+      )
+      .bind(input.reason, timestamp, input.deliveryId, input.tokenId),
+    audit,
+  ]);
+  assertD1MutationChanged(results[0], 'auth_delivery_cancel_update_failed');
+  assertD1MutationChanged(results[1], 'audit_log_insert_failed');
 }
 
 interface CloudOrganizationUserRow {
@@ -923,6 +1194,7 @@ interface ActionTokenRow {
   has_credential: number;
   must_reset_password: number;
   session_version: number;
+  active_password_reset_token_id: string | null;
 }
 
 type AuditActor =
@@ -1040,7 +1312,8 @@ async function findActionToken(
         t.created_by_membership_id,
         CASE WHEN c.user_id IS NULL THEN 0 ELSE 1 END AS has_credential,
         COALESCE(c.must_reset_password, 0) AS must_reset_password,
-        COALESCE(c.session_version, 1) AS session_version
+        COALESCE(c.session_version, 1) AS session_version,
+        c.active_password_reset_token_id
        FROM auth_action_tokens t
        JOIN organization_memberships m ON m.id = t.membership_id
        JOIN users u ON u.id = t.user_id

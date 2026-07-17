@@ -145,7 +145,7 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 2軸計画 Phase 3〜4 に接続。
 
 - 実商談での継続利用とフィードバックループ(提案採用率の記録)
-- Cloudflare β(D1 / R2 / Queues、adapter 切替)— **アカウントライフサイクルまで実装済み**。残りは実Cloudflare環境で migration → deploy → invite/reset β手動配送の通し確認。一般本番には検証済みメール配送が別途必須 → [手順](./cloudflare-beta-deploy.md)
+- Cloudflare β(D1 / R2 / Queues、adapter 切替)— **アカウントライフサイクル + Email Service 送信受付まで実装済み**。残りは実Cloudflare環境で migration → deploy → Email Sending domain onboarding/DNS → invite/reset メール配送の通し確認 → [手順](./cloudflare-beta-deploy.md)
 - Mobile Recorder PoC(Track B 入口)— **PWA 版を実装済み + E2E 済み**(録音同意ゲート + MediaRecorder + 署名アップロード。fake audio device で録音フロー全体を Playwright E2E)。`npm run mobile:dev`。ネイティブ iOS(Expo)は需要が見えてから
 - 管理者向け月次レポート — **実装済み**(月別のコンプラ検知集計: severity別 / 重大リスク件数 / 処理状況 / 処理済率。レビュータブ上部に表示、unit + E2E)
 - 検知精度の回帰テスト基盤 — **実装済み**(ラベル付きコーパス + 評価ハーネス。M1 で実 Haiku 検出器をそのまま採点可能)
@@ -155,10 +155,14 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 - [x] bootstrap 互換に加えて admin-driven 招待 / membership status / password reset flow を実装
 - [x] D1 migration `0007_account_lifecycle.sql`: membership status、1 user = 1 membership UNIQUE、must-reset flag、hash-only one-time token table、audit sequence
 - [x] Worker API: invite accept、reset complete、users list、invite issue、reset issue、membership active/disabled
-- [x] Electron Settings: token承諾 / reset完了、SaaSユーザー一覧、招待発行、disable/activate、reset発行
+- [x] Electron Settings: token承諾 / reset完了、SaaSユーザー一覧、招待メール送信、disable/activate、再設定メール送信
 - [x] セキュリティ: 32-byte base64url token、SHA-256 hash保存、invite 72h / reset 30m、raw token/password非監査、disable時の未使用reset token消費 + must-reset解除
-- [ ] 実Cloudflare環境で migration → deploy → invite/reset β手動配送運用の通し確認
-- [ ] 一般本番前: 検証済みメール配送を実装し、admin が bearer token を見て受信者になりすませる caveat を解消する
+- [x] Cloudflare Email Service Workers binding で invite/reset token 送信受付を実装。email mode は admin API/UI に raw token を返さない
+- [x] manual_beta は明示設定時だけ raw token 表示を維持。本番不可
+- [x] production configをemail固定し、manual_betaを拒否するdeploy guardと旧Worker token responseの新app互換を追加。rolloutは新app → Worker → email mode
+- [ ] P2: 同一membershipへの並行reset発行をサーバー側でserializeし、失効済みtokenを含むstale email受付を防ぐ。現状はElectron UI pending中の連続発行のみ抑止
+- [ ] 実Cloudflare環境で migration → deploy → Email Sending domain onboarding/DNS → invite/reset email の通し確認
+- [ ] `npx wrangler email sending list` が `No zones found` の状態を解消し、送信 domain を onboard する
 
 ## 3. マイルストーン
 

@@ -37,7 +37,8 @@
     "cloudflare:types": "wrangler types cloudflare/worker-configuration.d.ts",
     "cloudflare:typecheck": "tsc --noEmit -p cloudflare/tsconfig.json",
     "cloudflare:dev": "wrangler dev",
-    "cloudflare:deploy:dry": "wrangler deploy --dry-run",
+    "cloudflare:guard:production": "node scripts/assert-cloudflare-production-email.mjs",
+    "cloudflare:deploy:dry": "npm run cloudflare:guard:production && wrangler deploy --dry-run",
     "cloudflare:migrate:local": "wrangler d1 migrations apply sales-talk-prod --local",
     "cloudflare:migrate:remote": "wrangler d1 migrations apply sales-talk-prod --remote"
   },

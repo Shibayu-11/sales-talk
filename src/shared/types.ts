@@ -234,14 +234,30 @@ export interface CloudOrganization {
   updatedAt: string;
 }
 
-export interface CloudActionTokenResult {
-  type: 'invite' | 'password_reset';
-  token: string;
-  expiresAt: string;
-  membershipId: string;
-  userId: string;
-  organizationId: string;
-}
+export type CloudActionTokenResult =
+  | {
+      mode: 'manual_beta';
+      type: 'invite' | 'password_reset';
+      token: string;
+      expiresAt: string;
+      membershipId: string;
+      userId: string;
+      organizationId: string;
+      deliveryId?: string | undefined;
+    }
+  | {
+      mode: 'email';
+      type: 'invite' | 'password_reset';
+      status: 'accepted';
+      expiresAt: string;
+      membershipId: string;
+      userId: string;
+      organizationId: string;
+      deliveryId: string;
+      recipient: { emailMasked: string };
+      providerMessageId?: string | undefined;
+      trackingDegraded: boolean;
+    };
 
 export interface AnthropicDiagnosticResult {
   configured: boolean;
@@ -471,7 +487,10 @@ export type AuditAction =
   | 'organization.invitation_accepted'
   | 'organization.password_reset_issued'
   | 'organization.password_reset_completed'
-  | 'organization.membership_status_updated';
+  | 'organization.membership_status_updated'
+  | 'organization.auth_delivery_accepted'
+  | 'organization.auth_delivery_failed'
+  | 'organization.auth_delivery_cancelled';
 
 export interface ComplianceRule {
   id: string;

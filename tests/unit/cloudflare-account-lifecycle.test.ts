@@ -135,6 +135,19 @@ describe('Cloudflare account lifecycle guards', () => {
     expect(migration).toContain('ON audit_logs(tenant_id, sequence)');
   });
 
+  it('documents auth email delivery D1 invariants in migration 0008', () => {
+    const migration = readFileSync(
+      join(process.cwd(), 'cloudflare/migrations/0008_auth_email_delivery.sql'),
+      'utf8',
+    );
+
+    expect(migration).toContain('auth_action_deliveries');
+    expect(migration).toContain("status IN ('pending', 'accepted', 'failed', 'cancelled')");
+    expect(migration).toContain('token_id TEXT NOT NULL REFERENCES auth_action_tokens(id)');
+    expect(migration).toContain('active_password_reset_token_id TEXT REFERENCES auth_action_tokens(id)');
+    expect(migration).not.toContain('recipient_email');
+  });
+
   it('clears must-reset password state when disabling a credentialed membership', async () => {
     const fake = new FakeLifecycleDatabase();
 
@@ -158,6 +171,7 @@ describe('Cloudflare account lifecycle guards', () => {
         statement.query.includes('session_version = session_version + 1'),
     );
     expect(credentialUpdate?.query).toContain('must_reset_password = 0');
+    expect(credentialUpdate?.query).toContain('active_password_reset_token_id = NULL');
 
     const auditInsert = fake.statements.find((statement) =>
       statement.query.includes('INSERT INTO audit_logs'),
