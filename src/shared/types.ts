@@ -18,6 +18,7 @@ export type MembershipStatus = 'active' | 'invited' | 'disabled';
 export type OrganizationPermission =
   | 'recording:start'
   | 'calls:read'
+  | 'checkpoints:manage'
   | 'reviews:manage'
   | 'rules:manage'
   | 'rules:approve'
@@ -411,6 +412,28 @@ export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type AudioSttProvider = 'deepgram' | 'apple_speech_analyzer';
 export type SttImportProviderMode = 'local_first' | 'deepgram_only';
 
+export type RecoveryState = 'recording' | 'recoverable' | 'recovering' | 'partial';
+export type RecoveryRetentionDays = 1 | 7 | 30;
+
+export interface RecoverySummary {
+  callId: string;
+  tenantId: string;
+  organizationId: string;
+  ownerUserId: string | null;
+  ownerMembershipId: string | null;
+  productId: ProductId;
+  source: MeetingSource;
+  state: RecoveryState;
+  startedAt: string;
+  lastCheckpointAt: string;
+  expiresAt: string;
+  retentionDays: RecoveryRetentionDays;
+  expired: boolean;
+  chunkCount: number;
+  durationMs: number;
+  availableSpeakers: Speaker[];
+}
+
 export interface AudioSttJob {
   id: string;
   callId: string;
@@ -467,6 +490,12 @@ export type AuditActorType = 'system' | 'user' | 'ai';
 export type AuditAction =
   | 'recording.started'
   | 'recording.consent_captured'
+  | 'checkpoint.degraded'
+  | 'checkpoint.finalized'
+  | 'checkpoint.recovered'
+  | 'checkpoint.discarded'
+  | 'checkpoint.expired'
+  | 'checkpoint.retention_updated'
   | 'organization.user_role_updated'
   | 'compliance.rule_set_created'
   | 'compliance.rule_set_active_updated'
@@ -750,6 +779,12 @@ export interface RendererApi {
     create(audioAssetId: string): Promise<AudioSttJob>;
     run(jobId: string): Promise<AudioSttJob>;
     list(callId: string): Promise<AudioSttJob[]>;
+  };
+  recovery: {
+    list(): Promise<RecoverySummary[]>;
+    recover(callId: string): Promise<RecoverySummary | null>;
+    discard(callId: string): Promise<void>;
+    setRetention(callId: string, retentionDays: RecoveryRetentionDays): Promise<RecoverySummary>;
   };
   stt: {
     onInterim(cb: (transcript: Transcript) => void): () => void;

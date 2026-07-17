@@ -73,11 +73,23 @@ Phase 1 は疎通診断であり、音質や文字起こし精度を保証する
 
 ### Phase 2: 長時間商談の復旧性
 
-- 暗号化された短時間 checkpoint を定期保存
-- 正常終了時に最終音声へ統合
-- 異常終了後に未完了セッションを検知
-- 復旧、破棄、保持期限を利用者が選択
-- 復旧操作と結果を audit log に記録
+状態: **2026-07-18 最小安全実装完了**
+
+- Main が受ける PCM `AudioChunk` を 5 秒または 1MiB 単位で AES-256-GCM checkpoint へ保存
+- セッション鍵は Electron `safeStorage` で wrap し、manifest / Renderer / log へ平文 PCM・鍵・音声 base64 を出さない
+- segment / manifest は tmp → fsync → rename で atomic 確定し、manifest 全体を HMAC 認証
+- 正常終了時は native 停止 → checkpoint drain → speaker 別 WAV / AES-256-GCM encrypted audio asset 登録 → call 終了 → audit の順で確定し、全成功後だけ checkpoint を削除
+- 異常終了後は `recording` manifest を `recoverable` として検知
+- checkpoint は作成者 user / membership owner に紐づけ、agent は自分の未完了録音のみ復旧・破棄・保持期限変更可能
+- manager / admin は組織 checkpoint を管理でき、auditor は組織 checkpoint を閲覧のみ可能
+- Dashboard から復旧、破棄、保持期限 1 / 7 / 30 日を選択可能
+- 復旧時は暗号化 segment を逐次検証・復号し、self / counterpart 別 mono WAV をストリーミング生成してローカル audio asset へ登録
+- 復旧 WAV は一時領域だけに materialize し、確定後のローカル audio asset は AES-256-GCM encrypted at rest とする
+- 1 call / 1 speaker / 全 checkpoint の容量上限、bounded backpressure、symlink guard を設け、長時間復旧時の Main process OOM とパス逸脱を防止
+- 期限切れ checkpoint はユーザー操作に依存しない autonomous maintenance が全 checkpoint organization を巡回し、system-scoped audit 成功後だけ削除
+- checkpoint degraded / finalized / recovered / discarded / expired / retention updated を audit log に記録
+- retention 変更は pending-audit outbox に認証保存し、audit 失敗時は pending を残して次回 maintenance で idempotent replay する
+- audit 失敗時は checkpoint 破棄などの破壊操作を確定しない
 
 音声原本は local-first を維持し、Cloud へ自動送信しない。
 
@@ -120,8 +132,8 @@ Meetily 本体は参照時点で MIT License。商用利用、改変、再配布
 
 1. 実 Zoom E2E で商談前チェックの Go / Warning / Blocked と復旧案を実測
 2. 30 分商談で片側停止、Zoom 再起動、権限剥奪時の挙動を記録
-3. Phase 2 の暗号化 checkpoint / crash recovery の保存単位と復旧契約を確定
-4. 未完了セッションの検知、復旧、破棄、保持期限 UI を実装
-5. checkpoint と復旧操作を audit log に追加
+3. 実 Zoom 中断ケースで checkpoint 復旧の WAV 登録と議事録再生成の運用手順を確認
+4. 復旧後の再文字起こし UX と transcript revision の扱いを確定
+5. 長時間録音で checkpoint サイズ、復旧時間、保持期限 UI の実測値を記録
 
 この順序により、新機能を増やす前に「実商談で動かないとき、何が悪いか分かる」状態を作る。

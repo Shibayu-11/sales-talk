@@ -16,6 +16,7 @@ const jobId = '442db17c-6a3c-4e7e-856b-b11a4c1eab24';
 describe('AudioSttJobRunner', () => {
   it('marks a job completed and persists transcripts', async () => {
     const appendedTranscripts: Transcript[] = [];
+    const cleanup = vi.fn(async () => undefined);
     const transcripts: Transcript[] = [
       {
         speaker: 'counterpart',
@@ -29,11 +30,17 @@ describe('AudioSttJobRunner', () => {
       appendTranscript: async (_callId, transcript) => {
         appendedTranscripts.push(transcript);
       },
+      materializedPath: '/tmp/readable-sample.m4a',
+      cleanup,
+    });
+    const transcribeAudio = vi.fn(async (asset: AudioAsset) => {
+      expect(asset.storedPath).toBe('/tmp/readable-sample.m4a');
+      return transcripts;
     });
     const onCompleted = vi.fn(async () => undefined);
     const runner = new AudioSttJobRunner({
       repositories,
-      transcribeAudio: vi.fn(async () => transcripts),
+      transcribeAudio,
       onCompleted,
     });
 
@@ -48,10 +55,12 @@ describe('AudioSttJobRunner', () => {
       expect.objectContaining({ id: jobId, status: 'completed' }),
       transcripts,
     );
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('marks a job failed when transcription fails', async () => {
-    const repositories = createRepositories();
+    const cleanup = vi.fn(async () => undefined);
+    const repositories = createRepositories({ cleanup });
     const runner = new AudioSttJobRunner({
       repositories,
       transcribeAudio: vi.fn(async () => {
@@ -64,6 +73,7 @@ describe('AudioSttJobRunner', () => {
       status: 'failed',
       errorMessage: 'missing key',
     });
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -92,7 +102,9 @@ describe('AudioSttJobRunner — import provider resolution', () => {
 
     const result = await runner.run(jobId);
     expect(result.status).toBe('completed');
-    expect(appleTranscriber.transcribeFile).toHaveBeenCalled();
+    expect(appleTranscriber.transcribeFile).toHaveBeenCalledWith(
+      expect.objectContaining({ storedPath: '/tmp/materialized-sample.m4a' }),
+    );
   });
 
   it('falls back to Deepgram when local_first and helper is unavailable', async () => {
@@ -175,6 +187,8 @@ describe('AudioSttJobRunner — import provider resolution', () => {
 
 function createRepositories(options: {
   appendTranscript?: ((callId: string, transcript: Transcript) => Promise<void>) | undefined;
+  materializedPath?: string | undefined;
+  cleanup?: (() => Promise<void>) | undefined;
 } = {}): AppRepositories {
   const job: AudioSttJob = {
     id: jobId,
@@ -210,6 +224,11 @@ function createRepositories(options: {
   const audioAssets: AudioAssetRepository = {
     importAudioFile: vi.fn(async () => asset),
     listAudioAssets: vi.fn(async () => [asset]),
+    materializeReadableAsset: vi.fn(async (targetAsset) => ({
+      asset: targetAsset,
+      filePath: options.materializedPath ?? '/tmp/materialized-sample.m4a',
+      cleanup: options.cleanup ?? vi.fn(async () => undefined),
+    })),
   };
   const transcripts: TranscriptRepository = {
     appendTranscript: vi.fn(async (targetCallId, transcript) => {

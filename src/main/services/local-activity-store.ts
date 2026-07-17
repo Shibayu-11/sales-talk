@@ -1,6 +1,6 @@
 import { app } from 'electron';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import {
   ActionItemTaskSchema,
@@ -16,6 +16,7 @@ import type {
   ReviewTask,
 } from '@shared/types';
 import { signAuditLogEntries, verifyAuditLogChain } from './audit-integrity';
+import { writeFileAtomic } from './atomic-file';
 
 const LocalActivityDataSchema = z.object({
   latestMeetingMinute: MeetingMinuteSchema.nullable(),
@@ -40,6 +41,7 @@ const DEFAULT_ACTIVITY_DATA: LocalActivityData = {
 
 export class LocalActivityStore {
   private cache: LocalActivityData | null = null;
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath = join(defaultUserDataPath(), 'local-activity.json')) {}
 
@@ -48,11 +50,10 @@ export class LocalActivityStore {
   }
 
   async setLatestMeetingMinute(minute: MeetingMinute): Promise<MeetingMinute> {
-    const data = await this.get();
-    const next = { ...data, latestMeetingMinute: minute };
-    this.cache = next;
-    await this.persist(next);
-    return minute;
+    return this.mutate(async (data) => ({
+      next: { ...data, latestMeetingMinute: minute },
+      result: minute,
+    }));
   }
 
   async listTasks(): Promise<ActionItemTask[]> {
@@ -60,28 +61,28 @@ export class LocalActivityStore {
   }
 
   async createTask(task: ActionItemTask): Promise<ActionItemTask> {
-    const data = await this.get();
-    const next = { ...data, tasks: [task, ...data.tasks] };
-    this.cache = next;
-    await this.persist(next);
-    return task;
+    return this.mutate(async (data) => ({
+      next: { ...data, tasks: [task, ...data.tasks] },
+      result: task,
+    }));
   }
 
   async completeTask(id: string, completed: boolean): Promise<ActionItemTask> {
-    const data = await this.get();
-    const task = data.tasks.find((candidate) => candidate.id === id);
-    if (!task) {
-      throw new Error('Task was not found');
-    }
+    return this.mutate(async (data) => {
+      const task = data.tasks.find((candidate) => candidate.id === id);
+      if (!task) {
+        throw new Error('Task was not found');
+      }
 
-    const nextTask = { ...task, completed };
-    const next = {
-      ...data,
-      tasks: data.tasks.map((candidate) => (candidate.id === id ? nextTask : candidate)),
-    };
-    this.cache = next;
-    await this.persist(next);
-    return nextTask;
+      const nextTask = { ...task, completed };
+      return {
+        next: {
+          ...data,
+          tasks: data.tasks.map((candidate) => (candidate.id === id ? nextTask : candidate)),
+        },
+        result: nextTask,
+      };
+    });
   }
 
   async listReviewTasks(): Promise<ReviewTask[]> {
@@ -93,30 +94,30 @@ export class LocalActivityStore {
       return [];
     }
 
-    const data = await this.get();
-    const next = { ...data, reviewTasks: [...tasks, ...data.reviewTasks] };
-    this.cache = next;
-    await this.persist(next);
-    return tasks;
+    return this.mutate(async (data) => ({
+      next: { ...data, reviewTasks: [...tasks, ...data.reviewTasks] },
+      result: tasks,
+    }));
   }
 
   async updateReviewTaskStatus(id: string, status: ReviewTask['status']): Promise<ReviewTask> {
-    const data = await this.get();
-    const task = data.reviewTasks.find((candidate) => candidate.id === id);
-    if (!task) {
-      throw new Error('Review task was not found');
-    }
+    return this.mutate(async (data) => {
+      const task = data.reviewTasks.find((candidate) => candidate.id === id);
+      if (!task) {
+        throw new Error('Review task was not found');
+      }
 
-    const nextTask = { ...task, status, updatedAt: new Date().toISOString() };
-    const next = {
-      ...data,
-      reviewTasks: data.reviewTasks.map((candidate) =>
-        candidate.id === id ? nextTask : candidate,
-      ),
-    };
-    this.cache = next;
-    await this.persist(next);
-    return nextTask;
+      const nextTask = { ...task, status, updatedAt: new Date().toISOString() };
+      return {
+        next: {
+          ...data,
+          reviewTasks: data.reviewTasks.map((candidate) =>
+            candidate.id === id ? nextTask : candidate,
+          ),
+        },
+        result: nextTask,
+      };
+    });
   }
 
   async appendAuditLogs(entries: AuditLogEntry[]): Promise<AuditLogEntry[]> {
@@ -124,13 +125,26 @@ export class LocalActivityStore {
       return [];
     }
 
-    const data = await this.get();
-    const previousHash = data.auditLogs[0]?.hash ?? null;
-    const signedEntries = signAuditLogEntries(entries, previousHash);
-    const next = { ...data, auditLogs: [...signedEntries.reverse(), ...data.auditLogs] };
-    this.cache = next;
-    await this.persist(next);
-    return signedEntries;
+    return this.mutate(async (data) => {
+      const seenIds = new Set(data.auditLogs.map((entry) => entry.id));
+      const newEntries = entries.filter((entry) => {
+        if (seenIds.has(entry.id)) {
+          return false;
+        }
+        seenIds.add(entry.id);
+        return true;
+      });
+      if (newEntries.length === 0) {
+        return { next: data, result: [] };
+      }
+
+      const previousHash = data.auditLogs[0]?.hash ?? null;
+      const signedEntries = signAuditLogEntries(newEntries, previousHash);
+      return {
+        next: { ...data, auditLogs: [...signedEntries].reverse().concat(data.auditLogs) },
+        result: signedEntries,
+      };
+    });
   }
 
   async listAuditLogs(
@@ -169,16 +183,38 @@ export class LocalActivityStore {
       }
       this.cache = parsed;
       return this.cache;
-    } catch {
-      this.cache = DEFAULT_ACTIVITY_DATA;
-      await this.persist(this.cache);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+      const initialized = cloneDefaultActivityData();
+      await this.persist(initialized);
+      this.cache = initialized;
       return this.cache;
     }
   }
 
+  private mutate<T>(
+    operation: (data: LocalActivityData) => Promise<{ next: LocalActivityData; result: T }>,
+  ): Promise<T> {
+    const run = this.mutationQueue.then(async () => {
+      const data = await this.get();
+      const { next, result } = await operation(data);
+      if (next !== data) {
+        await this.persist(next);
+        this.cache = next;
+      }
+      return result;
+    });
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   private async persist(data: LocalActivityData): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await writeFileAtomic(this.filePath, `${JSON.stringify(data, null, 2)}\n`);
   }
 }
 
@@ -186,6 +222,19 @@ export const localActivityStore = new LocalActivityStore();
 
 function defaultUserDataPath(): string {
   return process.env.SALES_TALK_USER_DATA_PATH ?? app?.getPath?.('userData') ?? process.cwd();
+}
+
+function cloneDefaultActivityData(): LocalActivityData {
+  return {
+    latestMeetingMinute: DEFAULT_ACTIVITY_DATA.latestMeetingMinute,
+    tasks: [],
+    reviewTasks: [],
+    auditLogs: [],
+  };
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
 
 function matchesAuditLogFilter(entry: AuditLogEntry, filter: AuditLogFilter): boolean {

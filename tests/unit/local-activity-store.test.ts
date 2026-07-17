@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -112,4 +112,69 @@ describe('LocalActivityStore', () => {
       await rm(directory, { force: true, recursive: true });
     }
   });
+
+  it('does not wipe corrupt activity data during initialization', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sales-talk-local-activity-corrupt-'));
+    const filePath = join(directory, 'activity.json');
+    await writeFile(filePath, '{"latestMeetingMinute":', 'utf8');
+
+    try {
+      const store = new LocalActivityStore(filePath);
+      await expect(store.listTasks()).rejects.toThrow();
+      await expect(readFile(filePath, 'utf8')).resolves.toBe('{"latestMeetingMinute":');
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('persists audit appends durably and skips retry duplicates by id', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sales-talk-local-activity-audit-'));
+    const filePath = join(directory, 'activity.json');
+
+    try {
+      const store = new LocalActivityStore(filePath);
+      const first = createAuditEntry('00000000-0000-4000-8000-000000000101', 1);
+      const second = createAuditEntry('00000000-0000-4000-8000-000000000102', 2);
+
+      const signed = await store.appendAuditLogs([first, second, first]);
+      expect(signed.map((entry) => entry.id)).toEqual([first.id, second.id]);
+      expect(signed[0]?.previousHash).toBeNull();
+      expect(signed[1]?.previousHash).toBe(signed[0]?.hash);
+      await expect(readFile(filePath, 'utf8')).resolves.toContain(second.id);
+
+      const restored = new LocalActivityStore(filePath);
+      await expect(restored.appendAuditLogs([first, second])).resolves.toEqual([]);
+      const logs = await restored.listAuditLogs({
+        tenantId: '00000000-0000-4000-8000-000000000001',
+      });
+      expect(logs.map((entry) => entry.id)).toEqual([second.id, first.id]);
+      await expect(
+        restored.verifyAuditLogs({
+          tenantId: '00000000-0000-4000-8000-000000000001',
+        }),
+      ).resolves.toMatchObject({ valid: true, checkedEntries: 2 });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
 });
+
+function createAuditEntry(id: string, sequence: number) {
+  return {
+    id,
+    tenantId: '00000000-0000-4000-8000-000000000001',
+    organizationId: '00000000-0000-4000-8000-000000000002',
+    actorType: 'user' as const,
+    actorUserId: '00000000-0000-4000-8000-000000000004',
+    actorMembershipId: '00000000-0000-4000-8000-000000000005',
+    actorDisplayName: 'Agency Admin',
+    actorRole: 'agency_admin' as const,
+    action: 'checkpoint.retention_updated' as const,
+    targetType: 'call',
+    targetId: 'ce710872-1efd-4965-8ca4-e4d13f810250',
+    metadata: { sequence },
+    previousHash: null,
+    hash: null,
+    createdAt: `2026-05-18T00:00:0${sequence}.000Z`,
+  };
+}

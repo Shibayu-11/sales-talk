@@ -25,9 +25,16 @@ export interface NativeAudioCaptureModule {
   onError(cb: (error: NativeCaptureError) => void): void;
 }
 
+export interface AudioCheckpointSink {
+  write(chunk: AudioChunk): Promise<void>;
+  drain(): Promise<void>;
+}
+
 export interface NativeAudioCaptureServiceOptions {
   module: NativeAudioCaptureModule;
   sendAudioChunk: (chunk: AudioChunk) => Promise<void>;
+  checkpointSink?: AudioCheckpointSink | undefined;
+  onCheckpointError?: ((error: Error) => void) | undefined;
   onError?: ((error: NativeCaptureError) => void) | undefined;
   targetAppBundleId?: string | undefined;
   sampleRate?: number | undefined;
@@ -63,8 +70,21 @@ export class NativeAudioCaptureService {
   async stop(): Promise<void> {
     const currentSessionId = this.sessionId;
     this.sessionId = null;
-    if (currentSessionId) {
-      await this.options.module.stopCapture(currentSessionId);
+    let failure: Error | null = null;
+    try {
+      if (currentSessionId) {
+        await this.options.module.stopCapture(currentSessionId);
+      }
+    } catch (error) {
+      failure = normalizeError(error);
+    }
+    try {
+      await this.options.checkpointSink?.drain();
+    } catch (error) {
+      failure ??= normalizeError(error);
+    }
+    if (failure) {
+      throw failure;
     }
   }
 
@@ -74,13 +94,21 @@ export class NativeAudioCaptureService {
     }
 
     this.options.module.onAudioChunk((chunk) => {
-      void this.options.sendAudioChunk(nativeChunkToAudioChunk(chunk, this.defaultDurationMs));
+      const audioChunk = nativeChunkToAudioChunk(chunk, this.defaultDurationMs);
+      void this.options.checkpointSink?.write(audioChunk).catch((error: unknown) => {
+        this.options.onCheckpointError?.(normalizeError(error));
+      });
+      void this.options.sendAudioChunk(audioChunk);
     });
     this.options.module.onError((error) => {
       this.options.onError?.(error);
     });
     this.callbacksRegistered = true;
   }
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error('Unknown checkpoint error');
 }
 
 export function nativeChunkToAudioChunk(

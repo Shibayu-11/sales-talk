@@ -3,6 +3,7 @@ import {
   AudioCaptureStatusSchema,
   AudioDiagnosticSessionResultSchema,
   AudioChunkSchema,
+  AuditActionSchema,
   CallStartInputSchema,
   CloudActionTokenResultSchema,
   CloudflareCredentialInputSchema,
@@ -14,6 +15,8 @@ import {
   KnowledgeSearchInputSchema,
   ObjectionResponseSchema,
   OverlayLayerSchema,
+  RecoveryRetentionInputSchema,
+  RecoverySummarySchema,
   SecretSetInputSchema,
   SonnetResponseOutputSchema,
   StartRecordingSessionResultSchema,
@@ -254,6 +257,46 @@ describe('shared schemas', () => {
     ).toThrow();
     expect(() =>
       AudioDiagnosticSessionResultSchema.parse({ ok: false, error: 'already_recording' }),
+    ).toThrow();
+  });
+
+  it('validates recovery IPC contracts without exposing key or path fields', () => {
+    const summary = RecoverySummarySchema.parse({
+      callId: '00000000-0000-4000-8000-000000000001',
+      tenantId: '00000000-0000-4000-8000-000000000002',
+      organizationId: '00000000-0000-4000-8000-000000000003',
+      ownerUserId: '00000000-0000-4000-8000-000000000004',
+      ownerMembershipId: '00000000-0000-4000-8000-000000000005',
+      productId: 'real_estate',
+      source: 'zoom_desktop',
+      state: 'recoverable',
+      startedAt: '2026-07-18T00:00:00.000Z',
+      lastCheckpointAt: '2026-07-18T00:00:05.000Z',
+      expiresAt: '2026-07-25T00:00:00.000Z',
+      retentionDays: 7,
+      expired: false,
+      chunkCount: 2,
+      durationMs: 5_000,
+      availableSpeakers: ['self', 'counterpart'],
+    });
+
+    expect(summary).not.toHaveProperty('wrappedSessionKey');
+    expect(summary).not.toHaveProperty('segments');
+    expect(summary).not.toHaveProperty('filePath');
+    expect(summary.ownerUserId).toBe('00000000-0000-4000-8000-000000000004');
+    expect(summary.ownerMembershipId).toBe('00000000-0000-4000-8000-000000000005');
+    expect(
+      RecoveryRetentionInputSchema.parse({
+        callId: summary.callId,
+        retentionDays: 30,
+      }).retentionDays,
+    ).toBe(30);
+    expect(AuditActionSchema.parse('checkpoint.recovered')).toBe('checkpoint.recovered');
+    expect(() =>
+      RecoveryRetentionInputSchema.parse({
+        callId: summary.callId,
+        retentionDays: 14,
+      }),
     ).toThrow();
   });
 

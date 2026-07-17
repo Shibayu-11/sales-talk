@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { writeFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { IPC } from '@shared/ipc-channels';
 import {
   AppSettingsPatchSchema,
@@ -38,6 +39,8 @@ import {
   OrganizationUserRoleUpdateInputSchema,
   OverlayLayerSchema,
   ProductIdSchema,
+  RecoveryRetentionInputSchema,
+  RecoverySummarySchema,
   ReviewTaskUpdateStatusInputSchema,
   SecretKeySchema,
   SecretSetInputSchema,
@@ -64,6 +67,8 @@ import type {
   MeetingMinute,
   PermissionState,
   ProductId,
+  RecoveryRetentionDays,
+  RecoverySummary,
   ReviewTask,
   SharingState,
   SttProviderKind,
@@ -89,6 +94,7 @@ import { runAnthropicDiagnostic } from '../services/anthropic';
 import { createRuntimeConfiguredSTTClient } from '../services/stt-runtime';
 import type { ResilientSTTClient } from '../services/stt';
 import { NativeAudioCaptureService } from '../audio/native-audio-capture';
+import type { RecordingCheckpointSink } from '../services/audio-checkpoint-store';
 import {
   createInitialAudioCaptureStats,
   updateAudioCaptureStats,
@@ -105,6 +111,10 @@ import { tryGenerateLlmMinutesContent } from '../services/minutes-llm';
 import { AudioSttJobRunner } from '../services/audio-stt-job-runner';
 import { resolveImportSTTProvider } from '../services/import-stt-provider-resolver';
 import { createAuditCsv, writeAuditPdf } from '../services/audit-export';
+import {
+  audioCheckpointStore,
+  CheckpointIntegrityError,
+} from '../services/audio-checkpoint-store';
 import {
   acceptCloudflareInvitation,
   bootstrapCloudflareCredential,
@@ -159,6 +169,11 @@ let activeSttClient: ResilientSTTClient | null = null;
 let activeSttProviderKind: SttProviderKind | null = null;
 let activeSttDegradedReason: string | null = null;
 let activeNativeAudioCaptureService: NativeAudioCaptureService | null = null;
+let activeCheckpointSink: RecordingCheckpointSink | null = null;
+let activeCheckpointCallId: string | null = null;
+let activeCheckpointWarningSent = false;
+let activeCheckpointStopFailed = false;
+let activeRecordingContext: CurrentUserContext | null = null;
 let audioCaptureStats = createInitialAudioCaptureStats();
 let audioPreflightStartedAtMs: number | null = null;
 let audioPreflightSttError: string | null = null;
@@ -169,12 +184,19 @@ let diagnosticStartPromise: Promise<AudioDiagnosticSessionResult> | null = null;
 let recordingStartPromise: Promise<StartRecordingSessionResult> | null = null;
 let callEndPromise: Promise<void> | null = null;
 const localSessionId = randomUUID();
+const recoveryOperationLocks = new Map<string, Promise<unknown>>();
+const CHECKPOINT_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000;
+let checkpointMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
 
 export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   activeObjectionPipelineService = createRuntimeObjectionPipelineService(
     windows,
     () => (callState.status === 'in_call' ? callState.productId : null),
   );
+  startCheckpointMaintenance();
+  void runCheckpointMaintenance().catch((error: unknown) => {
+    logger.warn({ error }, 'startup checkpoint maintenance failed');
+  });
 
   ipcMain.handle(IPC.app.version, () => app.getVersion());
   ipcMain.handle(IPC.cloudflare.status, () => getCloudflareConnectionStatus());
@@ -285,6 +307,23 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   ipcMain.handle(IPC.sttJobs.list, (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
     return appRepositories.sttJobs.listJobs(callId);
+  });
+  ipcMain.handle(IPC.recovery.list, async () => {
+    return RecoverySummarySchema.array().parse(await listRecoverySummaries());
+  });
+  ipcMain.handle(IPC.recovery.recover, async (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    return RecoverySummarySchema.nullable().parse(await recoverCheckpoint(callId));
+  });
+  ipcMain.handle(IPC.recovery.discard, async (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    await discardCheckpoint(callId);
+  });
+  ipcMain.handle(IPC.recovery.setRetention, async (_event, payload: unknown) => {
+    const input = RecoveryRetentionInputSchema.parse(payload);
+    return RecoverySummarySchema.parse(
+      await updateCheckpointRetention(input.callId, input.retentionDays),
+    );
   });
 
   ipcMain.handle(IPC.audio.onSystemChunk, async (_event, payload: unknown) => {
@@ -812,9 +851,15 @@ async function stopSTT(): Promise<void> {
   await client?.stop();
 }
 
-async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<boolean> {
+async function tryStartNativeAudioCapture(
+  windows: IpcWindowAccessors,
+  checkpoint?: {
+    sink: RecordingCheckpointSink;
+    onError: (error: Error) => void;
+  } | undefined,
+): Promise<boolean> {
   try {
-    await startNativeAudioCapture(windows);
+    await startNativeAudioCapture(windows, checkpoint);
     audioPreflightNativeCaptureError = null;
     return true;
   } catch (error) {
@@ -828,7 +873,13 @@ async function tryStartNativeAudioCapture(windows: IpcWindowAccessors): Promise<
   }
 }
 
-async function startNativeAudioCapture(windows: IpcWindowAccessors): Promise<void> {
+async function startNativeAudioCapture(
+  windows: IpcWindowAccessors,
+  checkpoint?: {
+    sink: RecordingCheckpointSink;
+    onError: (error: Error) => void;
+  } | undefined,
+): Promise<void> {
   if (!activeNativeAudioCaptureService) {
     const nativeModule = loadNativeAudioCaptureModule();
     if (!nativeModule) {
@@ -838,6 +889,8 @@ async function startNativeAudioCapture(windows: IpcWindowAccessors): Promise<voi
     activeNativeAudioCaptureService = new NativeAudioCaptureService({
       module: nativeModule,
       sendAudioChunk: sendAudioChunkToSTT,
+      checkpointSink: checkpoint?.sink,
+      onCheckpointError: checkpoint?.onError,
       onError: (error) => {
         const message = formatNativeCaptureError(error);
         audioPreflightNativeCaptureError = message;
@@ -932,8 +985,7 @@ async function startAudioDiagnosticSessionOnce(
   startAudioPreflight();
   audioCaptureStats = createInitialAudioCaptureStats();
   const sttStarted = await tryStartSTT(windows);
-  const nativeCaptureStarted = sttStarted ? await tryStartNativeAudioCapture(windows) : false;
-  if (!sttStarted || !nativeCaptureStarted) {
+  if (!sttStarted) {
     await stopRealtimeAudioServices();
     realtimeAudioOwner = 'none';
     return { ok: false, error: 'start_failed' };
@@ -947,6 +999,13 @@ async function startAudioDiagnosticSessionOnce(
       windows,
       createRecordingStartFailureCleanupPlan({ reason: 'diagnostic_audit_failed' }),
     );
+    return { ok: false, error: 'start_failed' };
+  }
+
+  const nativeCaptureStarted = await tryStartNativeAudioCapture(windows);
+  if (!nativeCaptureStarted) {
+    await stopRealtimeAudioServices();
+    realtimeAudioOwner = 'none';
     return { ok: false, error: 'start_failed' };
   }
 
@@ -1213,13 +1272,23 @@ async function stopNativeAudioCapture(): Promise<void> {
   await service?.stop();
 }
 
-async function stopRealtimeAudioServices(): Promise<void> {
+async function stopRealtimeAudioServices(): Promise<{
+  nativeCaptureStopped: boolean;
+  sttStopped: boolean;
+}> {
   const results = await Promise.allSettled([stopNativeAudioCapture(), stopSTT()]);
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === 'rejected') {
+      if (index === 0 && activeCheckpointSink) {
+        activeCheckpointStopFailed = true;
+      }
       logger.warn({ error: result.reason }, 'audio service stop failed');
     }
   }
+  return {
+    nativeCaptureStopped: results[0]?.status === 'fulfilled',
+    sttStopped: results[1]?.status === 'fulfilled',
+  };
 }
 
 function notifyCallState(windows: IpcWindowAccessors): void {
@@ -1386,15 +1455,18 @@ function createReviewTaskTitle(severity: ReviewTask['severity']): string {
 }
 
 function createAuditLogEntry(input: {
+  id?: string | undefined;
+  tenantId?: string | null | undefined;
+  organizationId?: string | null | undefined;
   action: AuditLogEntry['action'];
   targetType: string;
   targetId: string;
   metadata: AuditLogEntry['metadata'];
 }): AuditLogEntry {
   return {
-    id: randomUUID(),
-    tenantId: null,
-    organizationId: null,
+    id: input.id ?? randomUUID(),
+    tenantId: input.tenantId ?? null,
+    organizationId: input.organizationId ?? null,
     actorType: 'system',
     actorUserId: null,
     actorMembershipId: null,
@@ -1413,6 +1485,7 @@ function createAuditLogEntry(input: {
 function createUserAuditLogEntry(
   context: CurrentUserContext,
   input: {
+    id?: string | undefined;
     action: AuditLogEntry['action'];
     targetType: string;
     targetId: string;
@@ -1420,7 +1493,7 @@ function createUserAuditLogEntry(
   },
 ): AuditLogEntry {
   return {
-    id: randomUUID(),
+    id: input.id ?? randomUUID(),
     tenantId: context.tenant.id,
     organizationId: context.organization.id,
     actorType: 'user',
@@ -1436,6 +1509,28 @@ function createUserAuditLogEntry(
     hash: null,
     createdAt: new Date().toISOString(),
   };
+}
+
+function createCheckpointAuditOperationId(
+  callId: string,
+  action: AuditLogEntry['action'],
+  discriminator: string,
+): string {
+  return deterministicUuid(['checkpoint-audit', callId, action, discriminator]);
+}
+
+function deterministicUuid(parts: string[]): string {
+  const bytes = createHash('sha256').update(parts.join('\0')).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
 }
 
 async function appendRecordingAuditLogs(
@@ -1458,6 +1553,497 @@ async function appendRecordingAuditLogs(
       metadata: recordingConsentMetadata(consent, source),
     }),
   ]);
+}
+
+export async function listRecoverySummaries(): Promise<RecoverySummary[]> {
+  await runCheckpointMaintenance();
+  const context = await appRepositories.organizations.assertPermission('calls:read');
+  const summaries = await audioCheckpointStore.listSummaries(activeCallId);
+  const scopedSummaries = summaries.filter(
+    (summary) =>
+      summary.tenantId === context.tenant.id &&
+      summary.organizationId === context.organization.id,
+  );
+
+  return scopedSummaries.filter((summary) => canListCheckpointSummary(context, summary));
+}
+
+export async function recoverCheckpoint(callId: string): Promise<RecoverySummary | null> {
+  return withRecoveryCallLock(callId, async () => {
+    const context = await appRepositories.organizations.assertPermission('checkpoints:manage');
+    const summary = await assertRecoveryAccess(context, callId, 'manage');
+    if (!summary) {
+      return null;
+    }
+    if (summary.state === 'recording' && callId === activeCallId) {
+      throw new Error('録音中の checkpoint は復旧できません。先に通話を終了してください。');
+    }
+    if (summary.expired) {
+      throw new Error('保持期限を過ぎた録音 checkpoint は復旧できません。');
+    }
+
+    let recovered;
+    try {
+      recovered = await audioCheckpointStore.recoverToWavFiles(callId);
+    } catch (error) {
+      if (error instanceof CheckpointIntegrityError) {
+        throw new Error(
+          '暗号化 checkpoint の検証に失敗しました。音声が改ざんまたは破損している可能性があります。',
+        );
+      }
+      throw new Error('録音 checkpoint の復旧に失敗しました。時間をおいて再試行してください。');
+    }
+
+    try {
+      const call = await findCallOrThrow(callId);
+      const importedAudioAssetCount = await importRecoveredAudioAssets(
+        callId,
+        recovered.wavFiles,
+      );
+      if (call.status !== 'ended') {
+        await appRepositories.calls.endCall(callId);
+      }
+      await replayPendingCheckpointAudit(callId);
+      const operationId = createCheckpointAuditOperationId(
+        callId,
+        'checkpoint.recovered',
+        'manual',
+      );
+      await appRepositories.auditLogs.appendAuditLogs([
+        createUserAuditLogEntry(context, {
+          id: operationId,
+          action: 'checkpoint.recovered',
+          targetType: 'call',
+          targetId: callId,
+          metadata: {
+            callId,
+            operationId,
+            productId: summary.productId,
+            source: summary.source,
+            chunkCount: summary.chunkCount,
+            durationMs: summary.durationMs,
+            availableSpeakers: summary.availableSpeakers.join(','),
+            recoveredAudioAssets: importedAudioAssetCount,
+          },
+        }),
+      ]);
+    } catch (error) {
+      await audioCheckpointStore.resetRecoveringState(callId).catch(() => undefined);
+      logger.warn({ error, callId }, 'checkpoint recovery finalization failed');
+      throw new Error('録音 checkpoint の復旧確定に失敗しました。checkpoint は削除していません。');
+    }
+
+    await audioCheckpointStore.removeRecoveredWavDirectory(callId);
+    await audioCheckpointStore.discard(callId);
+    return null;
+  });
+}
+
+export async function discardCheckpoint(callId: string): Promise<void> {
+  await withRecoveryCallLock(callId, async () => {
+    const context = await appRepositories.organizations.assertPermission('checkpoints:manage');
+    const summary = await assertRecoveryAccess(context, callId, 'manage');
+    if (!summary) {
+      return;
+    }
+    if (summary.state === 'recording' && callId === activeCallId) {
+      throw new Error('録音中の checkpoint は破棄できません。先に通話を終了してください。');
+    }
+    await replayPendingCheckpointAudit(callId);
+    const operationId = createCheckpointAuditOperationId(callId, 'checkpoint.discarded', 'manual');
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        id: operationId,
+        action: 'checkpoint.discarded',
+        targetType: 'call',
+        targetId: callId,
+        metadata: {
+          callId,
+          operationId,
+          productId: summary.productId,
+          source: summary.source,
+          chunkCount: summary.chunkCount,
+          durationMs: summary.durationMs,
+        },
+      }),
+    ]);
+    await audioCheckpointStore.removeRecoveredWavDirectory(callId);
+    await audioCheckpointStore.discard(callId);
+  });
+}
+
+export async function updateCheckpointRetention(
+  callId: string,
+  retentionDays: RecoveryRetentionDays,
+): Promise<RecoverySummary> {
+  return withRecoveryCallLock(callId, async () => {
+    const context = await appRepositories.organizations.assertPermission('checkpoints:manage');
+    const summary = await assertRecoveryAccess(context, callId, 'manage');
+    if (!summary) {
+      throw new Error('対象の録音 checkpoint が見つかりません。');
+    }
+    await replayPendingCheckpointAudit(callId);
+    const operationId = createCheckpointAuditOperationId(
+      callId,
+      'checkpoint.retention_updated',
+      `${summary.expiresAt}:${retentionDays}`,
+    );
+    const auditEntry = createUserAuditLogEntry(context, {
+      id: operationId,
+      action: 'checkpoint.retention_updated',
+      targetType: 'call',
+      targetId: callId,
+      metadata: {
+        callId,
+        operationId,
+        previousExpiresAt: summary.expiresAt,
+        retentionDays,
+      },
+    });
+    const updated = await audioCheckpointStore.stageRetention(callId, retentionDays, auditEntry);
+    const pendingAuditEntry = await audioCheckpointStore.getPendingAuditEntry(callId);
+    if (!pendingAuditEntry) {
+      throw new Error('checkpoint retention audit staging failed');
+    }
+    await appRepositories.auditLogs.appendAuditLogs([pendingAuditEntry]);
+    await audioCheckpointStore.completePendingAudit(callId, pendingAuditEntry.id);
+    return updated;
+  });
+}
+
+async function importRecoveredAudioAssets(
+  callId: string,
+  wavFiles: Array<{ filePath: string }>,
+): Promise<number> {
+  const existingAssets = await appRepositories.audioAssets.listAudioAssets(callId);
+  const existingFileNames = new Set(existingAssets.map((asset) => asset.fileName));
+  let importedAudioAssetCount = 0;
+  for (const wavFile of wavFiles) {
+    if (existingFileNames.has(basename(wavFile.filePath))) {
+      continue;
+    }
+    const asset = await appRepositories.audioAssets.importAudioFile({
+      callId,
+      filePath: wavFile.filePath,
+    });
+    existingFileNames.add(asset.fileName);
+    importedAudioAssetCount += 1;
+  }
+  return importedAudioAssetCount;
+}
+
+async function assertRecoveryAccess(
+  context: CurrentUserContext,
+  callId: string,
+  access: 'list' | 'manage',
+): Promise<RecoverySummary | null> {
+  const summary = await audioCheckpointStore.getSummary(callId, activeCallId);
+  if (!summary) {
+    return null;
+  }
+  if (summary.tenantId !== context.tenant.id || summary.organizationId !== context.organization.id) {
+    throw new Error('この録音 checkpoint を操作する権限がありません。');
+  }
+  const allowed =
+    access === 'list'
+      ? canListCheckpointSummary(context, summary)
+      : canManageCheckpointSummary(context, summary);
+  if (!allowed) {
+    throw new Error('この録音 checkpoint を操作する権限がありません。');
+  }
+  return summary;
+}
+
+function canListCheckpointSummary(
+  context: CurrentUserContext,
+  summary: RecoverySummary,
+): boolean {
+  if (summary.tenantId !== context.tenant.id || summary.organizationId !== context.organization.id) {
+    return false;
+  }
+  if (canUseOrganizationCheckpointScope(context)) {
+    return true;
+  }
+  if (context.membership.role === 'auditor') {
+    return true;
+  }
+  return isOwnedCheckpoint(context, summary);
+}
+
+function canManageCheckpointSummary(
+  context: CurrentUserContext,
+  summary: RecoverySummary,
+): boolean {
+  if (summary.tenantId !== context.tenant.id || summary.organizationId !== context.organization.id) {
+    return false;
+  }
+  if (!context.permissions.includes('checkpoints:manage')) {
+    return false;
+  }
+  if (canUseOrganizationCheckpointScope(context)) {
+    return true;
+  }
+  return isOwnedCheckpoint(context, summary);
+}
+
+function canUseOrganizationCheckpointScope(context: CurrentUserContext): boolean {
+  return (
+    context.membership.role === 'insurer_admin' ||
+    context.membership.role === 'agency_admin' ||
+    context.membership.role === 'manager'
+  );
+}
+
+function isOwnedCheckpoint(context: CurrentUserContext, summary: RecoverySummary): boolean {
+  return (
+    summary.ownerUserId === context.user.id &&
+    summary.ownerMembershipId === context.membership.id
+  );
+}
+
+export async function runCheckpointMaintenance(): Promise<void> {
+  const summaries = await audioCheckpointStore.listSummaries(activeCallId);
+  const pendingReplayFailures = new Set<string>();
+
+  for (const summary of summaries) {
+    await withRecoveryCallLock(summary.callId, async () => {
+      try {
+        await replayPendingCheckpointAudit(summary.callId);
+      } catch (error) {
+        pendingReplayFailures.add(summary.callId);
+        logger.warn({ error, callId: summary.callId }, 'pending checkpoint audit replay failed');
+      }
+    });
+  }
+
+  const latestSummaries = await audioCheckpointStore.listSummaries(activeCallId);
+  for (const summary of latestSummaries) {
+    if (
+      !summary.expired ||
+      summary.callId === activeCallId ||
+      pendingReplayFailures.has(summary.callId)
+    ) {
+      continue;
+    }
+
+    await withRecoveryCallLock(summary.callId, async () => {
+      const currentSummary = await audioCheckpointStore.getSummary(summary.callId, activeCallId);
+      if (
+        !currentSummary?.expired ||
+        currentSummary.callId === activeCallId ||
+        currentSummary.state === 'recording'
+      ) {
+        return;
+      }
+      try {
+        await replayPendingCheckpointAudit(currentSummary.callId);
+        await appendSystemCheckpointExpiredAudit(currentSummary);
+        await audioCheckpointStore.removeRecoveredWavDirectory(currentSummary.callId);
+        await audioCheckpointStore.discard(currentSummary.callId);
+      } catch (error) {
+        logger.warn({ error, callId: currentSummary.callId }, 'expired checkpoint cleanup failed');
+      }
+    });
+  }
+}
+
+async function replayPendingCheckpointAudit(callId: string): Promise<void> {
+  if (!(await audioCheckpointStore.getSummary(callId, activeCallId))) {
+    return;
+  }
+  const pendingAuditEntry = await audioCheckpointStore.getPendingAuditEntry(callId);
+  if (!pendingAuditEntry) {
+    return;
+  }
+  await appRepositories.auditLogs.appendAuditLogs([pendingAuditEntry]);
+  await audioCheckpointStore.completePendingAudit(callId, pendingAuditEntry.id);
+}
+
+async function appendSystemCheckpointExpiredAudit(summary: RecoverySummary): Promise<void> {
+  const operationId = createCheckpointAuditOperationId(
+    summary.callId,
+    'checkpoint.expired',
+    summary.expiresAt,
+  );
+  await appRepositories.auditLogs.appendAuditLogs([
+    createAuditLogEntry({
+      id: operationId,
+      tenantId: summary.tenantId,
+      organizationId: summary.organizationId,
+      action: 'checkpoint.expired',
+      targetType: 'call',
+      targetId: summary.callId,
+      metadata: {
+        callId: summary.callId,
+        operationId,
+        expiresAt: summary.expiresAt,
+        chunkCount: summary.chunkCount,
+        durationMs: summary.durationMs,
+      },
+    }),
+  ]);
+}
+
+function startCheckpointMaintenance(): void {
+  if (!app.isPackaged || checkpointMaintenanceTimer) {
+    return;
+  }
+  checkpointMaintenanceTimer = setInterval(() => {
+    void runCheckpointMaintenance().catch((error: unknown) => {
+      logger.warn({ error }, 'scheduled checkpoint maintenance failed');
+    });
+  }, CHECKPOINT_MAINTENANCE_INTERVAL_MS);
+  checkpointMaintenanceTimer.unref?.();
+}
+
+async function findCallOrThrow(callId: string): Promise<CallSession> {
+  const call = (await appRepositories.calls.listCalls()).find((candidate) => candidate.id === callId);
+  if (!call) {
+    throw new Error('復旧対象の call が見つかりません。');
+  }
+  return call;
+}
+
+async function withRecoveryCallLock<T>(
+  callId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = recoveryOperationLocks.get(callId) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(operation);
+  const cleanup = run
+    .finally(() => {
+      if (recoveryOperationLocks.get(callId) === cleanup) {
+        recoveryOperationLocks.delete(callId);
+      }
+    })
+    .catch(() => undefined);
+  recoveryOperationLocks.set(callId, cleanup);
+  return run;
+}
+
+async function handleCheckpointDegraded(
+  windows: IpcWindowAccessors,
+  context: CurrentUserContext,
+  callId: string,
+  error: Error,
+): Promise<void> {
+  if (activeCheckpointWarningSent || activeCheckpointCallId !== callId) {
+    return;
+  }
+  activeCheckpointWarningSent = true;
+  notifyAudioError(
+    windows,
+    '録音の復旧用 checkpoint 保存に失敗しました。STT は継続していますが、クラッシュ時の復旧は一部利用できない可能性があります。',
+  );
+  await appRepositories.auditLogs
+    .appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'checkpoint.degraded',
+        targetType: 'call',
+        targetId: callId,
+        metadata: {
+          callId,
+          reason: 'checkpoint_write_failed',
+        },
+      }),
+    ])
+    .catch((auditError: unknown) => {
+      logger.warn({ error: auditError, callId }, 'checkpoint degraded audit log failed');
+    });
+  logger.warn({ error, callId }, 'checkpoint write failed');
+}
+
+async function discardFailedStartCheckpoint(
+  context: CurrentUserContext,
+  callId: string,
+): Promise<void> {
+  const summary = await audioCheckpointStore.getSummary(callId, null);
+  if (!summary || summary.chunkCount > 0) {
+    return;
+  }
+  await replayPendingCheckpointAudit(callId);
+  const operationId = createCheckpointAuditOperationId(
+    callId,
+    'checkpoint.discarded',
+    'recording_start_failed_without_audio',
+  );
+  await appRepositories.auditLogs.appendAuditLogs([
+    createUserAuditLogEntry(context, {
+      id: operationId,
+      action: 'checkpoint.discarded',
+      targetType: 'call',
+      targetId: callId,
+      metadata: {
+        callId,
+        operationId,
+        reason: 'recording_start_failed_without_audio',
+        chunkCount: 0,
+        durationMs: 0,
+      },
+    }),
+  ]);
+  await audioCheckpointStore.removeRecoveredWavDirectory(callId);
+  await audioCheckpointStore.discard(callId);
+}
+
+async function finalizeActiveCheckpoint(
+  windows: IpcWindowAccessors,
+  context: CurrentUserContext,
+  callId: string,
+): Promise<boolean> {
+  try {
+    const recovered = await audioCheckpointStore.recoverToWavFiles(callId);
+    const importedAudioAssetCount = await importRecoveredAudioAssets(
+      callId,
+      recovered.wavFiles,
+    );
+    await appRepositories.calls.endCall(callId);
+    await replayPendingCheckpointAudit(callId);
+    const operationId = createCheckpointAuditOperationId(
+      callId,
+      'checkpoint.finalized',
+      'normal_stop',
+    );
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        id: operationId,
+        action: 'checkpoint.finalized',
+        targetType: 'call',
+        targetId: callId,
+        metadata: {
+          callId,
+          operationId,
+          productId: recovered.summary.productId,
+          source: recovered.summary.source,
+          chunkCount: recovered.summary.chunkCount,
+          durationMs: recovered.summary.durationMs,
+          availableSpeakers: recovered.summary.availableSpeakers.join(','),
+          recoveredAudioAssets: importedAudioAssetCount,
+        },
+      }),
+    ]);
+    await audioCheckpointStore.removeRecoveredWavDirectory(callId);
+    await audioCheckpointStore.discard(callId);
+    return true;
+  } catch (error) {
+    await audioCheckpointStore.resetRecoveringState(callId).catch(() => undefined);
+    notifyAudioError(
+      windows,
+      '録音は終了しましたが、音声ファイルの確定に失敗しました。暗号化 checkpoint を残しているため、未完了録音から復旧できます。',
+    );
+    logger.warn({ error, callId }, 'active checkpoint finalization failed');
+    return false;
+  }
+}
+
+function clearActiveCheckpoint(callId: string): void {
+  if (activeCheckpointCallId !== callId) {
+    return;
+  }
+  activeCheckpointSink = null;
+  activeCheckpointCallId = null;
+  activeCheckpointWarningSent = false;
+  activeCheckpointStopFailed = false;
 }
 
 function recordingConsentMetadata(
@@ -1617,8 +2203,7 @@ async function startRecordingSessionOnce(
   audioCaptureStats = createInitialAudioCaptureStats();
 
   const sttStarted = await tryStartSTT(windows);
-  const nativeCaptureStarted = sttStarted ? await tryStartNativeAudioCapture(windows) : false;
-  if (!sttStarted || !nativeCaptureStarted) {
+  if (!sttStarted) {
     await stopRealtimeAudioServices();
     windows.getControlWindow()?.webContents.send(
       IPC.audio.onError,
@@ -1643,7 +2228,7 @@ async function startRecordingSessionOnce(
       windows,
       createRecordingStartFailureCleanupPlan({ reason: 'call_create_failed' }),
     );
-    logger.warn({ error }, 'call record creation failed after audio startup');
+    logger.warn({ error }, 'call record creation failed before audio capture');
     return { ok: false, error: 'start_failed' };
   }
 
@@ -1654,6 +2239,60 @@ async function startRecordingSessionOnce(
     await runRecordingStartFailureCleanup(
       windows,
       createRecordingStartFailureCleanupPlan({ reason: 'call_audit_failed', callId: call.id }),
+    );
+    return { ok: false, error: 'start_failed' };
+  }
+
+  let checkpointSink: RecordingCheckpointSink;
+  try {
+    checkpointSink = await audioCheckpointStore.beginRecording({
+      call,
+      now: startedAt,
+      ownerUserId: context.user.id,
+      ownerMembershipId: context.membership.id,
+    });
+  } catch (error) {
+    await appRepositories.calls.endCall(call.id).catch((endError: unknown) => {
+      logger.warn({ error: endError, callId: call.id }, 'failed to end call after checkpoint init failure');
+    });
+    await stopRealtimeAudioServices();
+    resetAudioPreflight();
+    notifyAudioError(
+      windows,
+      '録音の復旧用 checkpoint を初期化できなかったため、録音を開始できませんでした。時間をおいて再試行してください。',
+    );
+    logger.warn({ error, callId: call.id }, 'audio checkpoint initialization failed');
+    return { ok: false, error: 'start_failed' };
+  }
+
+  activeCheckpointSink = checkpointSink;
+  activeCheckpointCallId = call.id;
+  activeCheckpointWarningSent = false;
+  activeCheckpointStopFailed = false;
+  activeRecordingContext = context;
+
+  const nativeCaptureStarted = await tryStartNativeAudioCapture(windows, {
+    sink: checkpointSink,
+    onError: (error) => {
+      void handleCheckpointDegraded(windows, context, call.id, error);
+    },
+  });
+  if (!nativeCaptureStarted) {
+    const stopResult = await stopRealtimeAudioServices();
+    await appRepositories.calls.endCall(call.id).catch((endError: unknown) => {
+      logger.warn({ error: endError, callId: call.id }, 'failed to end call after native capture failure');
+    });
+    if (stopResult.nativeCaptureStopped && !activeCheckpointStopFailed) {
+      await discardFailedStartCheckpoint(context, call.id).catch((cleanupError: unknown) => {
+        logger.warn({ error: cleanupError, callId: call.id }, 'failed to cleanup start checkpoint');
+      });
+    }
+    clearActiveCheckpoint(call.id);
+    activeRecordingContext = null;
+    resetAudioPreflight();
+    notifyAudioError(
+      windows,
+      '録音の開始に失敗しました。call と監査記録は保持し、音声がある checkpoint は安全に保持しています。',
     );
     return { ok: false, error: 'start_failed' };
   }
@@ -1708,21 +2347,42 @@ async function endCurrentCall(windows: IpcWindowAccessors): Promise<void> {
 
 async function endCurrentCallOnce(windows: IpcWindowAccessors): Promise<void> {
   const endedCallId = activeCallId;
+  const recordingContext = activeRecordingContext;
   const wasCallActive =
     endedCallId !== null || callState.status === 'in_call' || realtimeAudioOwner === 'call';
   if (wasCallActive) {
     activeObjectionPipelineService?.cancelActive();
   }
 
-  const endCallPromise = endedCallId
-    ? appRepositories.calls.endCall(endedCallId).catch((error: unknown) => {
-        logger.warn({ error }, 'failed to persist call end');
-      })
-    : Promise.resolve();
-  const stopAudioPromise =
-    realtimeAudioOwner === 'call' ? stopRealtimeAudioServices() : Promise.resolve();
+  const stopResult =
+    realtimeAudioOwner === 'call'
+      ? await stopRealtimeAudioServices()
+      : { nativeCaptureStopped: true, sttStopped: true };
 
-  await Promise.all([stopAudioPromise, endCallPromise]);
+  let callEndedByFinalization = false;
+  if (
+    endedCallId &&
+    activeCheckpointCallId === endedCallId &&
+    recordingContext &&
+    stopResult.nativeCaptureStopped &&
+    !activeCheckpointStopFailed
+  ) {
+    callEndedByFinalization = await finalizeActiveCheckpoint(
+      windows,
+      recordingContext,
+      endedCallId,
+    );
+  }
+
+  if (endedCallId && !callEndedByFinalization) {
+    await appRepositories.calls.endCall(endedCallId).catch((error: unknown) => {
+      logger.warn({ error, callId: endedCallId }, 'failed to persist call end');
+    });
+  }
+  if (endedCallId && activeCheckpointCallId === endedCallId) {
+    clearActiveCheckpoint(endedCallId);
+  }
+  activeRecordingContext = null;
 
   activeCallId = null;
   if (realtimeAudioOwner === 'call') {

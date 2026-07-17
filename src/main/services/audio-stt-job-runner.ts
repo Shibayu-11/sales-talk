@@ -92,17 +92,23 @@ export class AudioSttJobRunner {
   }
 
   private async transcribe(asset: AudioAsset): Promise<Transcript[]> {
-    // Injectable override for tests takes precedence.
-    if (this.options.transcribeAudio) {
-      return this.options.transcribeAudio(asset);
-    }
+    const lease = await this.options.repositories.audioAssets.materializeReadableAsset(asset);
+    const readableAsset: AudioAsset = { ...asset, storedPath: lease.filePath };
+    try {
+      // Injectable override for tests takes precedence.
+      if (this.options.transcribeAudio) {
+        return await this.options.transcribeAudio(readableAsset);
+      }
 
-    const mode = this.options.importProviderMode ?? 'local_first';
-    const resolved = resolveImportSTTProvider({
-      mode,
-      ...this.options.importResolverOptions,
-    });
-    return resolved.transcriber.transcribeFile(asset);
+      const mode = this.options.importProviderMode ?? 'local_first';
+      const resolved = resolveImportSTTProvider({
+        mode,
+        ...this.options.importResolverOptions,
+      });
+      return await resolved.transcriber.transcribeFile(readableAsset);
+    } finally {
+      await lease.cleanup();
+    }
   }
 }
 

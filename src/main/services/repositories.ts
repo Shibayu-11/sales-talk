@@ -29,7 +29,7 @@ import type {
   KnowledgeCreateInput,
 } from '@shared/schemas';
 import { localActivityStore } from './local-activity-store';
-import { localAudioAssetStore } from './local-audio-asset-store';
+import { localAudioAssetStore, type AudioAssetReadableLease } from './local-audio-asset-store';
 import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
 import { localKnowledgeStore } from './local-knowledge-store';
@@ -75,6 +75,7 @@ export interface TranscriptRepository {
 export interface AudioAssetRepository {
   importAudioFile(input: { callId: string; filePath: string }): Promise<AudioAsset>;
   listAudioAssets(callId: string): Promise<AudioAsset[]>;
+  materializeReadableAsset(asset: AudioAsset): Promise<AudioAssetReadableLease>;
 }
 
 export interface AudioSttJobRepository {

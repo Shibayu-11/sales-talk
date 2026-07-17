@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -55,6 +55,33 @@ describe('LocalCallStore', () => {
           source: 'manual_transcript',
         },
       ]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('creates a new store only when the file is missing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sales-talk-local-calls-enoent-'));
+    const filePath = join(directory, 'calls.json');
+
+    try {
+      const store = new LocalCallStore(filePath);
+      await expect(store.listCalls()).resolves.toEqual([]);
+      await expect(readFile(filePath, 'utf8')).resolves.toContain('"calls": []');
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('does not overwrite corrupt JSON with an empty store', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sales-talk-local-calls-corrupt-'));
+    const filePath = join(directory, 'calls.json');
+    await writeFile(filePath, '{not-json', 'utf8');
+
+    try {
+      const store = new LocalCallStore(filePath);
+      await expect(store.listCalls()).rejects.toThrow();
+      await expect(readFile(filePath, 'utf8')).resolves.toBe('{not-json');
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

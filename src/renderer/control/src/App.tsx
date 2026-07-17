@@ -27,6 +27,8 @@ import type {
   OrganizationUser,
   PermissionState,
   ProductId,
+  RecoveryRetentionDays,
+  RecoverySummary,
   ReviewTask,
   ReviewTaskStatus,
   RecordingConsent,
@@ -37,7 +39,7 @@ import { UiIcon, type UiIconName } from './components/UiIcon';
 import { CallLibrary } from './components/CallLibrary';
 import { TranscriptBubbles } from './components/TranscriptBubbles';
 import { Onboarding } from './components/Onboarding';
-import { formatBytes } from './lib/call-view';
+import { formatBytes, PRODUCT_LABELS, SOURCE_LABELS } from './lib/call-view';
 import {
   formatMonthLabel,
   summarizeReviewTasksByMonth,
@@ -78,9 +80,16 @@ const SECRET_KEYS = [
   { key: 'cloudflare_api_token', label: 'Cloudflare bootstrap token' },
 ] as const;
 const AUDIO_STATUS_POLL_INTERVAL_MS = 1_000;
+const RECOVERY_RETENTION_OPTIONS: RecoveryRetentionDays[] = [1, 7, 30];
 const AUDIT_ACTION_OPTIONS = [
   'recording.started',
   'recording.consent_captured',
+  'checkpoint.degraded',
+  'checkpoint.finalized',
+  'checkpoint.recovered',
+  'checkpoint.discarded',
+  'checkpoint.expired',
+  'checkpoint.retention_updated',
   'organization.user_role_updated',
   'compliance.rule_set_created',
   'compliance.rule_set_active_updated',
@@ -130,6 +139,9 @@ export function App(): JSX.Element {
   const [cloudOrganizations, setCloudOrganizations] = useState<CloudOrganization[]>([]);
   const [cloudOrganizationUsers, setCloudOrganizationUsers] = useState<CloudOrganizationUser[]>([]);
   const [cloudOrganizationError, setCloudOrganizationError] = useState<string | null>(null);
+  const [recoverySummaries, setRecoverySummaries] = useState<RecoverySummary[]>([]);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveryBusyCallId, setRecoveryBusyCallId] = useState<string | null>(null);
   const shouldPollAudioStatus =
     activeNav === 'ダッシュボード' &&
     (call.status === 'in_call' ||
@@ -142,6 +154,7 @@ export function App(): JSX.Element {
     void window.api.app.getVersion().then(setVersion);
     void window.api.permissions.check().then(setPermissions);
     void refreshAudioStatus();
+    void refreshRecoverySummaries();
     void window.api.dev.isEnabled().then(setDevToolsEnabled);
     void window.api.organizations.getCurrentContext().then(setCurrentUserContext);
     void window.api.organizations.list().then(setOrganizations);
@@ -226,6 +239,7 @@ export function App(): JSX.Element {
       setRecordingConsentGranted(false);
     }
     await refreshAudioStatus();
+    await refreshRecoverySummaries();
   };
 
   const startAudioDiagnostic = async (): Promise<void> => {
@@ -266,6 +280,7 @@ export function App(): JSX.Element {
   const endCall = async (): Promise<void> => {
     await window.api.call.end();
     await refreshAudioStatus();
+    await refreshRecoverySummaries();
   };
 
   const startDevMockCall = async (): Promise<void> => {
@@ -302,6 +317,31 @@ export function App(): JSX.Element {
     setAudioStatus(status);
     setPermissions(status.permissions);
     setSttState(status.sttState);
+  };
+
+  const refreshRecoverySummaries = async (): Promise<void> => {
+    try {
+      setRecoverySummaries(await window.api.recovery.list());
+      setRecoveryError(null);
+    } catch (error) {
+      setRecoveryError(safeRecoveryErrorMessage(error));
+    }
+  };
+
+  const runRecoveryOperation = async (
+    callId: string,
+    operation: () => Promise<unknown>,
+  ): Promise<void> => {
+    setRecoveryBusyCallId(callId);
+    setRecoveryError(null);
+    try {
+      await operation();
+      await refreshRecoverySummaries();
+    } catch (error) {
+      setRecoveryError(safeRecoveryErrorMessage(error));
+    } finally {
+      setRecoveryBusyCallId(null);
+    }
   };
 
   const refreshSecretStatus = async (): Promise<void> => {
@@ -434,6 +474,23 @@ export function App(): JSX.Element {
               onRecordingConsentChange={setRecordingConsentGranted}
               sttError={sttError}
               sttState={sttState}
+              recoverySummaries={recoverySummaries}
+              recoveryError={recoveryError}
+              recoveryBusyCallId={recoveryBusyCallId}
+              canManageRecovery={
+                currentUserContext?.permissions.includes('checkpoints:manage') ?? false
+              }
+              onRecoverCheckpoint={(callId) =>
+                runRecoveryOperation(callId, () => window.api.recovery.recover(callId))
+              }
+              onDiscardCheckpoint={(callId) =>
+                runRecoveryOperation(callId, () => window.api.recovery.discard(callId))
+              }
+              onSetCheckpointRetention={(callId, retentionDays) =>
+                runRecoveryOperation(callId, () =>
+                  window.api.recovery.setRetention(callId, retentionDays),
+                )
+              }
             />
           )}
           {activeNav === '商談履歴' && (
@@ -519,6 +576,16 @@ function DashboardPanel(props: {
   devToolsEnabled: boolean;
   sttError: string | null;
   sttState: ConnectionState;
+  recoverySummaries: RecoverySummary[];
+  recoveryError: string | null;
+  recoveryBusyCallId: string | null;
+  canManageRecovery: boolean;
+  onRecoverCheckpoint: (callId: string) => Promise<void>;
+  onDiscardCheckpoint: (callId: string) => Promise<void>;
+  onSetCheckpointRetention: (
+    callId: string,
+    retentionDays: RecoveryRetentionDays,
+  ) => Promise<void>;
 }): JSX.Element {
   const deepgramErrorVisible = Boolean(
     props.sttError &&
@@ -614,6 +681,16 @@ function DashboardPanel(props: {
           <span className="text-xs text-zinc-500">状態: {props.call.status}</span>
         </div>
       </div>
+
+      <RecoveryCheckpointPanel
+        summaries={props.recoverySummaries}
+        error={props.recoveryError}
+        busyCallId={props.recoveryBusyCallId}
+        canManage={props.canManageRecovery}
+        onRecover={props.onRecoverCheckpoint}
+        onDiscard={props.onDiscardCheckpoint}
+        onSetRetention={props.onSetCheckpointRetention}
+      />
 
       {props.devToolsEnabled && (
         <div className="rounded-lg border border-dashed border-zinc-700 p-5">
@@ -774,6 +851,118 @@ function DashboardPanel(props: {
         </div>
       </div>
     </>
+  );
+}
+
+function RecoveryCheckpointPanel(props: {
+  summaries: RecoverySummary[];
+  error: string | null;
+  busyCallId: string | null;
+  canManage: boolean;
+  onRecover: (callId: string) => Promise<void>;
+  onDiscard: (callId: string) => Promise<void>;
+  onSetRetention: (callId: string, retentionDays: RecoveryRetentionDays) => Promise<void>;
+}): JSX.Element | null {
+  if (props.summaries.length === 0 && !props.error) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-overlay-warning/40 bg-overlay-warning/10 p-5">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-medium text-overlay-warning">未完了録音</h2>
+          <p className="mt-1 text-xs text-zinc-400">
+            暗号化 checkpoint からローカル WAV を復旧できます。鍵やファイルパスは画面に表示しません。
+          </p>
+        </div>
+        <span className="rounded bg-zinc-950 px-2 py-1 text-[11px] text-zinc-400">
+          AES-256-GCM
+        </span>
+      </div>
+      {props.error && (
+        <div className="mb-3 rounded border border-overlay-objection/40 bg-overlay-objection/10 p-3 text-xs text-overlay-objection">
+          {props.error}
+        </div>
+      )}
+      {!props.canManage && props.summaries.length > 0 && (
+        <div className="mb-3 rounded border border-zinc-700 bg-zinc-950/70 p-3 text-xs text-zinc-400">
+          監査ロールは未完了録音を閲覧できますが、復旧・破棄・保持期限の変更はできません。
+        </div>
+      )}
+      {props.summaries.length === 0 ? (
+        <div className="rounded border border-zinc-800 p-3 text-xs text-zinc-500">
+          復旧可能な録音はありません。
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {props.summaries.map((summary) => {
+            const busy = props.busyCallId === summary.callId;
+            const recording = summary.state === 'recording';
+            const actionDisabled = busy || recording || !props.canManage;
+            return (
+              <li key={summary.callId} className="rounded border border-zinc-800 bg-zinc-950/60 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-zinc-100">
+                      {PRODUCT_LABELS[summary.productId]} / {SOURCE_LABELS[summary.source]}
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      call {summary.callId.slice(0, 8)} ・ {recoveryStateLabel(summary.state)} ・{' '}
+                      {formatDurationMs(summary.durationMs)}
+                      {summary.expired ? ' ・ 保持期限切れ' : ''}
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      checkpoint {summary.chunkCount} chunks ・ speakers{' '}
+                      {summary.availableSpeakers.join(', ') || '-'}
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      最終保存 {formatDateTime(summary.lastCheckpointAt)} ・ 保持期限{' '}
+                      {formatDateTime(summary.expiresAt)}（{summary.retentionDays}日）
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={actionDisabled || summary.expired}
+                      onClick={() => void props.onRecover(summary.callId)}
+                      className="rounded bg-overlay-success px-3 py-2 text-xs font-medium text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {busy ? '処理中' : '復旧'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionDisabled}
+                      onClick={() => void props.onDiscard(summary.callId)}
+                      className="rounded bg-overlay-objection px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      破棄
+                    </button>
+                    {RECOVERY_RETENTION_OPTIONS.map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        disabled={busy || !props.canManage}
+                        onClick={() =>
+                          void props.onSetRetention(summary.callId, days)
+                        }
+                        className={`rounded px-2 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                          summary.retentionDays === days
+                            ? 'bg-zinc-600 text-white'
+                            : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                        }`}
+                      >
+                        保持{days}日
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -2210,6 +2399,42 @@ function cleanAuditFilter(filter: AuditLogFilter): AuditLogFilter {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown_error';
+}
+
+function safeRecoveryErrorMessage(error: unknown): string {
+  const message = errorMessage(error);
+  return /[ぁ-んァ-ヶ一-龠]/.test(message)
+    ? message
+    : '録音 checkpoint の操作に失敗しました。時間をおいて再試行してください。';
+}
+
+function recoveryStateLabel(state: RecoverySummary['state']): string {
+  switch (state) {
+    case 'recording':
+      return '録音中';
+    case 'recoverable':
+      return '復旧可能';
+    case 'recovering':
+      return '復旧中';
+    case 'partial':
+      return '一部復旧可能';
+  }
+}
+
+function formatDurationMs(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ja-JP', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function cloudMembershipStatusClass(status: CloudOrganizationUser['status']): string {

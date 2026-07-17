@@ -117,6 +117,14 @@ export const IPC = {
     list: 'stt-jobs:list',
   },
 
+  // Encrypted recording checkpoints / crash recovery
+  recovery: {
+    list: 'recovery:list',
+    recover: 'recovery:recover',
+    discard: 'recovery:discard',
+    setRetention: 'recovery:set-retention',
+  },
+
   // Knowledge base
   knowledge: {
     search: 'knowledge:search',

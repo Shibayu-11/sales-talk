@@ -73,6 +73,7 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 - [x] fake native audio + fake SpeechAnalyzer helper でself/counterpartの2チャネル自動E2E
 - [x] 商談前音声 preflight(権限 / native / STT / 2音源 / stale)と Go / Warning / Blocked UI
 - [x] native/STT部分起動、監査ログ失敗、start/end競合時に録音を残さないcleanup
+- [x] 録音 crash recovery 最小実装(AES-256-GCM checkpoint / finalized asset、safeStorage key wrap、owner-scoped 復旧、pending-audit replay、autonomous audited cleanup、bounded backpressure / symlink guard)
 - [ ] Zoom テスト通話で system audio → local STT → transcript 表示を確認
 - [ ] 反論を意図的に発話 → Haiku 検知 → Sonnet 生成 → Overlay 表示の通し確認
 - [x] レイテンシ計測ログを pipeline に仕込む(`objection_pipeline_latency` メトリクス)

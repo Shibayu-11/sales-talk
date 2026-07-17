@@ -25,6 +25,7 @@ export const MembershipStatusSchema = z.enum(['active', 'invited', 'disabled']);
 export const OrganizationPermissionSchema = z.enum([
   'recording:start',
   'calls:read',
+  'checkpoints:manage',
   'reviews:manage',
   'rules:manage',
   'rules:approve',
@@ -259,6 +260,12 @@ export const AuditActorTypeSchema = z.enum(['system', 'user', 'ai']);
 export const AuditActionSchema = z.enum([
   'recording.started',
   'recording.consent_captured',
+  'checkpoint.degraded',
+  'checkpoint.finalized',
+  'checkpoint.recovered',
+  'checkpoint.discarded',
+  'checkpoint.expired',
+  'checkpoint.retention_updated',
   'organization.user_role_updated',
   'compliance.rule_set_created',
   'compliance.rule_set_active_updated',
@@ -689,6 +696,39 @@ export const AudioSttJobCreateInputSchema = z.object({
 
 export const AudioSttJobRunInputSchema = z.object({
   jobId: z.string().uuid(),
+});
+
+export const RecoveryStateSchema = z.enum([
+  'recording',
+  'recoverable',
+  'recovering',
+  'partial',
+]);
+
+export const RecoveryRetentionDaysSchema = z.union([z.literal(1), z.literal(7), z.literal(30)]);
+
+export const RecoverySummarySchema = z.object({
+  callId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  ownerUserId: z.string().uuid().nullable().default(null),
+  ownerMembershipId: z.string().uuid().nullable().default(null),
+  productId: ProductIdSchema,
+  source: MeetingSourceSchema,
+  state: RecoveryStateSchema,
+  startedAt: z.string(),
+  lastCheckpointAt: z.string(),
+  expiresAt: z.string(),
+  retentionDays: RecoveryRetentionDaysSchema,
+  expired: z.boolean(),
+  chunkCount: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+  availableSpeakers: z.array(SpeakerSchema),
+});
+
+export const RecoveryRetentionInputSchema = z.object({
+  callId: z.string().uuid(),
+  retentionDays: RecoveryRetentionDaysSchema,
 });
 
 export const FeedbackSchema = z.object({

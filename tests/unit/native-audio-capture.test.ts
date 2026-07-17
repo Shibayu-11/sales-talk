@@ -96,6 +96,67 @@ describe('NativeAudioCaptureService', () => {
     expect(module.stopCapture).toHaveBeenCalledWith('session-1');
   });
 
+  it('drains checkpoint sink on stop', async () => {
+    const module = new FakeNativeAudioCaptureModule();
+    const stopOrder: string[] = [];
+    module.stopCapture.mockImplementationOnce(async () => {
+      stopOrder.push('native');
+    });
+    const checkpointSink = {
+      write: vi.fn(async () => {}),
+      drain: vi.fn(async () => {
+        stopOrder.push('checkpoint');
+      }),
+    };
+    const service = new NativeAudioCaptureService({
+      module,
+      sendAudioChunk: vi.fn(async () => {}),
+      checkpointSink,
+    });
+
+    await service.start();
+    await service.stop();
+
+    expect(checkpointSink.drain).toHaveBeenCalledTimes(1);
+    expect(stopOrder).toEqual(['native', 'checkpoint']);
+  });
+
+  it('continues forwarding chunks to STT when checkpoint writing fails', async () => {
+    const module = new FakeNativeAudioCaptureModule();
+    const sendAudioChunk = vi.fn(async () => {});
+    const onCheckpointError = vi.fn();
+    const checkpointSink = {
+      write: vi.fn(async () => {
+        throw new Error('checkpoint failed');
+      }),
+      drain: vi.fn(async () => {}),
+    };
+    const service = new NativeAudioCaptureService({
+      module,
+      sendAudioChunk,
+      checkpointSink,
+      onCheckpointError,
+    });
+
+    await service.start();
+    module.audioCallback?.({
+      source: 'system',
+      data: Buffer.from([7, 8]),
+      timestamp: 700,
+      durationMs: 100,
+      sampleRate: 16_000,
+    });
+    await Promise.resolve();
+
+    expect(sendAudioChunk).toHaveBeenCalledWith({
+      speaker: 'counterpart',
+      data: 'Bwg=',
+      startMs: 700,
+      durationMs: 100,
+    });
+    expect(onCheckpointError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
   it('does not retain a partial native session when start fails', async () => {
     const module = new FakeNativeAudioCaptureModule();
     module.startCapture.mockRejectedValueOnce(new Error('native start failed'));

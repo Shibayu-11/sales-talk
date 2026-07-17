@@ -26,6 +26,8 @@ import type {
   CloudAudioUploadProcessResult,
   AudioSttJob,
   AudioDiagnosticSessionResult,
+  RecoveryRetentionDays,
+  RecoverySummary,
   TaskOwner,
   MeetingSource,
   ComplianceRule,
@@ -104,6 +106,12 @@ const IPC = {
     create: 'stt-jobs:create',
     run: 'stt-jobs:run',
     list: 'stt-jobs:list',
+  },
+  recovery: {
+    list: 'recovery:list',
+    recover: 'recovery:recover',
+    discard: 'recovery:discard',
+    setRetention: 'recovery:set-retention',
   },
   stt: {
     onInterim: 'stt:on-interim',
@@ -291,6 +299,17 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.sttJobs.run, { jobId }),
     list: (callId: string): Promise<AudioSttJob[]> =>
       ipcRenderer.invoke(IPC.sttJobs.list, callId),
+  },
+  recovery: {
+    list: (): Promise<RecoverySummary[]> => ipcRenderer.invoke(IPC.recovery.list),
+    recover: (callId: string): Promise<RecoverySummary | null> =>
+      ipcRenderer.invoke(IPC.recovery.recover, callId),
+    discard: (callId: string): Promise<void> => ipcRenderer.invoke(IPC.recovery.discard, callId),
+    setRetention: (
+      callId: string,
+      retentionDays: RecoveryRetentionDays,
+    ): Promise<RecoverySummary> =>
+      ipcRenderer.invoke(IPC.recovery.setRetention, { callId, retentionDays }),
   },
   stt: {
     onInterim: (cb) => {

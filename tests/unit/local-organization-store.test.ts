@@ -30,7 +30,11 @@ describe('LocalOrganizationStore', () => {
       expect(context).toMatchObject({
         organization: { id: scope.organizationId, type: 'agency' },
         membership: { role: 'agency_admin' },
-        permissions: expect.arrayContaining(['recording:start', 'organization:manage']),
+        permissions: expect.arrayContaining([
+          'recording:start',
+          'checkpoints:manage',
+          'organization:manage',
+        ]),
       });
       expect(users).toEqual(
         expect.arrayContaining([
@@ -43,6 +47,7 @@ describe('LocalOrganizationStore', () => {
       });
       const insurerUser = users.find((user) => user.role === 'auditor');
       expect(insurerUser).toBeDefined();
+      expect(insurerUser?.permissions).not.toContain('checkpoints:manage');
       await expect(
         store.updateUserRole(scope.tenantId, insurerUser?.membershipId ?? '', 'insurer_admin'),
       ).resolves.toMatchObject({

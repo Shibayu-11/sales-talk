@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { CallSessionSchema } from '@shared/schemas';
 import type {
@@ -11,6 +11,7 @@ import type {
   ProductId,
   RecordingConsent,
 } from '@shared/types';
+import { writeFileAtomic } from './atomic-file';
 
 const LocalCallDataSchema = z.object({
   calls: z.array(CallSessionSchema),
@@ -96,7 +97,10 @@ export class LocalCallStore {
       const raw = await readFile(this.filePath, 'utf8');
       this.cache = LocalCallDataSchema.parse(JSON.parse(raw));
       return this.cache;
-    } catch {
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
       this.cache = DEFAULT_CALL_DATA;
       await this.persist(this.cache);
       return this.cache;
@@ -104,8 +108,7 @@ export class LocalCallStore {
   }
 
   private async persist(data: LocalCallData): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await writeFileAtomic(this.filePath, `${JSON.stringify(data, null, 2)}\n`);
   }
 }
 
@@ -113,4 +116,8 @@ export const localCallStore = new LocalCallStore();
 
 function defaultUserDataPath(): string {
   return process.env.SALES_TALK_USER_DATA_PATH ?? app?.getPath?.('userData') ?? process.cwd();
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
