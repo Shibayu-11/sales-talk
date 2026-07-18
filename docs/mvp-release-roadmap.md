@@ -4,7 +4,7 @@
 目的: Mac 商談支援(Track A)を実商談で使える品質に仕上げ、β配布まで到達する週次実行計画。
 戦略の上位文書は [2軸開発計画](./two-track-development-plan.md)。本書はその Phase 5(Mac リアルタイム高度化)〜配布を実行レベルに分解したもの。
 
-## 0. 現在地(2026-07-15 実態調査)
+## 0. 現在地(2026-07-18 実態調査)
 
 Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の不確実性は、実Zoomでの品質検証(M1)と署名・公証を含むβ配布(M5)。
 
@@ -17,11 +17,12 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 | Electron Main(IPC / サービス層) | 完成 |
 | Renderer(Overlay + Kanary 流三分割 Call Library) | 完成 |
 | 議事録(LLM 生成 + [mm:ss] ジャンプリンク + ヒューリスティック縮退) | 完成 |
+| 再文字起こし(CAS job / Abort / provider切替 / revision履歴 / 議事録・レビュー再解析) | 完成。原本復帰・組織分離・画面E2E済み |
 | ナレッジ / RAG(ハイブリッド検索 + 3商材37件シード + 応答接地) | 完成(クラウド側は β へ) |
 | salestalk CLI(record/transcribe/minutes、JSON 出力) | 完成 |
 | Shortcuts / Spotlight 連携(salestalk:// URL スキーム) | 完成(実機での状態共有は要検証) |
 | 提案カードのナレッジ出典表示(根拠ナレッジ N件 + 関連度%) | 完成 |
-| テスト(unit 266 + E2E 7) | 全グリーン |
+| テスト(unit 353 + E2E 8) | 全グリーン |
 | 商談前音声 preflight | 完成。Go / Warning / Blocked、原因、復旧案、部分起動cleanup、型付きIPCを自動検証済み |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
 | W5: オンボーディング + electron-updater | 完成、unit / E2E済み。実配布環境での更新確認は未実施 |
@@ -42,6 +43,9 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 | 話者分離(自分 / 相手) | あり(チャンネル分離) | あり(system/mic別helper、自動E2E済み) |
 | 商談後の議事録自動要約(決定事項・宿題・懸念) | あり | あり(LLM + ヒューリスティック縮退、ワンクリック導線) |
 | 音声ファイル取込 → 文字起こし | あり | あり(local STT batch + fallback) |
+| ライブ字幕 | あり | あり(話者別 transcript + 商談支援 pipeline) |
+| オフライン翻訳 | あり | 未実装。保険営業コンプラMVPの対象外 |
+| 再処理・履歴切替 | 要約再生成あり | あり。原本を保持したまま provider 比較、旧版復帰、revision別議事録・レビュー |
 | CLI / Agent Skill 連携 | あり(v2.1) | あり(JSON出力CLI) |
 | Spotlight / Shortcuts 起動 | あり(v2.1.4) | あり(`salestalk://` URL scheme) |
 | 価格 | 無料 | — |
@@ -104,6 +108,8 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 - [x] 商談後の議事録ワンクリック生成(LLM 生成 + ヒューリスティック縮退、[mm:ss] タイムスタンプリンクで該当発話・コンプラ findings へジャンプ)
 - [x] Apple SpeechAnalyzer batch/import provider 本接続(Swift file-mode + TS batch provider、実機ビルド検証済み)
 - [x] 音声 import の既定 provider を local-first に変更(import-stt-provider-resolver)
+- [x] 再文字起こし lifecycle(CAS二重実行防止、provider Abort、キャンセル競合防止、再実行理由、工程目安)
+- [x] transcript revision(legacy原本移行、原本↔再処理版切替、revision別議事録・レビュー、組織分離、監査ログ、画面E2E)
 - [x] `salestalk` CLI(record start/stop・transcribe・minutes、JSON 出力で Agent Skill 連携可)— [使い方](./cli.md)
 - [x] macOS Shortcuts / Spotlight 連携(`salestalk://record/start?product=X` / `salestalk://record/stop` URL スキーム + `--cli` argv ルーティング)
 - [ ] 実機: import 音声を local SpeechAnalyzer batch だけで議事録まで通す検証

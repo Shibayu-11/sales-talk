@@ -60,9 +60,15 @@ export class AppleSpeechAnalyzerBatchTranscriber {
     return existsSync(this.helperPath);
   }
 
-  async transcribeFile(asset: AudioAsset): Promise<Transcript[]> {
+  async transcribeFile(
+    asset: AudioAsset,
+    signal?: AbortSignal | undefined,
+  ): Promise<Transcript[]> {
     if (!existsSync(this.helperPath)) {
       throw new Error(`Apple SpeechAnalyzer helper was not found: ${this.helperPath}`);
+    }
+    if (signal?.aborted) {
+      throw createAbortError();
     }
 
     const child: ChildProcessWithoutNullStreams = this.spawnProcess(this.helperPath, [], {
@@ -72,10 +78,17 @@ export class AppleSpeechAnalyzerBatchTranscriber {
     return new Promise<Transcript[]>((resolve, reject) => {
       const collectedTranscripts: Transcript[] = [];
       let settled = false;
+      const abort = (): void => {
+        if (!child.killed && child.exitCode === null) {
+          child.kill('SIGTERM');
+        }
+        settle(createAbortError());
+      };
 
       const settle = (err?: Error): void => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener('abort', abort);
         stdoutReader.close();
         if (!child.killed && child.exitCode === null) {
           child.kill('SIGTERM');
@@ -88,6 +101,7 @@ export class AppleSpeechAnalyzerBatchTranscriber {
       };
 
       const stdoutReader = createInterface({ input: child.stdout });
+      signal?.addEventListener('abort', abort, { once: true });
       stdoutReader.on('line', (line: string) => {
         const msg = parseBatchHelperMessage(line);
         if (!msg) return;
@@ -154,6 +168,12 @@ export class AppleSpeechAnalyzerBatchTranscriber {
       });
     });
   }
+}
+
+function createAbortError(): Error {
+  const error = new Error('STT transcription was aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
 function parseBatchHelperMessage(line: string): BatchHelperMessage | null {

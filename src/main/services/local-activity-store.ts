@@ -20,6 +20,7 @@ import { writeFileAtomic } from './atomic-file';
 
 const LocalActivityDataSchema = z.object({
   latestMeetingMinute: MeetingMinuteSchema.nullable(),
+  meetingMinutes: z.array(MeetingMinuteSchema).default([]),
   tasks: z.array(ActionItemTaskSchema),
   reviewTasks: z.array(ReviewTaskSchema).default([]),
   auditLogs: z.array(AuditLogEntrySchema).default([]),
@@ -27,6 +28,7 @@ const LocalActivityDataSchema = z.object({
 
 interface LocalActivityData {
   latestMeetingMinute: MeetingMinute | null;
+  meetingMinutes: MeetingMinute[];
   tasks: ActionItemTask[];
   reviewTasks: ReviewTask[];
   auditLogs: AuditLogEntry[];
@@ -34,6 +36,7 @@ interface LocalActivityData {
 
 const DEFAULT_ACTIVITY_DATA: LocalActivityData = {
   latestMeetingMinute: null,
+  meetingMinutes: [],
   tasks: [],
   reviewTasks: [],
   auditLogs: [],
@@ -49,11 +52,117 @@ export class LocalActivityStore {
     return (await this.get()).latestMeetingMinute;
   }
 
+  async getMeetingMinute(
+    callId: string,
+    transcriptRevisionId?: string | null | undefined,
+  ): Promise<MeetingMinute | null> {
+    const data = await this.get();
+    if (transcriptRevisionId === undefined) {
+      if (data.latestMeetingMinute?.callId === callId) {
+        return data.latestMeetingMinute;
+      }
+      return data.meetingMinutes.find((minute) => minute.callId === callId) ?? null;
+    }
+
+    return (
+      data.meetingMinutes.find(
+        (minute) =>
+          minute.callId === callId && minute.transcriptRevisionId === transcriptRevisionId,
+      ) ?? null
+    );
+  }
+
   async setLatestMeetingMinute(minute: MeetingMinute): Promise<MeetingMinute> {
     return this.mutate(async (data) => ({
-      next: { ...data, latestMeetingMinute: minute },
+      next: {
+        ...data,
+        latestMeetingMinute: minute,
+        meetingMinutes: upsertMeetingMinute(data.meetingMinutes, minute),
+      },
       result: minute,
     }));
+  }
+
+  async bindLegacyAnalysisToRevision(
+    callId: string,
+    transcriptRevisionId: string,
+  ): Promise<MeetingMinute | null> {
+    return this.mutate(async (data) => {
+      const existing = data.meetingMinutes.find(
+        (minute) =>
+          minute.callId === callId && minute.transcriptRevisionId === transcriptRevisionId,
+      );
+      if (existing) {
+        return { next: data, result: existing };
+      }
+
+      const legacyMinute = data.meetingMinutes.find(
+        (minute) => minute.callId === callId && minute.transcriptRevisionId === null,
+      );
+      if (!legacyMinute) {
+        return { next: data, result: null };
+      }
+
+      const migratedMinute: MeetingMinute = {
+        ...legacyMinute,
+        transcriptRevisionId,
+      };
+      const migratedReviewTasks = data.reviewTasks.map((task) =>
+        task.callId === callId && task.transcriptRevisionId === null
+          ? { ...task, transcriptRevisionId }
+          : task,
+      );
+      return {
+        next: {
+          ...data,
+          latestMeetingMinute:
+            data.latestMeetingMinute?.id === legacyMinute.id
+              ? migratedMinute
+              : data.latestMeetingMinute,
+          meetingMinutes: upsertMeetingMinute(
+            data.meetingMinutes.filter((minute) => minute.id !== legacyMinute.id),
+            migratedMinute,
+          ),
+          reviewTasks: migratedReviewTasks,
+        },
+        result: migratedMinute,
+      };
+    });
+  }
+
+  async setMeetingAnalysis(input: {
+    minute: MeetingMinute;
+    reviewTasks: ReviewTask[];
+    setAsLatest?: boolean | undefined;
+  }): Promise<{ minute: MeetingMinute; reviewTasks: ReviewTask[] }> {
+    return this.mutate(async (data) => {
+      const currentRevisionTasks = data.reviewTasks.filter((task) =>
+        matchesAnalysisRevision(task, input.minute.callId, input.minute.transcriptRevisionId),
+      );
+      const preservedStatusBySignature = new Map(
+        currentRevisionTasks.map((task) => [reviewTaskSignature(task), task.status]),
+      );
+      const reviewTasks = input.reviewTasks.map((task) => ({
+        ...task,
+        transcriptRevisionId: input.minute.transcriptRevisionId,
+        status: preservedStatusBySignature.get(reviewTaskSignature(task)) ?? 'open',
+      }));
+      const retainedReviewTasks = data.reviewTasks.filter(
+        (task) =>
+          !matchesAnalysisRevision(task, input.minute.callId, input.minute.transcriptRevisionId),
+      );
+
+      return {
+        next: {
+          ...data,
+          latestMeetingMinute:
+            input.setAsLatest === false ? data.latestMeetingMinute : input.minute,
+          meetingMinutes: upsertMeetingMinute(data.meetingMinutes, input.minute),
+          reviewTasks: [...reviewTasks, ...retainedReviewTasks],
+        },
+        result: { minute: input.minute, reviewTasks },
+      };
+    });
   }
 
   async listTasks(): Promise<ActionItemTask[]> {
@@ -94,9 +203,14 @@ export class LocalActivityStore {
       return [];
     }
 
+    const reviewTasks = tasks.map((task) => ({
+      ...task,
+      transcriptRevisionId: task.transcriptRevisionId ?? null,
+    }));
+
     return this.mutate(async (data) => ({
-      next: { ...data, reviewTasks: [...tasks, ...data.reviewTasks] },
-      result: tasks,
+      next: { ...data, reviewTasks: [...reviewTasks, ...data.reviewTasks] },
+      result: reviewTasks,
     }));
   }
 
@@ -177,11 +291,20 @@ export class LocalActivityStore {
     try {
       const raw = await readFile(this.filePath, 'utf8');
       const parsed = LocalActivityDataSchema.parse(JSON.parse(raw));
-      if (parsed.auditLogs.some((entry) => entry.hash === null)) {
-        parsed.auditLogs = signAuditLogEntries([...parsed.auditLogs].reverse(), null).reverse();
-        await this.persist(parsed);
+      const normalized = normalizeActivityData(parsed);
+      let activityData = normalized.data;
+      let shouldPersist = normalized.migrated;
+      if (activityData.auditLogs.some((entry) => entry.hash === null)) {
+        activityData = {
+          ...activityData,
+          auditLogs: signAuditLogEntries([...activityData.auditLogs].reverse(), null).reverse(),
+        };
+        shouldPersist = true;
       }
-      this.cache = parsed;
+      if (shouldPersist) {
+        await this.persist(activityData);
+      }
+      this.cache = activityData;
       return this.cache;
     } catch (error) {
       if (!isNodeError(error) || error.code !== 'ENOENT') {
@@ -227,10 +350,66 @@ function defaultUserDataPath(): string {
 function cloneDefaultActivityData(): LocalActivityData {
   return {
     latestMeetingMinute: DEFAULT_ACTIVITY_DATA.latestMeetingMinute,
+    meetingMinutes: [],
     tasks: [],
     reviewTasks: [],
     auditLogs: [],
   };
+}
+
+function normalizeActivityData(data: LocalActivityData): {
+  data: LocalActivityData;
+  migrated: boolean;
+} {
+  if (!data.latestMeetingMinute) {
+    return { data, migrated: false };
+  }
+
+  if (
+    data.meetingMinutes.some((minute) => isSameMeetingMinute(minute, data.latestMeetingMinute!))
+  ) {
+    return { data, migrated: false };
+  }
+
+  return {
+    data: {
+      ...data,
+      meetingMinutes: upsertMeetingMinute(data.meetingMinutes, data.latestMeetingMinute),
+    },
+    migrated: true,
+  };
+}
+
+function upsertMeetingMinute(
+  meetingMinutes: MeetingMinute[],
+  minute: MeetingMinute,
+): MeetingMinute[] {
+  return [
+    minute,
+    ...meetingMinutes.filter((candidate) => !isSameMeetingMinute(candidate, minute)),
+  ];
+}
+
+function isSameMeetingMinute(candidate: MeetingMinute, minute: MeetingMinute): boolean {
+  return (
+    candidate.id === minute.id ||
+    (candidate.callId === minute.callId &&
+      candidate.transcriptRevisionId === minute.transcriptRevisionId)
+  );
+}
+
+function matchesAnalysisRevision(
+  task: ReviewTask,
+  callId: string,
+  transcriptRevisionId: string | null,
+): boolean {
+  return task.callId === callId && task.transcriptRevisionId === transcriptRevisionId;
+}
+
+function reviewTaskSignature(
+  task: Pick<ReviewTask, 'quotedText' | 'reason' | 'recommendedAction'>,
+): string {
+  return [task.quotedText, task.reason, task.recommendedAction].join('\u0000');
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

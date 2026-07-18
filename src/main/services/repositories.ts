@@ -20,6 +20,7 @@ import type {
   OrganizationUser,
   ReviewTask,
   Transcript,
+  TranscriptRevision,
   TranscriptSegment,
 } from '@shared/types';
 import type {
@@ -69,7 +70,21 @@ export interface OrganizationRepository {
 
 export interface TranscriptRepository {
   appendTranscript(callId: string, transcript: Transcript): Promise<TranscriptSegment>;
-  listTranscripts(callId: string): Promise<TranscriptSegment[]>;
+  listTranscripts(callId: string, revisionId?: string | undefined): Promise<TranscriptSegment[]>;
+  commitRevision(input: {
+    callId: string;
+    sttJobId: string;
+    audioAssetId: string;
+    provider: TranscriptRevision['provider'];
+    reason: string;
+    transcripts: Transcript[];
+  }): Promise<TranscriptRevision>;
+  listRevisions(callId: string): Promise<TranscriptRevision[]>;
+  activateRevision(
+    callId: string,
+    revisionId: string,
+    expectedActiveRevisionId?: string | null | undefined,
+  ): Promise<TranscriptRevision>;
 }
 
 export interface AudioAssetRepository {
@@ -83,19 +98,48 @@ export interface AudioSttJobRepository {
     callId: string;
     audioAssetId: string;
     provider?: AudioSttJob['provider'] | undefined;
+    attempt?: number | undefined;
+    retryReason?: string | null | undefined;
   }): Promise<AudioSttJob>;
   listJobs(callId: string): Promise<AudioSttJob[]>;
   getJob(id: string): Promise<AudioSttJob | null>;
-  updateJobStatus(
-    id: string,
-    status: AudioSttJob['status'],
-    errorMessage?: string | null,
-  ): Promise<AudioSttJob>;
+  claimQueued(id: string, runToken: string): Promise<AudioSttJob>;
+  updateProgress(id: string, runToken: string, progressPercent: number): Promise<AudioSttJob>;
+  completeJob(input: {
+    id: string;
+    runToken: string;
+    transcriptRevisionId: string;
+  }): Promise<AudioSttJob>;
+  failJob(input: {
+    id: string;
+    runToken: string;
+    errorMessage: string;
+    transcriptRevisionId?: string | undefined;
+  }): Promise<AudioSttJob>;
+  requestCancel(id: string): Promise<AudioSttJob>;
+  retryJob(input: {
+    jobId: string;
+    reason: string;
+    provider?: AudioSttJob['provider'] | undefined;
+  }): Promise<AudioSttJob>;
 }
 
 export interface MinutesRepository {
   getLatestMeetingMinute(): Promise<MeetingMinute | null>;
+  getMeetingMinute(
+    callId: string,
+    transcriptRevisionId?: string | null | undefined,
+  ): Promise<MeetingMinute | null>;
+  bindLegacyAnalysisToRevision(
+    callId: string,
+    transcriptRevisionId: string,
+  ): Promise<MeetingMinute | null>;
   setLatestMeetingMinute(minute: MeetingMinute): Promise<MeetingMinute>;
+  setMeetingAnalysis(input: {
+    minute: MeetingMinute;
+    reviewTasks: ReviewTask[];
+    setAsLatest?: boolean | undefined;
+  }): Promise<{ minute: MeetingMinute; reviewTasks: ReviewTask[] }>;
 }
 
 export interface ActionItemTaskRepository {

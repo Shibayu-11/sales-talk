@@ -15,6 +15,7 @@ import type {
   Transcript,
   ConnectionState,
   MeetingMinute,
+  MinutesGetInput,
   ActionItemTask,
   AuditLogEntry,
   AuditExportFormat,
@@ -43,6 +44,8 @@ import type {
   OrganizationRole,
   OrganizationUser,
   TranscriptSegment,
+  TranscriptRevision,
+  AudioSttProvider,
   StartRecordingSessionResult,
 } from '@shared/types';
 
@@ -89,6 +92,8 @@ const IPC = {
   },
   transcripts: {
     list: 'transcripts:list',
+    listRevisions: 'transcripts:list-revisions',
+    activateRevision: 'transcripts:activate-revision',
   },
   audio: {
     status: 'audio:status',
@@ -105,6 +110,8 @@ const IPC = {
   sttJobs: {
     create: 'stt-jobs:create',
     run: 'stt-jobs:run',
+    retry: 'stt-jobs:retry',
+    cancel: 'stt-jobs:cancel',
     list: 'stt-jobs:list',
   },
   recovery: {
@@ -249,6 +256,10 @@ const api: RendererApi = {
   transcripts: {
     list: (callId: string): Promise<TranscriptSegment[]> =>
       ipcRenderer.invoke(IPC.transcripts.list, callId),
+    listRevisions: (callId: string): Promise<TranscriptRevision[]> =>
+      ipcRenderer.invoke(IPC.transcripts.listRevisions, callId),
+    activateRevision: (callId: string, revisionId: string): Promise<TranscriptRevision> =>
+      ipcRenderer.invoke(IPC.transcripts.activateRevision, { callId, revisionId }),
   },
   audio: {
     getStatus: () => ipcRenderer.invoke(IPC.audio.status),
@@ -297,6 +308,14 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.sttJobs.create, { audioAssetId }),
     run: (jobId: string): Promise<AudioSttJob> =>
       ipcRenderer.invoke(IPC.sttJobs.run, { jobId }),
+    retry: (
+      jobId: string,
+      reason: string,
+      provider?: AudioSttProvider,
+    ): Promise<AudioSttJob> =>
+      ipcRenderer.invoke(IPC.sttJobs.retry, { jobId, reason, provider }),
+    cancel: (jobId: string): Promise<AudioSttJob> =>
+      ipcRenderer.invoke(IPC.sttJobs.cancel, { jobId }),
     list: (callId: string): Promise<AudioSttJob[]> =>
       ipcRenderer.invoke(IPC.sttJobs.list, callId),
   },
@@ -374,9 +393,17 @@ const api: RendererApi = {
       transcripts: Transcript[],
       source: MeetingSource = 'manual_transcript',
       callId?: string,
+      transcriptRevisionId?: string | null,
     ): Promise<MeetingMinute> =>
-      ipcRenderer.invoke(IPC.minutes.generate, { productId, transcripts, source, callId }),
-    get: (): Promise<MeetingMinute | null> => ipcRenderer.invoke(IPC.minutes.get),
+      ipcRenderer.invoke(IPC.minutes.generate, {
+        productId,
+        transcripts,
+        source,
+        callId,
+        transcriptRevisionId,
+      }),
+    get: (input?: MinutesGetInput): Promise<MeetingMinute | null> =>
+      ipcRenderer.invoke(IPC.minutes.get, input),
   },
   tasks: {
     list: (): Promise<ActionItemTask[]> => ipcRenderer.invoke(IPC.tasks.list),

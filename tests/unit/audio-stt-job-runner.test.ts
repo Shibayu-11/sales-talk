@@ -6,16 +6,17 @@ import type {
   AudioSttJobRepository,
   TranscriptRepository,
 } from '../../src/main/services/repositories';
-import type { AudioAsset, AudioSttJob, Transcript } from '../../src/shared/types';
+import type { AudioAsset, AudioSttJob, Transcript, TranscriptRevision } from '../../src/shared/types';
 import { AppleSpeechAnalyzerBatchTranscriber } from '../../src/main/services/apple-speech-analyzer-batch';
 
 const callId = 'ce710872-1efd-4965-8ca4-e4d13f810250';
 const audioAssetId = 'e3aa5d3e-6f23-4f3c-bfc6-b0453eaa4ff3';
 const jobId = '442db17c-6a3c-4e7e-856b-b11a4c1eab24';
+const revisionId = '19050688-f1c7-4f98-ae3d-a539947cf65e';
+const originalRevisionId = '29050688-f1c7-4f98-ae3d-a539947cf65e';
 
 describe('AudioSttJobRunner', () => {
-  it('marks a job completed and persists transcripts', async () => {
-    const appendedTranscripts: Transcript[] = [];
+  it('marks a queued job completed after committing and activating a revision', async () => {
     const cleanup = vi.fn(async () => undefined);
     const transcripts: Transcript[] = [
       {
@@ -27,9 +28,6 @@ describe('AudioSttJobRunner', () => {
       },
     ];
     const repositories = createRepositories({
-      appendTranscript: async (_callId, transcript) => {
-        appendedTranscripts.push(transcript);
-      },
       materializedPath: '/tmp/readable-sample.m4a',
       cleanup,
     });
@@ -37,28 +35,41 @@ describe('AudioSttJobRunner', () => {
       expect(asset.storedPath).toBe('/tmp/readable-sample.m4a');
       return transcripts;
     });
-    const onCompleted = vi.fn(async () => undefined);
+    const onActivated = vi.fn(async () => undefined);
     const runner = new AudioSttJobRunner({
       repositories,
       transcribeAudio,
-      onCompleted,
+      onActivated,
     });
 
-    await expect(runner.run(jobId)).resolves.toMatchObject({ id: jobId, status: 'completed' });
-    expect(appendedTranscripts).toMatchObject([
-      {
-        text: 'この商品は絶対儲かります。',
-        isFinal: true,
-      },
-    ]);
-    expect(onCompleted).toHaveBeenCalledWith(
-      expect.objectContaining({ id: jobId, status: 'completed' }),
+    await expect(runner.run(jobId)).resolves.toMatchObject({
+      id: jobId,
+      status: 'completed',
+      progressPercent: 100,
+      transcriptRevisionId: revisionId,
+    });
+    expect(repositories.transcripts.commitRevision).toHaveBeenCalledWith({
+      callId,
+      sttJobId: jobId,
+      audioAssetId,
+      provider: 'deepgram',
+      reason: 'initial_transcription',
       transcripts,
+    });
+    expect(repositories.transcripts.activateRevision).toHaveBeenCalledWith(
+      callId,
+      revisionId,
+      originalRevisionId,
+    );
+    expect(onActivated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: jobId, status: 'running', progressPercent: 90 }),
+      transcripts,
+      expect.objectContaining({ id: revisionId }),
     );
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it('marks a job failed when transcription fails', async () => {
+  it('marks a job failed when transcription fails unless it was cancelled', async () => {
     const cleanup = vi.fn(async () => undefined);
     const repositories = createRepositories({ cleanup });
     const runner = new AudioSttJobRunner({
@@ -75,10 +86,115 @@ describe('AudioSttJobRunner', () => {
     });
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
+
+  it('rolls back activation and fails the job when the activation callback fails', async () => {
+    const repositories = createRepositories();
+    const onActivated = vi.fn(async () => {
+      throw new Error('activation audit failed');
+    });
+    const runner = new AudioSttJobRunner({
+      repositories,
+      transcribeAudio: vi.fn(async (): Promise<Transcript[]> => [
+        finalTranscript('callback boundary'),
+      ]),
+      onActivated,
+    });
+
+    await expect(runner.run(jobId)).resolves.toMatchObject({
+      id: jobId,
+      status: 'failed',
+      transcriptRevisionId: revisionId,
+      errorMessage: 'activation audit failed',
+    });
+    expect(onActivated).toHaveBeenCalledTimes(1);
+    expect(repositories.transcripts.activateRevision).toHaveBeenNthCalledWith(
+      2,
+      callId,
+      originalRevisionId,
+      revisionId,
+    );
+    expect(repositories.sttJobs.failJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns cancelled jobs idempotently without re-running them', async () => {
+    const repositories = createRepositories({
+      job: { status: 'cancelled', completedAt: '2026-06-01T00:01:00.000Z' },
+    });
+    const transcribeAudio = vi.fn(async () => []);
+    const runner = new AudioSttJobRunner({ repositories, transcribeAudio });
+
+    await expect(runner.run(jobId)).resolves.toMatchObject({ id: jobId, status: 'cancelled' });
+    expect(transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-queued non-cancelled jobs so completed jobs cannot be re-run', async () => {
+    const repositories = createRepositories({
+      job: { status: 'completed', completedAt: '2026-06-01T00:01:00.000Z' },
+    });
+    const runner = new AudioSttJobRunner({ repositories });
+
+    await expect(runner.run(jobId)).rejects.toThrow('STT job runner only accepts queued jobs');
+    expect(repositories.transcripts.commitRevision).not.toHaveBeenCalled();
+  });
+
+  it('does not commit transcripts when cancellation wins after transcription', async () => {
+    const repositories = createRepositories({ cancelOnProgressPercent: 70 });
+    const runner = new AudioSttJobRunner({
+      repositories,
+      transcribeAudio: vi.fn(async (): Promise<Transcript[]> => [finalTranscript('cancel me')]),
+    });
+
+    await expect(runner.run(jobId)).resolves.toMatchObject({ id: jobId, status: 'cancelled' });
+    expect(repositories.transcripts.commitRevision).not.toHaveBeenCalled();
+    expect(repositories.transcripts.activateRevision).not.toHaveBeenCalled();
+  });
+
+  it('never activates a revision if cancellation wins before activation', async () => {
+    const repositories = createRepositories({ cancelOnProgressPercent: 90 });
+    const runner = new AudioSttJobRunner({
+      repositories,
+      transcribeAudio: vi.fn(async (): Promise<Transcript[]> => [
+        finalTranscript('committed but cancelled'),
+      ]),
+    });
+
+    await expect(runner.run(jobId)).resolves.toMatchObject({ id: jobId, status: 'cancelled' });
+    expect(repositories.transcripts.commitRevision).toHaveBeenCalledTimes(1);
+    expect(repositories.transcripts.activateRevision).not.toHaveBeenCalled();
+  });
+
+  it('cancel requests cancellation and aborts the active transcription signal', async () => {
+    let capturedSignal: AbortSignal | null = null;
+    const repositories = createRepositories();
+    const runner = new AudioSttJobRunner({
+      repositories,
+      transcribeAudio: vi.fn(
+        async (_asset: AudioAsset, signal?: AbortSignal | undefined) =>
+          new Promise<Transcript[]>((_resolve, reject) => {
+            capturedSignal = signal ?? null;
+            signal?.addEventListener(
+              'abort',
+              () => {
+                const error = new Error('aborted');
+                error.name = 'AbortError';
+                reject(error);
+              },
+              { once: true },
+            );
+          }),
+      ),
+    });
+
+    const running = runner.run(jobId);
+    await vi.waitUntil(() => capturedSignal !== null);
+    await expect(runner.cancel(jobId)).resolves.toMatchObject({ status: 'cancelled' });
+    expect((capturedSignal as AbortSignal | null)?.aborted).toBe(true);
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' });
+  });
 });
 
 describe('AudioSttJobRunner — import provider resolution', () => {
-  it('uses Apple batch transcriber when local_first and helper is available', async () => {
+  it('uses Apple batch transcriber when the recorded job provider is Apple', async () => {
     const transcript: Transcript = {
       speaker: 'counterpart',
       text: '価格が高い',
@@ -91,10 +207,10 @@ describe('AudioSttJobRunner — import provider resolution', () => {
       transcribeFile: vi.fn(async () => [transcript]),
     } as unknown as AppleSpeechAnalyzerBatchTranscriber;
 
-    const repositories = createRepositories();
+    const repositories = createRepositories({ job: { provider: 'apple_speech_analyzer' } });
     const runner = new AudioSttJobRunner({
       repositories,
-      importProviderMode: 'local_first',
+      importProviderMode: 'deepgram_only',
       importResolverOptions: {
         createAppleBatchTranscriber: () => appleTranscriber,
       },
@@ -104,10 +220,11 @@ describe('AudioSttJobRunner — import provider resolution', () => {
     expect(result.status).toBe('completed');
     expect(appleTranscriber.transcribeFile).toHaveBeenCalledWith(
       expect.objectContaining({ storedPath: '/tmp/materialized-sample.m4a' }),
+      expect.any(AbortSignal),
     );
   });
 
-  it('falls back to Deepgram when local_first and helper is unavailable', async () => {
+  it('uses recorded Deepgram provider even when local Apple helper is available', async () => {
     const transcript: Transcript = {
       speaker: 'counterpart',
       text: '考えます',
@@ -116,12 +233,12 @@ describe('AudioSttJobRunner — import provider resolution', () => {
       endMs: 200,
     };
     const appleTranscriber = {
-      isAvailable: vi.fn(() => false),
+      isAvailable: vi.fn(() => true),
       transcribeFile: vi.fn(),
     } as unknown as AppleSpeechAnalyzerBatchTranscriber;
     const deepgramTranscribe = vi.fn(async () => [transcript]);
 
-    const repositories = createRepositories();
+    const repositories = createRepositories({ job: { provider: 'deepgram' } });
     const runner = new AudioSttJobRunner({
       repositories,
       importProviderMode: 'local_first',
@@ -169,7 +286,7 @@ describe('AudioSttJobRunner — import provider resolution', () => {
       transcribeFile: vi.fn(),
     } as unknown as AppleSpeechAnalyzerBatchTranscriber;
 
-    const repositories = createRepositories();
+    const repositories = createRepositories({ job: { provider: 'apple_speech_analyzer' } });
     const runner = new AudioSttJobRunner({
       repositories,
       transcribeAudio: vi.fn(async () => [injectableTranscript]),
@@ -180,25 +297,33 @@ describe('AudioSttJobRunner — import provider resolution', () => {
     });
 
     await runner.run(jobId);
-    // Apple transcriber should NOT be called — injectable takes precedence
     expect(appleTranscriber.transcribeFile).not.toHaveBeenCalled();
   });
 });
 
 function createRepositories(options: {
-  appendTranscript?: ((callId: string, transcript: Transcript) => Promise<void>) | undefined;
+  job?: Partial<AudioSttJob> | undefined;
   materializedPath?: string | undefined;
   cleanup?: (() => Promise<void>) | undefined;
+  cancelOnProgressPercent?: number | undefined;
 } = {}): AppRepositories {
-  const job: AudioSttJob = {
+  let job: AudioSttJob = {
     id: jobId,
     callId,
     audioAssetId,
     provider: 'deepgram',
     status: 'queued',
+    runToken: null,
+    progressPercent: 0,
+    attempt: 1,
+    retryReason: null,
+    transcriptRevisionId: null,
     errorMessage: null,
+    startedAt: null,
+    completedAt: null,
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z',
+    ...options.job,
   };
   const asset: AudioAsset = {
     id: audioAssetId,
@@ -210,16 +335,111 @@ function createRepositories(options: {
     sizeBytes: 10,
     createdAt: '2026-06-01T00:00:00.000Z',
   };
-
+  const revision: TranscriptRevision = {
+    id: revisionId,
+    callId,
+    audioAssetId,
+    origin: 'audio_import',
+    parentRevisionId: originalRevisionId,
+    sttJobId: jobId,
+    provider: 'deepgram',
+    revisionNumber: 1,
+    reason: 'initial_transcription',
+    segmentCount: 1,
+    active: false,
+    createdAt: '2026-06-01T00:00:30.000Z',
+  };
   const sttJobs: AudioSttJobRepository = {
     createJob: vi.fn(async () => job),
     listJobs: vi.fn(async () => [job]),
     getJob: vi.fn(async () => job),
-    updateJobStatus: vi.fn(async (_id, status, errorMessage = null) => ({
-      ...job,
-      status,
-      errorMessage,
-    })),
+    claimQueued: vi.fn(async (_id, runToken) => {
+      if (job.status === 'cancelled') {
+        return job;
+      }
+      if (job.status !== 'queued') {
+        throw new Error('STT job runner only accepts queued jobs');
+      }
+      job = {
+        ...job,
+        status: 'running',
+        runToken,
+        progressPercent: 10,
+        errorMessage: null,
+        startedAt: job.startedAt ?? '2026-06-01T00:00:05.000Z',
+        completedAt: null,
+      };
+      return job;
+    }),
+    updateProgress: vi.fn(async (_id, runToken, progressPercent) => {
+      if (job.status === 'cancelled') {
+        return job;
+      }
+      if (options.cancelOnProgressPercent === progressPercent) {
+        job = {
+          ...job,
+          status: 'cancelled',
+          runToken: null,
+          completedAt: '2026-06-01T00:01:00.000Z',
+        };
+        return job;
+      }
+      if (job.status !== 'running' || job.runToken !== runToken) {
+        throw new Error('STT job run token is no longer active');
+      }
+      job = { ...job, progressPercent };
+      return job;
+    }),
+    completeJob: vi.fn(async ({ runToken, transcriptRevisionId }) => {
+      if (job.status === 'cancelled') {
+        return job;
+      }
+      if (job.status !== 'running' || job.runToken !== runToken) {
+        throw new Error('STT job run token is no longer active');
+      }
+      job = {
+        ...job,
+        status: 'completed',
+        runToken: null,
+        progressPercent: 100,
+        transcriptRevisionId,
+        completedAt: '2026-06-01T00:01:00.000Z',
+      };
+      return job;
+    }),
+    failJob: vi.fn(async ({ runToken, errorMessage, transcriptRevisionId }) => {
+      if (job.status === 'cancelled') {
+        return job;
+      }
+      if (job.status !== 'running' || job.runToken !== runToken) {
+        throw new Error('STT job run token is no longer active');
+      }
+      job = {
+        ...job,
+        status: 'failed',
+        runToken: null,
+        errorMessage,
+        transcriptRevisionId: transcriptRevisionId ?? job.transcriptRevisionId,
+        completedAt: '2026-06-01T00:01:00.000Z',
+      };
+      return job;
+    }),
+    requestCancel: vi.fn(async () => {
+      if (job.status === 'cancelled') {
+        return job;
+      }
+      if (job.status !== 'queued' && job.status !== 'running') {
+        throw new Error('STT job cancellation requires a queued or running job');
+      }
+      job = {
+        ...job,
+        status: 'cancelled',
+        runToken: null,
+        completedAt: '2026-06-01T00:01:00.000Z',
+      };
+      return job;
+    }),
+    retryJob: vi.fn(async () => job),
   };
   const audioAssets: AudioAssetRepository = {
     importAudioFile: vi.fn(async () => asset),
@@ -231,20 +451,22 @@ function createRepositories(options: {
     })),
   };
   const transcripts: TranscriptRepository = {
-    appendTranscript: vi.fn(async (targetCallId, transcript) => {
-      await options.appendTranscript?.(targetCallId, transcript);
-      return {
-        id: '19050688-f1c7-4f98-ae3d-a539947cf65e',
-        callId: targetCallId,
-        speaker: transcript.speaker,
-        text: transcript.text,
-        isFinal: transcript.isFinal,
-        startMs: transcript.startMs,
-        endMs: transcript.isFinal ? transcript.endMs : null,
-        createdAt: '2026-06-01T00:00:00.000Z',
-      };
-    }),
+    appendTranscript: vi.fn(async (targetCallId, transcript) => ({
+      id: '39050688-f1c7-4f98-ae3d-a539947cf65e',
+      callId: targetCallId,
+      revisionId: null,
+      sourceJobId: null,
+      speaker: transcript.speaker,
+      text: transcript.text,
+      isFinal: transcript.isFinal,
+      startMs: transcript.startMs,
+      endMs: transcript.isFinal ? transcript.endMs : null,
+      createdAt: '2026-06-01T00:00:00.000Z',
+    })),
     listTranscripts: vi.fn(async () => []),
+    commitRevision: vi.fn(async () => revision),
+    listRevisions: vi.fn(async () => [revision]),
+    activateRevision: vi.fn(async () => ({ ...revision, active: true })),
   };
 
   return {
@@ -281,7 +503,10 @@ function createRepositories(options: {
     },
     minutes: {
       getLatestMeetingMinute: vi.fn(),
+      getMeetingMinute: vi.fn(),
+      bindLegacyAnalysisToRevision: vi.fn(),
       setLatestMeetingMinute: vi.fn(),
+      setMeetingAnalysis: vi.fn(),
     },
     tasks: {
       listTasks: vi.fn(),
@@ -315,5 +540,15 @@ function createRepositories(options: {
       updateRule: vi.fn(),
       deleteRule: vi.fn(),
     },
+  };
+}
+
+function finalTranscript(text: string): Transcript {
+  return {
+    speaker: 'counterpart',
+    text,
+    isFinal: true,
+    startMs: 0,
+    endMs: 100,
   };
 }

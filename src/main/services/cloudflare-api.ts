@@ -697,6 +697,16 @@ function readCloudSttJob(value: unknown): AudioSttJob | null {
   const createdAt = readString(value.createdAt) ?? readString(value.created_at);
   const updatedAt = readString(value.updatedAt) ?? readString(value.updated_at);
   const errorMessage = readNullableString(value.errorMessage ?? value.error_message);
+  const progressPercent =
+    typeof value.progressPercent === 'number'
+      ? value.progressPercent
+      : status === 'completed'
+        ? 100
+        : status === 'running'
+          ? 10
+          : 0;
+  const attempt =
+    typeof value.attempt === 'number' && Number.isInteger(value.attempt) ? value.attempt : 1;
   if (
     !id ||
     !callId ||
@@ -714,7 +724,16 @@ function readCloudSttJob(value: unknown): AudioSttJob | null {
     audioAssetId,
     provider,
     status,
+    runToken: null,
+    progressPercent,
+    attempt,
+    retryReason: readNullableString(value.retryReason ?? value.retry_reason),
+    transcriptRevisionId: readNullableString(
+      value.transcriptRevisionId ?? value.transcript_revision_id,
+    ),
     errorMessage,
+    startedAt: readNullableString(value.startedAt ?? value.started_at),
+    completedAt: readNullableString(value.completedAt ?? value.completed_at),
     createdAt,
     updatedAt,
   };
@@ -750,7 +769,11 @@ function readNullableString(value: unknown): string | null {
 }
 
 function readAudioSttJobStatus(value: unknown): AudioSttJobStatus | null {
-  return value === 'queued' || value === 'running' || value === 'completed' || value === 'failed'
+  return value === 'queued' ||
+    value === 'running' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'cancelled'
     ? value
     : null;
 }

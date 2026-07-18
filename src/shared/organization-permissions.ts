@@ -4,6 +4,7 @@ const ROLE_PERMISSIONS: Record<OrganizationRole, OrganizationPermission[]> = {
   insurer_admin: [
     'recording:start',
     'calls:read',
+    'transcripts:manage',
     'checkpoints:manage',
     'reviews:manage',
     'rules:manage',
@@ -13,14 +14,21 @@ const ROLE_PERMISSIONS: Record<OrganizationRole, OrganizationPermission[]> = {
   agency_admin: [
     'recording:start',
     'calls:read',
+    'transcripts:manage',
     'checkpoints:manage',
     'reviews:manage',
     'rules:manage',
     'rules:approve',
     'organization:manage',
   ],
-  manager: ['recording:start', 'calls:read', 'checkpoints:manage', 'reviews:manage'],
-  agent: ['recording:start', 'calls:read', 'checkpoints:manage'],
+  manager: [
+    'recording:start',
+    'calls:read',
+    'transcripts:manage',
+    'checkpoints:manage',
+    'reviews:manage',
+  ],
+  agent: ['recording:start', 'calls:read', 'transcripts:manage', 'checkpoints:manage'],
   auditor: ['calls:read'],
 };
 

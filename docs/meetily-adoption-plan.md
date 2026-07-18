@@ -1,6 +1,7 @@
 # Meetily 採用計画
 
 作成日: 2026-07-15
+最終更新: 2026-07-18
 対象: [Zackriya-Solutions/meetily](https://github.com/Zackriya-Solutions/meetily)
 参照時点: `0281737d87d26352fb0adc78c8c0975f691b23d1`
 
@@ -95,10 +96,12 @@ Phase 1 は疎通診断であり、音質や文字起こし精度を保証する
 
 ### Phase 3: 再文字起こし
 
-- 既存 STT job に進捗、キャンセル、再実行理由を追加
-- SpeechAnalyzer / Deepgram の比較再処理
-- transcript revision を保持し、監査上の原本を上書きしない
-- 再処理後にコンプラ判定と議事録を再生成
+- [x] 既存 STT job に工程目安、Abortキャンセル、再実行理由、stale-running復旧を追加
+- [x] SpeechAnalyzer / Deepgram の provider 固定比較再処理
+- [x] transcript revision を保持し、legacy原本を明示revisionへ移行して上書きしない
+- [x] CAS run token で二重実行・cancel/complete競合を防止
+- [x] revision別にコンプラ判定・議事録・レビューを保存し、旧版復帰時も整合させる
+- [x] 会社・テナント境界、ユーザー操作監査、Call Libraryの切替E2Eを追加
 
 ### Phase 4: ローカル fallback とテンプレート
 
@@ -133,7 +136,7 @@ Meetily 本体は参照時点で MIT License。商用利用、改変、再配布
 1. 実 Zoom E2E で商談前チェックの Go / Warning / Blocked と復旧案を実測
 2. 30 分商談で片側停止、Zoom 再起動、権限剥奪時の挙動を記録
 3. 実 Zoom 中断ケースで checkpoint 復旧の WAV 登録と議事録再生成の運用手順を確認
-4. 復旧後の再文字起こし UX と transcript revision の扱いを確定
+4. 実音声で SpeechAnalyzer / Deepgram の同一音源比較と revision 切替を確認
 5. 長時間録音で checkpoint サイズ、復旧時間、保持期限 UI の実測値を記録
 
 この順序により、新機能を増やす前に「実商談で動かないとき、何が悪いか分かる」状態を作る。

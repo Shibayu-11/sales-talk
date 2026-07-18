@@ -100,6 +100,8 @@ export const IPC = {
   // Transcript segments
   transcripts: {
     list: 'transcripts:list',
+    listRevisions: 'transcripts:list-revisions',
+    activateRevision: 'transcripts:activate-revision',
   },
 
   // Uploaded / imported audio assets
@@ -114,6 +116,8 @@ export const IPC = {
   sttJobs: {
     create: 'stt-jobs:create',
     run: 'stt-jobs:run',
+    retry: 'stt-jobs:retry',
+    cancel: 'stt-jobs:cancel',
     list: 'stt-jobs:list',
   },
 

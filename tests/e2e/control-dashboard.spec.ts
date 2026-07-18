@@ -234,6 +234,37 @@ test('dev transcript injection drives the mock pipeline without API keys', async
   );
 });
 
+test('call library switches transcript revisions with aligned minutes and audit history', async () => {
+  const seeded = createRevisionHistorySeed();
+  await withSalesTalkApp(
+    async ({ controlWindow }) => {
+      await controlWindow.getByRole('button', { name: '商談履歴' }).click();
+      const revisionSelect = controlWindow.getByLabel('文字起こし履歴');
+      await expect(revisionSelect).toHaveValue(seeded.originalRevisionId);
+      await expect(controlWindow.getByText('オリジナルの提案です。', { exact: true })).toBeVisible();
+
+      await revisionSelect.selectOption(seeded.reprocessedRevisionId);
+      await expect(revisionSelect).toHaveValue(seeded.reprocessedRevisionId);
+      await expect(controlWindow.getByText('修正版の提案です。', { exact: true }).first()).toBeVisible();
+      await expect(controlWindow.getByText(/development mock 議事録/)).toBeVisible();
+
+      await controlWindow.getByText(/音声ファイル \/ STT ジョブ/).click();
+      await expect(controlWindow.getByText('工程目安 100%')).toBeVisible();
+      await expect(controlWindow.getByRole('button', { name: '再文字起こし' })).toBeVisible();
+
+      await controlWindow.getByRole('button', { name: '監査ログ' }).click();
+      await expect(
+        controlWindow.getByRole('listitem').filter({ hasText: 'transcript.revision_activated' }),
+      ).toBeVisible();
+      await expect(controlWindow.getByText(/actor: Agency Admin/)).toBeVisible();
+    },
+    {
+      env: { SALES_TALK_MOCK_LLM: '1' },
+      seedUserData: async (userDataPath) => seedRevisionHistory(userDataPath, seeded),
+    },
+  );
+});
+
 test('audio diagnostic channel-separated local-first SpeechAnalyzer routes self and counterpart independently', async () => {
   const fakeNative = await createFakeNativeAudioModule();
   const fakeSpeech = await createFakeSpeechAnalyzerHelper();
@@ -364,7 +395,11 @@ test('audio diagnostic channel-separated local-first SpeechAnalyzer routes self 
 
 async function withSalesTalkApp(
   run: (context: { controlWindow: Page; electronApp: ElectronApplication }) => Promise<void>,
-  options: { env?: Record<string, string>; completeOnboarding?: boolean } = {},
+  options: {
+    env?: Record<string, string>;
+    completeOnboarding?: boolean;
+    seedUserData?: ((userDataPath: string) => Promise<void>) | undefined;
+  } = {},
 ): Promise<void> {
   const userDataPath = await mkdtemp(join(tmpdir(), 'sales-talk-e2e-'));
   // Existing tests target the main UI, not first-run onboarding; pre-seed settings
@@ -372,6 +407,7 @@ async function withSalesTalkApp(
   if (options.completeOnboarding !== false) {
     await seedOnboardedSettings(userDataPath);
   }
+  await options.seedUserData?.(userDataPath);
   const electronApp = await electron.launch({
     args: ['.'],
     cwd: process.cwd(),
@@ -576,4 +612,142 @@ async function seedOnboardedSettings(userDataPath: string): Promise<void> {
     schemaVersion: 1,
   };
   await writeFile(join(userDataPath, 'settings.json'), JSON.stringify(settings), 'utf8');
+}
+
+function createRevisionHistorySeed(): {
+  callId: string;
+  originalRevisionId: string;
+  reprocessedRevisionId: string;
+  sttJobId: string;
+  audioAssetId: string;
+} {
+  return {
+    callId: '10000000-0000-4000-8000-000000000001',
+    originalRevisionId: '10000000-0000-4000-8000-000000000010',
+    reprocessedRevisionId: '10000000-0000-4000-8000-000000000011',
+    sttJobId: '10000000-0000-4000-8000-000000000030',
+    audioAssetId: '10000000-0000-4000-8000-000000000040',
+  };
+}
+
+async function seedRevisionHistory(
+  userDataPath: string,
+  seed: ReturnType<typeof createRevisionHistorySeed>,
+): Promise<void> {
+  const createdAt = '2026-07-18T00:00:00.000Z';
+  await writeFile(
+    join(userDataPath, 'local-calls.json'),
+    JSON.stringify({
+      calls: [
+        {
+          id: seed.callId,
+          tenantId: '00000000-0000-4000-8000-000000000001',
+          organizationId: '00000000-0000-4000-8000-000000000002',
+          source: 'uploaded_audio',
+          industry: 'insurance',
+          productId: 'real_estate',
+          recordingConsent: {
+            status: 'granted',
+            method: 'verbal',
+            capturedAt: createdAt,
+            noticeVersion: 'local-v1',
+          },
+          status: 'ended',
+          startedAt: createdAt,
+          endedAt: '2026-07-18T00:10:00.000Z',
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    }),
+    'utf8',
+  );
+  await writeFile(
+    join(userDataPath, 'local-transcripts.json'),
+    JSON.stringify({
+      segments: [
+        {
+          id: '10000000-0000-4000-8000-000000000020',
+          callId: seed.callId,
+          revisionId: seed.originalRevisionId,
+          sourceJobId: null,
+          speaker: 'counterpart',
+          text: 'オリジナルの提案です。',
+          isFinal: true,
+          startMs: 0,
+          endMs: 1_000,
+          createdAt,
+        },
+        {
+          id: '10000000-0000-4000-8000-000000000021',
+          callId: seed.callId,
+          revisionId: seed.reprocessedRevisionId,
+          sourceJobId: seed.sttJobId,
+          speaker: 'counterpart',
+          text: '修正版の提案です。',
+          isFinal: true,
+          startMs: 0,
+          endMs: 1_000,
+          createdAt,
+        },
+      ],
+      revisions: [
+        {
+          id: seed.originalRevisionId,
+          callId: seed.callId,
+          origin: 'live',
+          parentRevisionId: null,
+          audioAssetId: null,
+          sttJobId: null,
+          provider: null,
+          revisionNumber: 1,
+          reason: 'original_live_transcript',
+          segmentCount: 1,
+          active: false,
+          createdAt,
+        },
+        {
+          id: seed.reprocessedRevisionId,
+          callId: seed.callId,
+          origin: 'audio_import',
+          parentRevisionId: seed.originalRevisionId,
+          audioAssetId: seed.audioAssetId,
+          sttJobId: seed.sttJobId,
+          provider: 'apple_speech_analyzer',
+          revisionNumber: 2,
+          reason: '品質確認',
+          segmentCount: 1,
+          active: false,
+          createdAt,
+        },
+      ],
+      activeRevisionByCallId: { [seed.callId]: seed.originalRevisionId },
+    }),
+    'utf8',
+  );
+  await writeFile(
+    join(userDataPath, 'local-stt-jobs.json'),
+    JSON.stringify({
+      jobs: [
+        {
+          id: seed.sttJobId,
+          callId: seed.callId,
+          audioAssetId: seed.audioAssetId,
+          provider: 'apple_speech_analyzer',
+          status: 'completed',
+          runToken: null,
+          progressPercent: 100,
+          attempt: 1,
+          retryReason: null,
+          transcriptRevisionId: seed.reprocessedRevisionId,
+          errorMessage: null,
+          startedAt: createdAt,
+          completedAt: createdAt,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    }),
+    'utf8',
+  );
 }

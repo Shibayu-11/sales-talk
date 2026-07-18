@@ -25,6 +25,7 @@ export const MembershipStatusSchema = z.enum(['active', 'invited', 'disabled']);
 export const OrganizationPermissionSchema = z.enum([
   'recording:start',
   'calls:read',
+  'transcripts:manage',
   'checkpoints:manage',
   'reviews:manage',
   'rules:manage',
@@ -282,6 +283,10 @@ export const AuditActionSchema = z.enum([
   'review_task.status_updated',
   'call.audio_imported',
   'stt_job.created',
+  'stt_job.retried',
+  'stt_job.cancelled',
+  'transcript.revision_created',
+  'transcript.revision_activated',
   'organization.invitation_created',
   'organization.invitation_accepted',
   'organization.password_reset_issued',
@@ -343,6 +348,7 @@ export const ReviewTaskSchema = z.object({
   id: z.string().uuid(),
   callId: z.string().uuid(),
   meetingMinuteId: z.string().uuid(),
+  transcriptRevisionId: z.string().uuid().nullable().default(null),
   findingId: z.string().uuid(),
   severity: ComplianceSeveritySchema,
   status: ReviewTaskStatusSchema,
@@ -478,6 +484,7 @@ export const ComplianceRuleSetReviewInputSchema = z.object({
 export const MeetingMinuteSchema = z.object({
   id: z.string().uuid(),
   callId: z.string().uuid(),
+  transcriptRevisionId: z.string().uuid().nullable().default(null),
   source: MeetingSourceSchema,
   productId: ProductIdSchema,
   summary: z.string(),
@@ -495,7 +502,16 @@ export const MinutesGenerateInputSchema = z.object({
   source: MeetingSourceSchema.default('manual_transcript'),
   /** 過去 call の議事録再生成用。未指定はアクティブ通話。 */
   callId: z.string().uuid().optional(),
+  transcriptRevisionId: z.string().uuid().nullable().optional(),
 });
+
+export const MinutesGetInputSchema = z
+  .object({
+    callId: z.string().uuid().optional(),
+    transcriptRevisionId: z.string().uuid().nullable().optional(),
+  })
+  .optional()
+  .default({});
 
 export const TaskOwnerSchema = z.enum(['own', 'customer', 'joint']);
 
@@ -652,11 +668,28 @@ export const CallIdInputSchema = z.string().uuid();
 export const TranscriptSegmentSchema = z.object({
   id: z.string().uuid(),
   callId: z.string().uuid(),
+  revisionId: z.string().uuid().nullable().default(null),
+  sourceJobId: z.string().uuid().nullable().default(null),
   speaker: SpeakerSchema,
   text: z.string(),
   isFinal: z.boolean(),
   startMs: z.number(),
   endMs: z.number().nullable(),
+  createdAt: z.string(),
+});
+
+export const TranscriptRevisionSchema = z.object({
+  id: z.string().uuid(),
+  callId: z.string().uuid(),
+  origin: z.enum(['live', 'audio_import']),
+  parentRevisionId: z.string().uuid().nullable().default(null),
+  audioAssetId: z.string().uuid().nullable().default(null),
+  sttJobId: z.string().uuid().nullable().default(null),
+  provider: z.enum(['deepgram', 'apple_speech_analyzer']).nullable().default(null),
+  revisionNumber: z.number().int().positive(),
+  reason: z.string().min(1),
+  segmentCount: z.number().int().nonnegative(),
+  active: z.boolean().default(false),
   createdAt: z.string(),
 });
 
@@ -676,7 +709,13 @@ export const AudioImportInputSchema = z.object({
   consent: GrantedRecordingConsentSchema,
 });
 
-export const AudioSttJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+export const AudioSttJobStatusSchema = z.enum([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]);
 export const AudioSttProviderSchema = z.enum(['deepgram', 'apple_speech_analyzer']);
 
 export const AudioSttJobSchema = z.object({
@@ -685,7 +724,14 @@ export const AudioSttJobSchema = z.object({
   audioAssetId: z.string().uuid(),
   provider: AudioSttProviderSchema,
   status: AudioSttJobStatusSchema,
+  runToken: z.string().uuid().nullable().default(null),
+  progressPercent: z.number().min(0).max(100).default(0),
+  attempt: z.number().int().positive().default(1),
+  retryReason: z.string().nullable().default(null),
+  transcriptRevisionId: z.string().uuid().nullable().default(null),
   errorMessage: z.string().nullable(),
+  startedAt: z.string().nullable().default(null),
+  completedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -696,6 +742,21 @@ export const AudioSttJobCreateInputSchema = z.object({
 
 export const AudioSttJobRunInputSchema = z.object({
   jobId: z.string().uuid(),
+});
+
+export const AudioSttJobRetryInputSchema = z.object({
+  jobId: z.string().uuid(),
+  reason: z.string().min(1),
+  provider: AudioSttProviderSchema.optional(),
+});
+
+export const AudioSttJobCancelInputSchema = z.object({
+  jobId: z.string().uuid(),
+});
+
+export const TranscriptRevisionActivateInputSchema = z.object({
+  callId: z.string().uuid(),
+  revisionId: z.string().uuid(),
 });
 
 export const RecoveryStateSchema = z.enum([
@@ -912,3 +973,4 @@ export type ComplianceRuleCreateInput = z.infer<typeof ComplianceRuleCreateInput
 export type ComplianceRuleUpdateInput = z.infer<typeof ComplianceRuleUpdateInputSchema>;
 export type ComplianceRuleSetCreateInput = z.infer<typeof ComplianceRuleSetCreateInputSchema>;
 export type ReviewTaskUpdateStatusInput = z.infer<typeof ReviewTaskUpdateStatusInputSchema>;
+export type MinutesGetInput = z.infer<typeof MinutesGetInputSchema>;

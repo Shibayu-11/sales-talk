@@ -9,7 +9,7 @@ import { AppleSpeechAnalyzerBatchTranscriber } from './apple-speech-analyzer-bat
 import { transcribeAudioWithDeepgram } from './audio-stt-job-runner';
 
 export interface BatchTranscriber {
-  transcribeFile(asset: AudioAsset): Promise<Transcript[]>;
+  transcribeFile(asset: AudioAsset, signal?: AbortSignal | undefined): Promise<Transcript[]>;
 }
 
 export interface ResolvedImportSTTProvider {
@@ -23,7 +23,15 @@ export interface ImportSTTProviderResolverOptions {
   /** Injectable for tests: factory for Apple batch transcriber */
   createAppleBatchTranscriber?: () => AppleSpeechAnalyzerBatchTranscriber;
   /** Injectable for tests: Deepgram fallback function */
-  deepgramTranscribe?: (asset: AudioAsset) => Promise<Transcript[]>;
+  deepgramTranscribe?: (
+    asset: AudioAsset,
+    signal?: AbortSignal | undefined,
+  ) => Promise<Transcript[]>;
+}
+
+export interface RecordedImportSTTProviderResolverOptions
+  extends Omit<ImportSTTProviderResolverOptions, 'mode'> {
+  provider: AudioSttProvider;
 }
 
 /**
@@ -54,6 +62,29 @@ export function resolveImportSTTProvider(
       ...deepgramProvider,
       degradedReason: 'apple_speech_analyzer_unavailable',
     };
+  }
+
+  return {
+    kind: 'apple_speech_analyzer',
+    transcriber: appleTranscriber,
+  };
+}
+
+export function resolveRecordedImportSTTProvider(
+  options: RecordedImportSTTProviderResolverOptions,
+): ResolvedImportSTTProvider {
+  if (options.provider === 'deepgram') {
+    const deepgramTranscribe = options.deepgramTranscribe ?? transcribeAudioWithDeepgram;
+    return {
+      kind: 'deepgram',
+      transcriber: { transcribeFile: deepgramTranscribe },
+    };
+  }
+
+  const appleTranscriber =
+    options.createAppleBatchTranscriber?.() ?? new AppleSpeechAnalyzerBatchTranscriber();
+  if (!appleTranscriber.isAvailable()) {
+    throw new Error('Apple SpeechAnalyzer batch transcriber is unavailable');
   }
 
   return {

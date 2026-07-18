@@ -18,6 +18,7 @@ export type MembershipStatus = 'active' | 'invited' | 'disabled';
 export type OrganizationPermission =
   | 'recording:start'
   | 'calls:read'
+  | 'transcripts:manage'
   | 'checkpoints:manage'
   | 'reviews:manage'
   | 'rules:manage'
@@ -370,11 +371,28 @@ export interface CallSession {
 export interface TranscriptSegment {
   id: string;
   callId: string;
+  revisionId: string | null;
+  sourceJobId: string | null;
   speaker: Speaker;
   text: string;
   isFinal: boolean;
   startMs: number;
   endMs: number | null;
+  createdAt: string;
+}
+
+export interface TranscriptRevision {
+  id: string;
+  callId: string;
+  origin: 'live' | 'audio_import';
+  parentRevisionId: string | null;
+  audioAssetId: string | null;
+  sttJobId: string | null;
+  provider: AudioSttProvider | null;
+  revisionNumber: number;
+  reason: string;
+  segmentCount: number;
+  active: boolean;
   createdAt: string;
 }
 
@@ -408,7 +426,7 @@ export interface CloudAudioUploadProcessResult {
   transcriptCount: number;
 }
 
-export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type AudioSttJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type AudioSttProvider = 'deepgram' | 'apple_speech_analyzer';
 export type SttImportProviderMode = 'local_first' | 'deepgram_only';
 
@@ -440,7 +458,14 @@ export interface AudioSttJob {
   audioAssetId: string;
   provider: AudioSttProvider;
   status: AudioSttJobStatus;
+  runToken: string | null;
+  progressPercent: number;
+  attempt: number;
+  retryReason: string | null;
+  transcriptRevisionId: string | null;
   errorMessage: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -462,6 +487,7 @@ export interface KnowledgeEntry {
 export interface MeetingMinute {
   id: string;
   callId: string;
+  transcriptRevisionId: string | null;
   source: MeetingSource;
   productId: ProductId;
   summary: string;
@@ -512,6 +538,10 @@ export type AuditAction =
   | 'review_task.status_updated'
   | 'call.audio_imported'
   | 'stt_job.created'
+  | 'stt_job.retried'
+  | 'stt_job.cancelled'
+  | 'transcript.revision_created'
+  | 'transcript.revision_activated'
   | 'organization.invitation_created'
   | 'organization.invitation_accepted'
   | 'organization.password_reset_issued'
@@ -573,6 +603,7 @@ export interface ReviewTask {
   id: string;
   callId: string;
   meetingMinuteId: string;
+  transcriptRevisionId: string | null;
   findingId: string;
   severity: ComplianceSeverity;
   status: ReviewTaskStatus;
@@ -582,6 +613,11 @@ export interface ReviewTask {
   recommendedAction: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MinutesGetInput {
+  callId?: string | undefined;
+  transcriptRevisionId?: string | null | undefined;
 }
 
 export interface AuditLogEntry {
@@ -744,7 +780,9 @@ export interface RendererApi {
     onState(cb: (state: CallState) => void): () => void;
   };
   transcripts: {
-    list(callId: string): Promise<TranscriptSegment[]>;
+    list(callId: string, revisionId?: string | undefined): Promise<TranscriptSegment[]>;
+    listRevisions(callId: string): Promise<TranscriptRevision[]>;
+    activateRevision(callId: string, revisionId: string): Promise<TranscriptRevision>;
   };
   audio: {
     getStatus(): Promise<AudioCaptureStatus>;
@@ -779,6 +817,12 @@ export interface RendererApi {
     create(audioAssetId: string): Promise<AudioSttJob>;
     run(jobId: string): Promise<AudioSttJob>;
     list(callId: string): Promise<AudioSttJob[]>;
+    retry(
+      jobId: string,
+      reason: string,
+      provider?: AudioSttProvider | undefined,
+    ): Promise<AudioSttJob>;
+    cancel(jobId: string): Promise<AudioSttJob>;
   };
   recovery: {
     list(): Promise<RecoverySummary[]>;
@@ -827,8 +871,9 @@ export interface RendererApi {
       transcripts: Transcript[],
       source?: MeetingSource,
       callId?: string,
+      transcriptRevisionId?: string | null,
     ): Promise<MeetingMinute>;
-    get(): Promise<MeetingMinute | null>;
+    get(input?: MinutesGetInput | undefined): Promise<MeetingMinute | null>;
   };
   tasks: {
     list(): Promise<ActionItemTask[]>;

@@ -12,7 +12,9 @@ import {
   AudioStartInputSchema,
   AudioImportInputSchema,
   AudioChunkSchema,
+  AudioSttJobCancelInputSchema,
   AudioSttJobCreateInputSchema,
+  AudioSttJobRetryInputSchema,
   AudioSttJobRunInputSchema,
   CallIdInputSchema,
   CallStartInputSchema,
@@ -35,6 +37,7 @@ import {
   KnowledgeSearchInputSchema,
   KnowledgeSeedDefaultsInputSchema,
   MinutesGenerateInputSchema,
+  MinutesGetInputSchema,
   ObjectionDismissInputSchema,
   OrganizationUserRoleUpdateInputSchema,
   OverlayLayerSchema,
@@ -47,6 +50,7 @@ import {
   StartRecordingSessionResultSchema,
   TaskCompleteInputSchema,
   TaskCreateInputSchema,
+  TranscriptRevisionActivateInputSchema,
 } from '@shared/schemas';
 import type {
   ActionItemTask,
@@ -65,6 +69,7 @@ import type {
   ComplianceRuleSet,
   CurrentUserContext,
   MeetingMinute,
+  OrganizationPermission,
   PermissionState,
   ProductId,
   RecoveryRetentionDays,
@@ -74,6 +79,7 @@ import type {
   SttProviderKind,
   StartRecordingSessionResult,
   Transcript,
+  TranscriptRevision,
 } from '@shared/types';
 import { logger } from '../logger';
 import {
@@ -144,25 +150,10 @@ const sharingState: SharingState = { status: 'not_sharing' };
 const knowledgeSearchService = createRuntimeKnowledgeSearchService();
 // audioSttJobRunner is initialized lazily so it can pick up current settings at job creation time.
 // Per W3-C: importProviderMode is resolved from settings each time a job is created.
-let audioSttJobRunner = new AudioSttJobRunner({
+const audioSttJobRunner = new AudioSttJobRunner({
   repositories: appRepositories,
-  onCompleted: async (job) => {
-    const call = (await appRepositories.calls.listCalls()).find(
-      (candidate) => candidate.id === job.callId,
-    );
-    if (!call) {
-      throw new Error('Call was not found');
-    }
-
-    await appRepositories.minutes.setLatestMeetingMinute(
-      await generateMeetingMinuteForCall({
-        callId: call.id,
-        productId: call.productId,
-        source: call.source,
-        transcripts: [],
-      }),
-    );
-  },
+  onRevisionReady: handleRevisionReadyAudioSttJob,
+  onActivated: handleActivatedAudioSttJob,
 });
 let activeObjectionPipelineService: ObjectionPipelineService | null = null;
 let activeSttClient: ResilientSTTClient | null = null;
@@ -292,8 +283,9 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const input = AudioImportInputSchema.parse(payload);
     return cloudUploadAndProcessAudioAsset(windows, input.productId, input.consent);
   });
-  ipcMain.handle(IPC.audioAssets.list, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.audioAssets.list, async (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
+    await assertCallInCurrentOrganization(callId);
     return appRepositories.audioAssets.listAudioAssets(callId);
   });
   ipcMain.handle(IPC.sttJobs.create, async (_event, payload: unknown) => {
@@ -302,10 +294,72 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
   ipcMain.handle(IPC.sttJobs.run, async (_event, payload: unknown) => {
     const input = AudioSttJobRunInputSchema.parse(payload);
+    const job = await appRepositories.sttJobs.getJob(input.jobId);
+    if (!job) {
+      throw new Error('STT job was not found');
+    }
+    await assertCallInCurrentOrganization(job.callId, 'transcripts:manage');
     return audioSttJobRunner.run(input.jobId);
   });
-  ipcMain.handle(IPC.sttJobs.list, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.sttJobs.retry, async (_event, payload: unknown) => {
+    const input = AudioSttJobRetryInputSchema.parse(payload);
+    const sourceJob = await appRepositories.sttJobs.getJob(input.jobId);
+    if (!sourceJob) {
+      throw new Error('STT job was not found');
+    }
+    const { context } = await assertCallInCurrentOrganization(
+      sourceJob.callId,
+      'transcripts:manage',
+    );
+    const retriedJob = await appRepositories.sttJobs.retryJob({
+      jobId: sourceJob.id,
+      reason: input.reason,
+      provider: input.provider,
+    });
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'stt_job.retried',
+        targetType: 'audio_stt_job',
+        targetId: retriedJob.id,
+        metadata: {
+          callId: retriedJob.callId,
+          sourceJobId: sourceJob.id,
+          provider: retriedJob.provider,
+          attempt: retriedJob.attempt,
+          reason: retriedJob.retryReason,
+        },
+      }),
+    ]);
+    return retriedJob;
+  });
+  ipcMain.handle(IPC.sttJobs.cancel, async (_event, payload: unknown) => {
+    const input = AudioSttJobCancelInputSchema.parse(payload);
+    const sourceJob = await appRepositories.sttJobs.getJob(input.jobId);
+    if (!sourceJob) {
+      throw new Error('STT job was not found');
+    }
+    const { context } = await assertCallInCurrentOrganization(
+      sourceJob.callId,
+      'transcripts:manage',
+    );
+    const cancelledJob = await audioSttJobRunner.cancel(sourceJob.id);
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'stt_job.cancelled',
+        targetType: 'audio_stt_job',
+        targetId: cancelledJob.id,
+        metadata: {
+          callId: cancelledJob.callId,
+          provider: cancelledJob.provider,
+          attempt: cancelledJob.attempt,
+        },
+      }),
+    ]);
+    return cancelledJob;
+  });
+  ipcMain.handle(IPC.sttJobs.list, async (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
+    await assertCallInCurrentOrganization(callId);
     return appRepositories.sttJobs.listJobs(callId);
   });
   ipcMain.handle(IPC.recovery.list, async () => {
@@ -337,8 +391,11 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
   });
 
   ipcMain.handle(IPC.call.list, async () => {
-    await appRepositories.organizations.assertPermission('calls:read');
-    return appRepositories.calls.listCalls();
+    const context = await appRepositories.organizations.assertPermission('calls:read');
+    return (await appRepositories.calls.listCalls()).filter(
+      (call) =>
+        call.tenantId === context.tenant.id && call.organizationId === context.organization.id,
+    );
   });
   ipcMain.handle(IPC.call.start, async (_event, payload: unknown) => {
     const input = CallStartInputSchema.parse(payload);
@@ -366,9 +423,73 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     }
   });
 
-  ipcMain.handle(IPC.transcripts.list, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.transcripts.list, async (_event, payload: unknown) => {
     const callId = CallIdInputSchema.parse(payload);
+    await assertCallInCurrentOrganization(callId);
     return appRepositories.transcripts.listTranscripts(callId);
+  });
+  ipcMain.handle(IPC.transcripts.listRevisions, async (_event, payload: unknown) => {
+    const callId = CallIdInputSchema.parse(payload);
+    await assertCallInCurrentOrganization(callId);
+    return appRepositories.transcripts.listRevisions(callId);
+  });
+  ipcMain.handle(IPC.transcripts.activateRevision, async (_event, payload: unknown) => {
+    const input = TranscriptRevisionActivateInputSchema.parse(payload);
+    const { call, context } = await assertCallInCurrentOrganization(
+      input.callId,
+      'transcripts:manage',
+    );
+    const revisions = await appRepositories.transcripts.listRevisions(input.callId);
+    const currentRevision = revisions.find((revision) => revision.active) ?? null;
+    const targetRevision = revisions.find((revision) => revision.id === input.revisionId);
+    if (!targetRevision) {
+      throw new Error('Transcript revision was not found');
+    }
+
+    const previousMinute = currentRevision
+      ? await appRepositories.minutes.getMeetingMinute(call.id, currentRevision.id)
+      : await appRepositories.minutes.getLatestMeetingMinute();
+    const meetingMinute = await generateMeetingMinuteForCall({
+      callId: call.id,
+      productId: call.productId,
+      source: call.source,
+      transcripts: [],
+      transcriptRevisionId: targetRevision.id,
+      setAsLatest: false,
+    });
+    const activatedRevision = await appRepositories.transcripts.activateRevision(
+      input.callId,
+      targetRevision.id,
+      currentRevision?.id ?? null,
+    );
+    try {
+      await appRepositories.minutes.setLatestMeetingMinute(meetingMinute);
+      await appRepositories.auditLogs.appendAuditLogs([
+        createUserAuditLogEntry(context, {
+          action: 'transcript.revision_activated',
+          targetType: 'transcript_revision',
+          targetId: activatedRevision.id,
+          metadata: {
+            callId: call.id,
+            provider: activatedRevision.provider,
+            revisionNumber: activatedRevision.revisionNumber,
+          },
+        }),
+      ]);
+    } catch (error) {
+      if (currentRevision) {
+        await appRepositories.transcripts.activateRevision(
+          call.id,
+          currentRevision.id,
+          activatedRevision.id,
+        );
+      }
+      if (previousMinute) {
+        await appRepositories.minutes.setLatestMeetingMinute(previousMinute);
+      }
+      throw error;
+    }
+    return activatedRevision;
   });
 
   ipcMain.handle(IPC.organizations.currentContext, () =>
@@ -498,17 +619,33 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
 
   ipcMain.handle(IPC.minutes.generate, async (_event, payload: unknown) => {
     const input = MinutesGenerateInputSchema.parse(payload);
-    return appRepositories.minutes.setLatestMeetingMinute(
-      await generateMeetingMinuteForCall({
-        // callId 指定時は過去 call の再生成。未指定はアクティブ通話(従来動作)。
-        callId: input.callId ?? getCurrentCallId(),
-        productId: input.productId,
-        source: input.source,
-        transcripts: input.transcripts,
-      }),
-    );
+    const callId = input.callId ?? getCurrentCallId();
+    await assertCallInCurrentOrganization(callId, 'transcripts:manage');
+    return generateMeetingMinuteForCall({
+      // callId 指定時は過去 call の再生成。未指定はアクティブ通話(従来動作)。
+      callId,
+      productId: input.productId,
+      source: input.source,
+      transcripts: input.transcripts,
+      transcriptRevisionId: input.transcriptRevisionId,
+    });
   });
-  ipcMain.handle(IPC.minutes.get, () => appRepositories.minutes.getLatestMeetingMinute());
+  ipcMain.handle(IPC.minutes.get, async (_event, payload: unknown) => {
+    const input = MinutesGetInputSchema.parse(payload);
+    if (!input.callId) {
+      const meetingMinute = await appRepositories.minutes.getLatestMeetingMinute();
+      if (meetingMinute) {
+        await assertCallInCurrentOrganization(meetingMinute.callId);
+      }
+      return meetingMinute;
+    }
+    await assertCallInCurrentOrganization(input.callId);
+    const transcriptRevisionId =
+      input.transcriptRevisionId !== undefined
+        ? input.transcriptRevisionId
+        : await getActiveTranscriptRevisionId(input.callId);
+    return getMeetingMinuteForRevision(input.callId, transcriptRevisionId);
+  });
 
   ipcMain.handle(IPC.tasks.list, () => appRepositories.tasks.listTasks());
   ipcMain.handle(IPC.tasks.create, async (_event, payload: unknown) => {
@@ -529,17 +666,28 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     return appRepositories.tasks.completeTask(input.id, input.completed);
   });
 
-  ipcMain.handle(IPC.reviews.list, () => appRepositories.reviews.listReviewTasks());
+  ipcMain.handle(IPC.reviews.list, () => listReviewTasksForActiveRevisions());
   ipcMain.handle(IPC.reviews.updateStatus, async (_event, payload: unknown) => {
-    await appRepositories.organizations.assertPermission('reviews:manage');
+    const context = await appRepositories.organizations.assertPermission('reviews:manage');
     const input = ReviewTaskUpdateStatusInputSchema.parse(payload);
+    const visibleTask = (await listReviewTasksForActiveRevisions()).find(
+      (task) => task.id === input.id,
+    );
+    if (!visibleTask) {
+      throw new Error('Review task was not found');
+    }
     const task = await appRepositories.reviews.updateReviewTaskStatus(input.id, input.status);
     await appRepositories.auditLogs.appendAuditLogs([
-      createAuditLogEntry({
+      createUserAuditLogEntry(context, {
         action: 'review_task.status_updated',
         targetType: 'review_task',
         targetId: task.id,
-        metadata: { status: task.status, severity: task.severity },
+        metadata: {
+          callId: task.callId,
+          transcriptRevisionId: task.transcriptRevisionId,
+          status: task.status,
+          severity: task.severity,
+        },
       }),
     ]);
     return task;
@@ -1181,36 +1329,116 @@ async function selectAudioFile(windows: IpcWindowAccessors): Promise<string | nu
   return dialogResult.canceled ? null : (dialogResult.filePaths[0] ?? null);
 }
 
+async function assertCallInCurrentOrganization(
+  callId: string,
+  permission: OrganizationPermission = 'calls:read',
+): Promise<{ call: CallSession; context: CurrentUserContext }> {
+  const [context, calls] = await Promise.all([
+    appRepositories.organizations.assertPermission(permission),
+    appRepositories.calls.listCalls(),
+  ]);
+  const call = calls.find((candidate) => candidate.id === callId);
+  if (
+    !call ||
+    call.tenantId !== context.tenant.id ||
+    call.organizationId !== context.organization.id
+  ) {
+    throw new Error('Call was not found');
+  }
+  return { call, context };
+}
+
+async function handleRevisionReadyAudioSttJob(
+  job: AudioSttJob,
+  revision: TranscriptRevision,
+  transcripts: Transcript[],
+): Promise<void> {
+  const call = (await appRepositories.calls.listCalls()).find(
+    (candidate) => candidate.id === job.callId,
+  );
+  if (!call) {
+    throw new Error('Call was not found');
+  }
+
+  await generateMeetingMinuteForCall({
+    callId: call.id,
+    productId: call.productId,
+    source: call.source,
+    transcripts,
+    transcriptRevisionId: revision.id,
+    setAsLatest: false,
+    additionalAuditLogs: [
+      createAuditLogEntry({
+        tenantId: call.tenantId,
+        organizationId: call.organizationId,
+        action: 'transcript.revision_created',
+        targetType: 'transcript_revision',
+        targetId: revision.id,
+        metadata: {
+          callId: call.id,
+          sttJobId: job.id,
+          provider: job.provider,
+          attempt: job.attempt,
+        },
+      }),
+    ],
+  });
+}
+
+async function handleActivatedAudioSttJob(
+  job: AudioSttJob,
+  _transcripts: Transcript[],
+  revision: TranscriptRevision,
+): Promise<void> {
+  const call = (await appRepositories.calls.listCalls()).find(
+    (candidate) => candidate.id === job.callId,
+  );
+  if (!call) {
+    throw new Error('Call was not found');
+  }
+  const meetingMinute = await appRepositories.minutes.getMeetingMinute(call.id, revision.id);
+  if (!meetingMinute) {
+    throw new Error('Meeting minute was not found for activated transcript revision');
+  }
+  const previousMinute = revision.parentRevisionId
+    ? await appRepositories.minutes.getMeetingMinute(call.id, revision.parentRevisionId)
+    : null;
+  await appRepositories.minutes.setLatestMeetingMinute(meetingMinute);
+  try {
+    await appRepositories.auditLogs.appendAuditLogs([
+      createAuditLogEntry({
+        tenantId: call.tenantId,
+        organizationId: call.organizationId,
+        action: 'transcript.revision_activated',
+        targetType: 'transcript_revision',
+        targetId: revision.id,
+        metadata: {
+          callId: call.id,
+          sttJobId: job.id,
+          provider: job.provider,
+          attempt: job.attempt,
+        },
+      }),
+    ]);
+  } catch (error) {
+    if (previousMinute) {
+      await appRepositories.minutes.setLatestMeetingMinute(previousMinute);
+    }
+    throw error;
+  }
+}
+
 async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
   // Resolve provider from current settings (local_first → Apple when available, else Deepgram).
   const settings = await settingsStore.get();
   const importMode = settings.sttImportProviderMode ?? 'local_first';
   const resolved = resolveImportSTTProvider({ mode: importMode });
 
-  // Rebuild runner with current settings so transcribe() uses the correct provider.
-  audioSttJobRunner = new AudioSttJobRunner({
-    repositories: appRepositories,
-    importProviderMode: importMode,
-    onCompleted: async (job) => {
-      const call = (await appRepositories.calls.listCalls()).find(
-        (candidate) => candidate.id === job.callId,
-      );
-      if (!call) {
-        throw new Error('Call was not found');
-      }
-
-      await appRepositories.minutes.setLatestMeetingMinute(
-        await generateMeetingMinuteForCall({
-          callId: call.id,
-          productId: call.productId,
-          source: call.source,
-          transcripts: [],
-        }),
-      );
-    },
-  });
-
-  const calls = await appRepositories.calls.listCalls();
+  const context = await appRepositories.organizations.assertPermission('transcripts:manage');
+  const calls = (await appRepositories.calls.listCalls()).filter(
+    (call) =>
+      call.tenantId === context.tenant.id && call.organizationId === context.organization.id,
+  );
   for (const call of calls) {
     const assets = await appRepositories.audioAssets.listAudioAssets(call.id);
     const asset = assets.find((candidate) => candidate.id === audioAssetId);
@@ -1224,7 +1452,7 @@ async function createAudioSttJob(audioAssetId: string): Promise<AudioSttJob> {
       provider: resolved.kind,
     });
     await appRepositories.auditLogs.appendAuditLogs([
-      createAuditLogEntry({
+      createUserAuditLogEntry(context, {
         action: 'stt_job.created',
         targetType: 'audio_stt_job',
         targetId: job.id,
@@ -1257,7 +1485,9 @@ async function importAndProcessAudioAsset(
   const createdJob = await createAudioSttJob(imported.asset.id);
   const job = await audioSttJobRunner.run(createdJob.id);
   const meetingMinute =
-    job.status === 'completed' ? await appRepositories.minutes.getLatestMeetingMinute() : null;
+    job.status === 'completed' && job.transcriptRevisionId
+      ? await appRepositories.minutes.getMeetingMinute(job.callId, job.transcriptRevisionId)
+      : null;
 
   return {
     ...imported,
@@ -1322,9 +1552,18 @@ async function generateMeetingMinuteForCall(input: {
   productId: MeetingMinute['productId'];
   source: MeetingMinute['source'];
   transcripts: Transcript[];
+  transcriptRevisionId?: string | null | undefined;
+  additionalAuditLogs?: AuditLogEntry[] | undefined;
+  setAsLatest?: boolean | undefined;
 }): Promise<MeetingMinute> {
+  const transcriptRevisionId =
+    input.transcriptRevisionId !== undefined
+      ? input.transcriptRevisionId
+      : await getActiveTranscriptRevisionId(input.callId);
   const effectiveTranscripts =
-    input.transcripts.length === 0 ? await getStoredTranscripts(input.callId) : input.transcripts;
+    input.transcripts.length === 0
+      ? await getStoredTranscripts(input.callId, transcriptRevisionId)
+      : input.transcripts;
   const finalTexts = effectiveTranscripts
     .filter((transcript) => transcript.isFinal)
     .map((transcript) => transcript.text.trim())
@@ -1336,10 +1575,13 @@ async function generateMeetingMinuteForCall(input: {
   const call = (await appRepositories.calls.listCalls()).find(
     (candidate) => candidate.id === input.callId,
   );
+  if (!call) {
+    throw new Error('Call was not found');
+  }
   const rules = await appRepositories.complianceRules.listRules(
     'insurance',
-    call ? { tenantId: call.tenantId, organizationId: call.organizationId } : undefined,
-    call?.productId,
+    { tenantId: call.tenantId, organizationId: call.organizationId },
+    call.productId,
   );
 
   // LLM 生成が主、失敗・未設定時はヒューリスティックへ縮退。findings はルールエンジン固定。
@@ -1348,6 +1590,7 @@ async function generateMeetingMinuteForCall(input: {
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),
     callId: input.callId,
+    transcriptRevisionId,
     source: input.source,
     productId: input.productId,
     summary: llmContent?.summary ?? `直近の発話: ${summarySource}`,
@@ -1363,25 +1606,41 @@ async function generateMeetingMinuteForCall(input: {
     generatedAt: new Date().toISOString(),
   };
   const reviewTasks = createReviewTasksFromMinute(meetingMinute);
-  await appRepositories.reviews.createReviewTasks(reviewTasks);
+  if (appRepositories.minutes.setMeetingAnalysis) {
+    await appRepositories.minutes.setMeetingAnalysis({
+      minute: meetingMinute,
+      reviewTasks,
+      setAsLatest: input.setAsLatest,
+    });
+  } else {
+    await appRepositories.minutes.setLatestMeetingMinute(meetingMinute);
+    await appRepositories.reviews.createReviewTasks(reviewTasks);
+  }
   await appRepositories.auditLogs.appendAuditLogs([
+    ...(input.additionalAuditLogs ?? []),
     createAuditLogEntry({
+      tenantId: call.tenantId,
+      organizationId: call.organizationId,
       action: 'minutes.generated',
       targetType: 'meeting_minute',
       targetId: meetingMinute.id,
       metadata: {
         callId: meetingMinute.callId,
+        transcriptRevisionId: meetingMinute.transcriptRevisionId,
         source: meetingMinute.source,
         complianceFindings: meetingMinute.complianceFindings.length,
       },
     }),
     ...meetingMinute.complianceFindings.map((finding) =>
       createAuditLogEntry({
+        tenantId: call.tenantId,
+        organizationId: call.organizationId,
         action: 'compliance.finding_detected',
         targetType: 'compliance_finding',
         targetId: finding.id,
         metadata: {
           callId: meetingMinute.callId,
+          transcriptRevisionId: meetingMinute.transcriptRevisionId,
           severity: finding.severity,
           ruleType: finding.ruleType,
         },
@@ -1389,11 +1648,14 @@ async function generateMeetingMinuteForCall(input: {
     ),
     ...reviewTasks.map((task) =>
       createAuditLogEntry({
+        tenantId: call.tenantId,
+        organizationId: call.organizationId,
         action: 'review_task.created',
         targetType: 'review_task',
         targetId: task.id,
         metadata: {
           callId: task.callId,
+          transcriptRevisionId: task.transcriptRevisionId,
           findingId: task.findingId,
           severity: task.severity,
         },
@@ -1403,8 +1665,74 @@ async function generateMeetingMinuteForCall(input: {
   return meetingMinute;
 }
 
-async function getStoredTranscripts(callId: string): Promise<Transcript[]> {
-  const storedTranscripts = await appRepositories.transcripts.listTranscripts(callId);
+async function getActiveTranscriptRevisionId(callId: string): Promise<string | null> {
+  const activeRevision = (await appRepositories.transcripts.listRevisions(callId)).find(
+    (revision) => revision.active,
+  );
+  return activeRevision?.id ?? null;
+}
+
+async function getMeetingMinuteForRevision(
+  callId: string,
+  transcriptRevisionId: string | null,
+): Promise<MeetingMinute | null> {
+  const meetingMinute = await appRepositories.minutes.getMeetingMinute(
+    callId,
+    transcriptRevisionId,
+  );
+  if (meetingMinute || transcriptRevisionId === null) {
+    return meetingMinute;
+  }
+
+  const revision = (await appRepositories.transcripts.listRevisions(callId)).find(
+    (candidate) => candidate.id === transcriptRevisionId,
+  );
+  if (revision?.origin !== 'live' || revision.revisionNumber !== 1) {
+    return null;
+  }
+  return appRepositories.minutes.bindLegacyAnalysisToRevision(callId, transcriptRevisionId);
+}
+
+async function listReviewTasksForActiveRevisions(): Promise<ReviewTask[]> {
+  const [context, calls] = await Promise.all([
+    appRepositories.organizations.assertPermission('calls:read'),
+    appRepositories.calls.listCalls(),
+  ]);
+  const visibleCallIds = new Set(
+    calls
+      .filter(
+        (call) =>
+          call.tenantId === context.tenant.id && call.organizationId === context.organization.id,
+      )
+      .map((call) => call.id),
+  );
+  const activeRevisionEntries = await Promise.all(
+    [...visibleCallIds].map(async (callId) => {
+      const revisions = await appRepositories.transcripts.listRevisions(callId);
+      const activeRevision = revisions.find((revision) => revision.active) ?? null;
+      if (activeRevision?.origin === 'live' && activeRevision.revisionNumber === 1) {
+        await appRepositories.minutes.bindLegacyAnalysisToRevision(callId, activeRevision.id);
+      }
+      return [callId, activeRevision?.id ?? null] as const;
+    }),
+  );
+  const tasks = await appRepositories.reviews.listReviewTasks();
+  const activeRevisionByCallId = new Map(activeRevisionEntries);
+  return tasks.filter(
+    (task) =>
+      visibleCallIds.has(task.callId) &&
+      task.transcriptRevisionId === activeRevisionByCallId.get(task.callId),
+  );
+}
+
+async function getStoredTranscripts(
+  callId: string,
+  transcriptRevisionId?: string | null | undefined,
+): Promise<Transcript[]> {
+  const storedTranscripts = await appRepositories.transcripts.listTranscripts(
+    callId,
+    transcriptRevisionId ?? undefined,
+  );
   return storedTranscripts.map((segment) =>
     segment.isFinal
       ? {
@@ -1428,6 +1756,7 @@ function createReviewTasksFromMinute(minute: MeetingMinute): ReviewTask[] {
   return minute.complianceFindings.map((finding) => ({
     id: randomUUID(),
     callId: minute.callId,
+    transcriptRevisionId: minute.transcriptRevisionId,
     meetingMinuteId: minute.id,
     findingId: finding.id,
     severity: finding.severity,

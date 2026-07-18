@@ -1,9 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import type { AudioAsset, AudioSttJob, AudioSttProvider, SttImportProviderMode, Transcript } from '@shared/types';
+import type {
+  AudioAsset,
+  AudioSttJob,
+  AudioSttProvider,
+  SttImportProviderMode,
+  Transcript,
+  TranscriptRevision,
+} from '@shared/types';
 import type { AppRepositories } from './repositories';
 import { secretStore } from './secrets';
-import { resolveImportSTTProvider } from './import-stt-provider-resolver';
+import { resolveImportSTTProvider, resolveRecordedImportSTTProvider } from './import-stt-provider-resolver';
 import type { ImportSTTProviderResolverOptions } from './import-stt-provider-resolver';
 
 const DEEPGRAM_PRERECORDED_URL = 'https://api.deepgram.com/v1/listen';
@@ -31,8 +39,19 @@ const DeepgramPrerecordedResponseSchema = z.object({
 export interface AudioSttJobRunnerOptions {
   repositories: AppRepositories;
   /** Injectable override for tests; when set, bypasses provider resolution entirely. */
-  transcribeAudio?: ((asset: AudioAsset) => Promise<Transcript[]>) | undefined;
-  onCompleted?: ((job: AudioSttJob, transcripts: Transcript[]) => Promise<void>) | undefined;
+  transcribeAudio?:
+    | ((asset: AudioAsset, signal?: AbortSignal | undefined) => Promise<Transcript[]>)
+    | undefined;
+  onRevisionReady?:
+    | ((
+        job: AudioSttJob,
+        revision: TranscriptRevision,
+        transcripts: Transcript[],
+      ) => Promise<void>)
+    | undefined;
+  onActivated?:
+    | ((job: AudioSttJob, transcripts: Transcript[], revision: TranscriptRevision) => Promise<void>)
+    | undefined;
   /** Import provider mode; defaults to 'local_first'. */
   importProviderMode?: SttImportProviderMode | undefined;
   /** Injectable factory overrides for the import resolver (for tests). */
@@ -40,33 +59,123 @@ export interface AudioSttJobRunnerOptions {
 }
 
 export class AudioSttJobRunner {
+  private readonly abortControllers = new Map<string, AbortController>();
+
   constructor(private readonly options: AudioSttJobRunnerOptions) {}
 
   async run(jobId: string): Promise<AudioSttJob> {
-    const job = await this.options.repositories.sttJobs.getJob(jobId);
-    if (!job) {
-      throw new Error('STT job was not found');
+    const runToken = randomUUID();
+    const claimedJob = await this.options.repositories.sttJobs.claimQueued(jobId, runToken);
+    if (claimedJob.status === 'cancelled') {
+      return claimedJob;
     }
 
-    await this.options.repositories.sttJobs.updateJobStatus(job.id, 'running');
-
+    const abortController = new AbortController();
+    this.abortControllers.set(jobId, abortController);
     try {
-      const asset = await this.findAudioAsset(job);
-      const transcripts = await this.transcribe(asset);
-      for (const transcript of transcripts) {
-        await this.options.repositories.transcripts.appendTranscript(job.callId, transcript);
+      const asset = await this.findAudioAsset(claimedJob);
+      const preparedJob = await this.options.repositories.sttJobs.updateProgress(jobId, runToken, 25);
+      if (preparedJob.status === 'cancelled') {
+        return preparedJob;
+      }
+      throwIfAborted(abortController.signal);
+
+      const transcripts = await this.transcribe(asset, claimedJob.provider, abortController.signal);
+      const transcribedJob = await this.options.repositories.sttJobs.updateProgress(
+        jobId,
+        runToken,
+        70,
+      );
+      if (transcribedJob.status === 'cancelled') {
+        return transcribedJob;
+      }
+      throwIfAborted(abortController.signal);
+
+      const revision = await this.options.repositories.transcripts.commitRevision({
+        callId: claimedJob.callId,
+        sttJobId: claimedJob.id,
+        audioAssetId: claimedJob.audioAssetId,
+        provider: claimedJob.provider,
+        reason: claimedJob.retryReason ?? 'initial_transcription',
+        transcripts,
+      });
+      const committedJob = await this.options.repositories.sttJobs.updateProgress(
+        jobId,
+        runToken,
+        85,
+      );
+      if (committedJob.status === 'cancelled') {
+        return committedJob;
+      }
+      throwIfAborted(abortController.signal);
+
+      try {
+        await this.options.onRevisionReady?.(claimedJob, revision, transcripts);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return await this.options.repositories.sttJobs.failJob({
+          id: jobId,
+          runToken,
+          errorMessage: message,
+          transcriptRevisionId: revision.id,
+        });
       }
 
-      const completedJob = await this.options.repositories.sttJobs.updateJobStatus(
-        job.id,
-        'completed',
+      const readyJob = await this.options.repositories.sttJobs.updateProgress(jobId, runToken, 90);
+      if (readyJob.status === 'cancelled') {
+        return readyJob;
+      }
+      throwIfAborted(abortController.signal);
+
+      await this.options.repositories.transcripts.activateRevision(
+        claimedJob.callId,
+        revision.id,
+        revision.parentRevisionId,
       );
-      await this.options.onCompleted?.(completedJob, transcripts);
+      try {
+        await this.options.onActivated?.(readyJob, transcripts, revision);
+      } catch (error) {
+        if (revision.parentRevisionId) {
+          await this.options.repositories.transcripts.activateRevision(
+            claimedJob.callId,
+            revision.parentRevisionId,
+            revision.id,
+          );
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return await this.options.repositories.sttJobs.failJob({
+          id: jobId,
+          runToken,
+          errorMessage: message,
+          transcriptRevisionId: revision.id,
+        });
+      }
+      const completedJob = await this.options.repositories.sttJobs.completeJob({
+        id: jobId,
+        runToken,
+        transcriptRevisionId: revision.id,
+      });
       return completedJob;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return this.options.repositories.sttJobs.updateJobStatus(job.id, 'failed', message);
+      return this.options.repositories.sttJobs.failJob({
+        id: jobId,
+        runToken,
+        errorMessage: message,
+      });
+    } finally {
+      if (this.abortControllers.get(jobId) === abortController) {
+        this.abortControllers.delete(jobId);
+      }
     }
+  }
+
+  async cancel(jobId: string): Promise<AudioSttJob> {
+    const cancelledJob = await this.options.repositories.sttJobs.requestCancel(jobId);
+    if (cancelledJob.status === 'cancelled') {
+      this.abortControllers.get(jobId)?.abort();
+    }
+    return cancelledJob;
   }
 
   /**
@@ -91,42 +200,52 @@ export class AudioSttJobRunner {
     return asset;
   }
 
-  private async transcribe(asset: AudioAsset): Promise<Transcript[]> {
+  private async transcribe(
+    asset: AudioAsset,
+    provider: AudioSttProvider,
+    signal: AbortSignal,
+  ): Promise<Transcript[]> {
     const lease = await this.options.repositories.audioAssets.materializeReadableAsset(asset);
     const readableAsset: AudioAsset = { ...asset, storedPath: lease.filePath };
     try {
       // Injectable override for tests takes precedence.
       if (this.options.transcribeAudio) {
-        return await this.options.transcribeAudio(readableAsset);
+        return await this.options.transcribeAudio(readableAsset, signal);
       }
 
-      const mode = this.options.importProviderMode ?? 'local_first';
-      const resolved = resolveImportSTTProvider({
-        mode,
+      const resolved = resolveRecordedImportSTTProvider({
+        provider,
         ...this.options.importResolverOptions,
       });
-      return await resolved.transcriber.transcribeFile(readableAsset);
+      return await resolved.transcriber.transcribeFile(readableAsset, signal);
     } finally {
       await lease.cleanup();
     }
   }
 }
 
-export async function transcribeAudioWithDeepgram(asset: AudioAsset): Promise<Transcript[]> {
+export async function transcribeAudioWithDeepgram(
+  asset: AudioAsset,
+  signal?: AbortSignal | undefined,
+): Promise<Transcript[]> {
   const apiKey = (await secretStore.get('deepgram_api_key')) ?? process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
     throw new Error('Deepgram API key is not configured');
   }
 
   const audio = await readFile(asset.storedPath);
-  const response = await fetch(buildDeepgramPrerecordedUrl(), {
+  const requestInit: RequestInit = {
     method: 'POST',
     headers: {
       Authorization: `Token ${apiKey}`,
       'Content-Type': asset.mimeType,
     },
     body: audio,
-  });
+  };
+  if (signal) {
+    requestInit.signal = signal;
+  }
+  const response = await fetch(buildDeepgramPrerecordedUrl(), requestInit);
 
   if (!response.ok) {
     throw new Error(`Deepgram prerecorded STT failed: ${response.status}`);
@@ -147,6 +266,15 @@ export async function transcribeAudioWithDeepgram(asset: AudioAsset): Promise<Tr
       endMs: 0,
     },
   ];
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) {
+    return;
+  }
+  const error = new Error('STT transcription was aborted');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function buildDeepgramPrerecordedUrl(): string {

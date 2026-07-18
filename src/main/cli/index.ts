@@ -79,6 +79,7 @@ async function generateMeetingMinuteForCli(input: {
   const meetingMinute: MeetingMinute = {
     id: randomUUID(),
     callId: input.callId,
+    transcriptRevisionId: null,
     source: input.source,
     productId: input.productId,
     summary: llmContent?.summary ?? `直近の発話: ${summarySource}`,
@@ -95,6 +96,7 @@ async function generateMeetingMinuteForCli(input: {
     (finding): ReviewTask => ({
       id: randomUUID(),
       callId: input.callId,
+      transcriptRevisionId: null,
       meetingMinuteId: meetingMinute.id,
       findingId: finding.id,
       severity: finding.severity,

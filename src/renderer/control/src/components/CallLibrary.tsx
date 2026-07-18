@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   AudioAsset,
   AudioSttJob,
+  AudioSttProvider,
   CallSession,
   CloudAudioUploadProcessResult,
   MeetingMinute,
   ProductId,
   Transcript,
+  TranscriptRevision,
   TranscriptSegment,
 } from '@shared/types';
 import { parseLeadingTimestamp } from '@shared/time';
@@ -31,9 +33,13 @@ export function CallLibrary(props: {
 }): JSX.Element {
   const [savedCalls, setSavedCalls] = useState<CallSession[]>([]);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const selectedCallIdRef = useRef<string | null>(null);
   const [savedTranscripts, setSavedTranscripts] = useState<TranscriptSegment[]>([]);
+  const [transcriptRevisions, setTranscriptRevisions] = useState<TranscriptRevision[]>([]);
   const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
   const [sttJobs, setSttJobs] = useState<AudioSttJob[]>([]);
+  const [retryReasons, setRetryReasons] = useState<Record<string, string>>({});
+  const [retryProviders, setRetryProviders] = useState<Record<string, AudioSttProvider>>({});
   const [meetingMinute, setMeetingMinute] = useState<MeetingMinute | null>(null);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [generatingMinutes, setGeneratingMinutes] = useState(false);
@@ -42,9 +48,9 @@ export function CallLibrary(props: {
   const [cloudUploadResult, setCloudUploadResult] =
     useState<CloudAudioUploadProcessResult | null>(null);
   const [uploadConsentGranted, setUploadConsentGranted] = useState(false);
+  selectedCallIdRef.current = selectedCallId;
 
   useEffect(() => {
-    void window.api.minutes.get().then(setMeetingMinute);
     void window.api.call.list().then((calls) => {
       setSavedCalls(calls);
       setSelectedCallId(calls[0]?.id ?? null);
@@ -55,15 +61,28 @@ export function CallLibrary(props: {
     setHighlightedSegmentId(null);
     if (!selectedCallId) {
       setSavedTranscripts([]);
+      setTranscriptRevisions([]);
       setAudioAssets([]);
       setSttJobs([]);
       return;
     }
 
-    void window.api.transcripts.list(selectedCallId).then(setSavedTranscripts);
-    void window.api.audioAssets.list(selectedCallId).then(setAudioAssets);
-    void window.api.sttJobs.list(selectedCallId).then(setSttJobs);
+    let active = true;
+    void refreshCallArtifacts(selectedCallId, () => active);
+    return () => {
+      active = false;
+    };
   }, [selectedCallId]);
+
+  useEffect(() => {
+    if (!selectedCallId || !sttJobs.some((job) => job.status === 'running')) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void window.api.sttJobs.list(selectedCallId).then(setSttJobs);
+    }, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [selectedCallId, sttJobs]);
 
   const selectedCall = savedCalls.find((call) => call.id === selectedCallId) ?? null;
   const selectedMinute =
@@ -77,6 +96,26 @@ export function CallLibrary(props: {
     }
   };
 
+  const refreshCallArtifacts = async (
+    callId: string,
+    shouldApply: () => boolean = () => true,
+  ): Promise<void> => {
+    const revisions = await window.api.transcripts.listRevisions(callId);
+    const activeRevisionId = revisions.find((revision) => revision.active)?.id ?? null;
+    const [transcripts, assets, jobs, minute] = await Promise.all([
+      window.api.transcripts.list(callId),
+      window.api.audioAssets.list(callId),
+      window.api.sttJobs.list(callId),
+      window.api.minutes.get({ callId, transcriptRevisionId: activeRevisionId }),
+    ]);
+    if (!shouldApply()) return;
+    setSavedTranscripts(transcripts);
+    setTranscriptRevisions(revisions);
+    setAudioAssets(assets);
+    setSttJobs(jobs);
+    setMeetingMinute(minute);
+  };
+
   const importAudio = async (): Promise<void> => {
     const result = await window.api.audioAssets.import(props.productId, createUploadConsent());
     if (!result) {
@@ -86,6 +125,8 @@ export function CallLibrary(props: {
     setAudioAssets([result.asset]);
     setSttJobs(await window.api.sttJobs.list(result.call.id));
     setSavedTranscripts([]);
+    setTranscriptRevisions([]);
+    setMeetingMinute(null);
   };
 
   const importAndProcessAudio = async (): Promise<void> => {
@@ -99,9 +140,7 @@ export function CallLibrary(props: {
         return;
       }
       await refreshCalls(result.call.id);
-      setAudioAssets([result.asset]);
-      setSttJobs([result.job]);
-      setSavedTranscripts(await window.api.transcripts.list(result.call.id));
+      await refreshCallArtifacts(result.call.id);
       setMeetingMinute(result.meetingMinute);
     } finally {
       setProcessingAudio(false);
@@ -133,12 +172,32 @@ export function CallLibrary(props: {
       current.map((job) => (job.id === jobId ? { ...job, status: 'running' } : job)),
     );
     const job = await window.api.sttJobs.run(jobId);
-    setSttJobs((current) => current.map((candidate) => (candidate.id === job.id ? job : candidate)));
-    if (selectedCallId) {
-      setSavedTranscripts(await window.api.transcripts.list(selectedCallId));
+    if (selectedCallIdRef.current === job.callId) {
+      await refreshCallArtifacts(job.callId, () => selectedCallIdRef.current === job.callId);
     }
-    if (job.status === 'completed') {
-      setMeetingMinute(await window.api.minutes.get());
+  };
+
+  const retrySttJob = async (job: AudioSttJob): Promise<void> => {
+    const reason = retryReasons[job.id]?.trim() || '文字起こし品質の再確認';
+    const provider = retryProviders[job.id] ?? job.provider;
+    const retriedJob = await window.api.sttJobs.retry(job.id, reason, provider);
+    setSttJobs((current) => [retriedJob, ...current]);
+    await runSttJob(retriedJob.id);
+  };
+
+  const cancelSttJob = async (jobId: string): Promise<void> => {
+    const cancelledJob = await window.api.sttJobs.cancel(jobId);
+    setSttJobs((current) =>
+      current.map((candidate) => (candidate.id === cancelledJob.id ? cancelledJob : candidate)),
+    );
+  };
+
+  const activateTranscriptRevision = async (revisionId: string): Promise<void> => {
+    if (!selectedCallId) return;
+    const callId = selectedCallId;
+    await window.api.transcripts.activateRevision(callId, revisionId);
+    if (selectedCallIdRef.current === callId) {
+      await refreshCallArtifacts(callId, () => selectedCallIdRef.current === callId);
     }
   };
 
@@ -317,6 +376,32 @@ export function CallLibrary(props: {
                   </div>
                 </div>
 
+                {transcriptRevisions.length > 0 && (
+                  <label className="mb-4 block rounded border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+                    <span className="mb-2 block font-medium text-zinc-300">文字起こし履歴</span>
+                    <select
+                      aria-label="文字起こし履歴"
+                      value={transcriptRevisions.find((revision) => revision.active)?.id ?? ''}
+                      onChange={(event) =>
+                        void activateTranscriptRevision(event.currentTarget.value)
+                      }
+                      className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-200"
+                    >
+                      {transcriptRevisions.map((revision) => (
+                        <option key={revision.id} value={revision.id}>
+                          v{revision.revisionNumber} /{' '}
+                          {revision.origin === 'live' ? 'オリジナル' : revision.provider} /{' '}
+                          {revision.segmentCount}件
+                          {revision.reason ? ` / ${revision.reason}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-2 block text-zinc-600">
+                      過去版は削除せず保持し、切替時にコンプラ判定と議事録を再生成します。
+                    </span>
+                  </label>
+                )}
+
                 <TranscriptBubbles
                   entries={savedTranscripts.map((segment) => ({
                     id: segment.id,
@@ -371,16 +456,75 @@ export function CallLibrary(props: {
                               </span>
                             </div>
                             <div className="mt-1 text-zinc-500">
-                              {job.provider} / asset {job.audioAssetId.slice(0, 8)}
+                              {job.provider} / attempt {job.attempt} / asset{' '}
+                              {job.audioAssetId.slice(0, 8)}
                             </div>
-                            <button
-                              type="button"
-                              disabled={job.status === 'running' || job.status === 'completed'}
-                              onClick={() => void runSttJob(job.id)}
-                              className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              STT実行
-                            </button>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded bg-zinc-950">
+                              <div
+                                className="h-full bg-overlay-success transition-[width]"
+                                style={{ width: `${job.progressPercent}%` }}
+                              />
+                            </div>
+                            <div className="mt-1 text-[10px] text-zinc-600">
+                              工程目安 {job.progressPercent}%
+                              {job.retryReason ? ` / ${job.retryReason}` : ''}
+                            </div>
+                            {job.status === 'queued' && (
+                              <button
+                                type="button"
+                                onClick={() => void runSttJob(job.id)}
+                                className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                              >
+                                STT実行
+                              </button>
+                            )}
+                            {job.status === 'running' && (
+                              <button
+                                type="button"
+                                disabled={job.progressPercent >= 90}
+                                onClick={() => void cancelSttJob(job.id)}
+                                className="mt-2 rounded border border-red-900 px-2 py-1 text-[11px] text-red-300 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {job.progressPercent >= 90 ? '確定処理中' : '処理をキャンセル'}
+                              </button>
+                            )}
+                            {['completed', 'failed', 'cancelled'].includes(job.status) && (
+                              <div className="mt-3 grid gap-2 md:grid-cols-[1fr_170px_auto]">
+                                <input
+                                  aria-label={`再処理理由 ${job.id.slice(0, 8)}`}
+                                  value={retryReasons[job.id] ?? ''}
+                                  onChange={(event) =>
+                                    setRetryReasons((current) => ({
+                                      ...current,
+                                      [job.id]: event.currentTarget.value,
+                                    }))
+                                  }
+                                  placeholder="再処理理由"
+                                  className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200"
+                                />
+                                <select
+                                  aria-label={`再処理provider ${job.id.slice(0, 8)}`}
+                                  value={retryProviders[job.id] ?? job.provider}
+                                  onChange={(event) =>
+                                    setRetryProviders((current) => ({
+                                      ...current,
+                                      [job.id]: event.currentTarget.value as AudioSttProvider,
+                                    }))
+                                  }
+                                  className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200"
+                                >
+                                  <option value="apple_speech_analyzer">Apple SpeechAnalyzer</option>
+                                  <option value="deepgram">Deepgram</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => void retrySttJob(job)}
+                                  className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                                >
+                                  再文字起こし
+                                </button>
+                              </div>
+                            )}
                             {job.errorMessage && (
                               <div className="mt-1 text-overlay-objection">{job.errorMessage}</div>
                             )}

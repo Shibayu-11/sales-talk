@@ -14,6 +14,7 @@ function task(
   return {
     id: `${createdAt}-${severity}-${status}`,
     callId: 'c',
+    transcriptRevisionId: null,
     meetingMinuteId: 'm',
     findingId: 'f',
     severity,

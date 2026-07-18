@@ -3,6 +3,9 @@ import {
   AudioCaptureStatusSchema,
   AudioDiagnosticSessionResultSchema,
   AudioChunkSchema,
+  AudioSttJobCancelInputSchema,
+  AudioSttJobRetryInputSchema,
+  AudioSttJobSchema,
   AuditActionSchema,
   CallStartInputSchema,
   CloudActionTokenResultSchema,
@@ -13,13 +16,19 @@ import {
   CloudOrganizationMembershipStatusInputSchema,
   CloudOrganizationUserSchema,
   KnowledgeSearchInputSchema,
+  MeetingMinuteSchema,
+  MinutesGetInputSchema,
   ObjectionResponseSchema,
   OverlayLayerSchema,
   RecoveryRetentionInputSchema,
   RecoverySummarySchema,
+  ReviewTaskSchema,
   SecretSetInputSchema,
   SonnetResponseOutputSchema,
   StartRecordingSessionResultSchema,
+  TranscriptRevisionActivateInputSchema,
+  TranscriptRevisionSchema,
+  TranscriptSegmentSchema,
 } from '../../src/shared/schemas';
 
 const baseSonnetOutput = {
@@ -351,6 +360,130 @@ describe('shared schemas', () => {
           capturedAt: null,
           noticeVersion: 'local-v1',
         },
+      }),
+    ).toThrow();
+  });
+
+  it('validates re-transcription schemas and backward-compatible defaults', () => {
+    const legacySegment = TranscriptSegmentSchema.parse({
+      id: '00000000-0000-4000-8000-000000000001',
+      callId: '00000000-0000-4000-8000-000000000002',
+      speaker: 'counterpart',
+      text: '旧形式',
+      isFinal: true,
+      startMs: 0,
+      endMs: 100,
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    expect(legacySegment.revisionId).toBeNull();
+    expect(legacySegment.sourceJobId).toBeNull();
+
+    const legacyJob = AudioSttJobSchema.parse({
+      id: '00000000-0000-4000-8000-000000000003',
+      callId: '00000000-0000-4000-8000-000000000002',
+      audioAssetId: '00000000-0000-4000-8000-000000000004',
+      provider: 'deepgram',
+      status: 'queued',
+      errorMessage: null,
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    expect(legacyJob.runToken).toBeNull();
+    expect(legacyJob.progressPercent).toBe(0);
+    expect(legacyJob.attempt).toBe(1);
+    expect(legacyJob.retryReason).toBeNull();
+    expect(legacyJob.transcriptRevisionId).toBeNull();
+
+    expect(
+      TranscriptRevisionSchema.parse({
+        id: '00000000-0000-4000-8000-000000000005',
+        callId: '00000000-0000-4000-8000-000000000002',
+        origin: 'live',
+        revisionNumber: 1,
+        reason: 'original_live_transcript',
+        segmentCount: 1,
+        createdAt: '2026-07-18T00:00:00.000Z',
+      }),
+    ).toMatchObject({
+      audioAssetId: null,
+      sttJobId: null,
+      provider: null,
+      active: false,
+    });
+
+    expect(
+      AudioSttJobRetryInputSchema.parse({
+        jobId: '00000000-0000-4000-8000-000000000003',
+        reason: 'operator_retry',
+        provider: 'apple_speech_analyzer',
+      }),
+    ).toMatchObject({ reason: 'operator_retry', provider: 'apple_speech_analyzer' });
+    expect(
+      AudioSttJobCancelInputSchema.parse({
+        jobId: '00000000-0000-4000-8000-000000000003',
+      }).jobId,
+    ).toBe('00000000-0000-4000-8000-000000000003');
+    expect(
+      TranscriptRevisionActivateInputSchema.parse({
+        callId: '00000000-0000-4000-8000-000000000002',
+        revisionId: '00000000-0000-4000-8000-000000000005',
+      }).revisionId,
+    ).toBe('00000000-0000-4000-8000-000000000005');
+    expect(AuditActionSchema.parse('stt_job.retried')).toBe('stt_job.retried');
+    expect(AuditActionSchema.parse('stt_job.cancelled')).toBe('stt_job.cancelled');
+    expect(AuditActionSchema.parse('transcript.revision_created')).toBe(
+      'transcript.revision_created',
+    );
+    expect(AuditActionSchema.parse('transcript.revision_activated')).toBe(
+      'transcript.revision_activated',
+    );
+  });
+
+  it('defaults meeting analysis revision fields for legacy payloads', () => {
+    const legacyMinute = MeetingMinuteSchema.parse({
+      id: '00000000-0000-4000-8000-000000000601',
+      callId: '00000000-0000-4000-8000-000000000602',
+      source: 'manual_transcript',
+      productId: 'real_estate',
+      summary: '旧議事録',
+      agreed: [],
+      pending: [],
+      decisions: [],
+      numbers: [],
+      complianceFindings: [],
+      generatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    expect(legacyMinute.transcriptRevisionId).toBeNull();
+
+    const legacyTask = ReviewTaskSchema.parse({
+      id: '00000000-0000-4000-8000-000000000603',
+      callId: '00000000-0000-4000-8000-000000000602',
+      meetingMinuteId: '00000000-0000-4000-8000-000000000601',
+      findingId: '00000000-0000-4000-8000-000000000604',
+      severity: 'high',
+      status: 'open',
+      title: '高リスク発話の確認',
+      quotedText: '断定表現',
+      reason: '将来利益を断定しています。',
+      recommendedAction: '条件とリスクを説明します。',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    expect(legacyTask.transcriptRevisionId).toBeNull();
+
+    expect(MinutesGetInputSchema.parse(undefined)).toEqual({});
+    expect(
+      MinutesGetInputSchema.parse({
+        callId: '00000000-0000-4000-8000-000000000602',
+        transcriptRevisionId: null,
+      }),
+    ).toEqual({
+      callId: '00000000-0000-4000-8000-000000000602',
+      transcriptRevisionId: null,
+    });
+    expect(() =>
+      MinutesGetInputSchema.parse({
+        transcriptRevisionId: 'not-a-uuid',
       }),
     ).toThrow();
   });

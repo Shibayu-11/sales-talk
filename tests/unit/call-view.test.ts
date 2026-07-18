@@ -35,6 +35,8 @@ function segment(id: string, text: string, startMs: number, endMs: number | null
   return {
     id,
     callId: 'call-1',
+    revisionId: null,
+    sourceJobId: null,
     speaker: 'counterpart',
     text,
     isFinal: true,
