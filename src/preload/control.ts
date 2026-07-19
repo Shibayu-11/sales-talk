@@ -12,6 +12,7 @@ import type {
   CloudOrganizationUser,
   ProductId,
   KnowledgeEntry,
+  KnowledgeCandidate,
   Transcript,
   ConnectionState,
   MeetingMinute,
@@ -142,6 +143,9 @@ const IPC = {
     list: 'knowledge:list',
     create: 'knowledge:create',
     delete: 'knowledge:delete',
+    candidatesList: 'knowledge:candidates-list',
+    extractFromMinute: 'knowledge:extract-from-minute',
+    reviewCandidate: 'knowledge:review-candidate',
     seedDefaults: 'knowledge:seed-defaults',
   },
   minutes: {
@@ -384,6 +388,15 @@ const api: RendererApi = {
       ipcRenderer.invoke(IPC.knowledge.list, productId),
     create: (input): Promise<KnowledgeEntry> => ipcRenderer.invoke(IPC.knowledge.create, input),
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.knowledge.delete, id),
+    listCandidates: (input): Promise<KnowledgeCandidate[]> =>
+      ipcRenderer.invoke(IPC.knowledge.candidatesList, input),
+    extractFromMinute: (
+      callId: string,
+      transcriptRevisionId?: string | null,
+    ): Promise<KnowledgeCandidate[]> =>
+      ipcRenderer.invoke(IPC.knowledge.extractFromMinute, { callId, transcriptRevisionId }),
+    reviewCandidate: (input): Promise<KnowledgeCandidate> =>
+      ipcRenderer.invoke(IPC.knowledge.reviewCandidate, input),
     seedDefaults: (opts?: { productId?: ProductId; force?: boolean }) =>
       ipcRenderer.invoke(IPC.knowledge.seedDefaults, opts),
   },

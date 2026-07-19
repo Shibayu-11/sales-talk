@@ -33,16 +33,28 @@ import { localActivityStore } from './local-activity-store';
 import { localAudioAssetStore, type AudioAssetReadableLease } from './local-audio-asset-store';
 import { localCallStore } from './local-call-store';
 import { localComplianceStore } from './local-compliance-store';
-import { localKnowledgeStore } from './local-knowledge-store';
+import {
+  localKnowledgeStore,
+  type KnowledgeEntryCreateMetadata,
+  type KnowledgeScope,
+} from './local-knowledge-store';
 import { localOrganizationStore } from './local-organization-store';
 import { localSttJobStore } from './local-stt-job-store';
 import { localTranscriptStore } from './local-transcript-store';
 
 export interface KnowledgeEntryRepository {
-  list(productId: ProductId): Promise<KnowledgeEntry[]>;
-  search(query: string, productId: ProductId, limit: number): Promise<KnowledgeEntry[]>;
-  create(input: KnowledgeCreateInput): Promise<KnowledgeEntry>;
-  delete(id: string): Promise<void>;
+  list(productId: ProductId, scope?: KnowledgeScope): Promise<KnowledgeEntry[]>;
+  search(
+    query: string,
+    productId: ProductId,
+    limit: number,
+    scope?: KnowledgeScope,
+  ): Promise<KnowledgeEntry[]>;
+  create(
+    input: KnowledgeCreateInput,
+    metadata?: KnowledgeEntryCreateMetadata,
+  ): Promise<KnowledgeEntry>;
+  delete(id: string, scope?: KnowledgeScope): Promise<void>;
 }
 
 export interface CallRepository {

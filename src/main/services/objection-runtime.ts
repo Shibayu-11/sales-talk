@@ -3,7 +3,7 @@ import type { BrowserWindow } from 'electron';
 import type { ProductId } from '@shared/types';
 import { logger } from '../logger';
 import { createAnthropicLlmProvider } from './anthropic';
-import { createRuntimeKnowledgeSearchService } from './knowledge-runtime';
+import { createCompanyScopedKnowledgeSearchService } from './company-knowledge-search';
 import { ObjectionLlmService } from './llm';
 import type { LlmProvider } from './llm';
 import { isMockPipelineEnabled } from './dev-mode';
@@ -32,7 +32,7 @@ export function createRuntimeObjectionPipelineService(
       detectObjection: async (input) => (await getProvider()).detectObjection(input),
       generateObjectionResponse: async (input) => (await getProvider()).generateObjectionResponse(input),
     }),
-    knowledge: createRuntimeKnowledgeSearchService(),
+    knowledge: createCompanyScopedKnowledgeSearchService(),
     getProductId,
     callbacks: {
       onDetected: (objection) => {

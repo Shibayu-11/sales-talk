@@ -17,12 +17,22 @@ const objection: DetectedObjection = {
 
 const knowledgeEntry: KnowledgeEntry = {
   id: '00000000-0000-4000-8000-000000000010',
+  tenantId: null,
+  organizationId: null,
   productId: 'real_estate',
   objectionType: 'price',
   trigger: '価格が高い',
   response: '総額で比較します',
   reasoning: '価格反論',
   riskFlags: [],
+  sourceType: 'builtin',
+  sourceCallId: null,
+  sourceMeetingMinuteId: null,
+  sourceTranscriptRevisionId: null,
+  status: 'approved',
+  fingerprint: null,
+  approvedByUserId: null,
+  approvedAt: null,
   createdAt: '2026-04-30T00:00:00Z',
   updatedAt: '2026-04-30T00:00:00Z',
 };

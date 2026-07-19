@@ -136,6 +136,9 @@ export const IPC = {
     create: 'knowledge:create',
     update: 'knowledge:update',
     delete: 'knowledge:delete',
+    candidatesList: 'knowledge:candidates-list',
+    extractFromMinute: 'knowledge:extract-from-minute',
+    reviewCandidate: 'knowledge:review-candidate',
     seedDefaults: 'knowledge:seed-defaults',
   },
 

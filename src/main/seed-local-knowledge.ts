@@ -54,7 +54,7 @@ export async function seedLocalKnowledge(
         skipped += 1;
         continue;
       }
-      await store.create(seed);
+      await store.create(seed, { sourceType: 'builtin' });
       existingTriggers.add(seed.trigger);
       created += 1;
     }

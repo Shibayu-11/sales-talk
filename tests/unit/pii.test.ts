@@ -21,9 +21,15 @@ describe('PII masking', () => {
     });
 
     expect(masked).toEqual({
-      transcript: '田中さんのメールは [redacted-email] です',
+      transcript: '[redacted-name]のメールは [redacted-email] です',
       nested: { phone: '[redacted-phone]' },
       rows: ['[redacted-phone]'],
     });
+  });
+
+  it('masks Japanese customer names, postal codes, and addresses', () => {
+    expect(
+      maskPiiInText('山田様 〒100-0001 東京都千代田区千代田1丁目1番地'),
+    ).toBe('[redacted-name] [redacted-postal-code] [redacted-address]');
   });
 });

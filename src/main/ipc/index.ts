@@ -33,7 +33,10 @@ import {
   DevInjectTranscriptInputSchema,
   FeedbackSchema,
   KnowledgeCreateInputSchema,
+  KnowledgeCandidateListInputSchema,
+  KnowledgeCandidateReviewInputSchema,
   KnowledgeDeleteInputSchema,
+  KnowledgeExtractInputSchema,
   KnowledgeSearchInputSchema,
   KnowledgeSeedDefaultsInputSchema,
   MinutesGenerateInputSchema,
@@ -68,6 +71,7 @@ import type {
   ComplianceRule,
   ComplianceRuleSet,
   CurrentUserContext,
+  KnowledgeCandidate,
   MeetingMinute,
   OrganizationPermission,
   PermissionState,
@@ -91,8 +95,9 @@ import {
 import { secretStore } from '../services/secrets';
 import { settingsStore } from '../services/settings';
 import { setCallModeLogging } from '../logger';
-import { createRuntimeKnowledgeSearchService } from '../services/knowledge-runtime';
 import { localKnowledgeStore } from '../services/local-knowledge-store';
+import { extractCompanyKnowledgeCandidates } from '../services/company-knowledge';
+import { createCompanyScopedKnowledgeSearchService } from '../services/company-knowledge-search';
 import { seedLocalKnowledge } from '../seed-local-knowledge';
 import { createRuntimeObjectionPipelineService } from '../services/objection-runtime';
 import type { ObjectionPipelineService } from '../services/objection-pipeline';
@@ -131,11 +136,16 @@ import {
   issueCloudflarePasswordReset,
   listCloudflareOrganizations,
   listCloudflareOrganizationUsers,
+  listCloudflareKnowledgeCandidates,
   loginCloudflare,
   logoutCloudflare,
+  reviewCloudflareKnowledgeCandidate,
+  saveCloudflareKnowledgeCandidates,
   setCloudflareMembershipStatus,
   uploadAudioToCloudAndProcess,
 } from '../services/cloudflare-api';
+import { applyOutputGuardrail } from '../services/guardrail';
+import { maskPiiInText } from '../services/pii';
 
 /**
  * Register all IPC handlers. Per PRD §23: Main concentrates all logic.
@@ -147,7 +157,7 @@ interface IpcWindowAccessors {
 
 let callState: CallState = { status: 'idle' };
 const sharingState: SharingState = { status: 'not_sharing' };
-const knowledgeSearchService = createRuntimeKnowledgeSearchService();
+const companyKnowledgeSearchService = createCompanyScopedKnowledgeSearchService();
 // audioSttJobRunner is initialized lazily so it can pick up current settings at job creation time.
 // Per W3-C: importProviderMode is resolved from settings each time a job is created.
 const audioSttJobRunner = new AudioSttJobRunner({
@@ -590,25 +600,126 @@ export function registerIpcHandlers(windows: IpcWindowAccessors): void {
     const input = KnowledgeSearchInputSchema.parse(payload);
     logger.debug({ productId: input.productId, limit: input.limit }, 'knowledge search requested');
     const limit = input.limit ?? 5;
-    const localResults = await appRepositories.knowledge.search(input.query, input.productId, limit);
-    const remoteResults = await knowledgeSearchService.search({
-      query: input.query,
-      productId: input.productId,
-      limit,
-    });
-    return [...localResults, ...remoteResults].slice(0, limit);
+    return companyKnowledgeSearchService.search({ ...input, limit });
   });
-  ipcMain.handle(IPC.knowledge.list, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.knowledge.list, async (_event, payload: unknown) => {
     const productId = ProductIdSchema.parse(payload);
-    return appRepositories.knowledge.list(productId);
+    const context = await appRepositories.organizations.assertPermission('calls:read');
+    return appRepositories.knowledge.list(productId, knowledgeScope(context));
   });
-  ipcMain.handle(IPC.knowledge.create, (_event, payload: unknown) => {
+  ipcMain.handle(IPC.knowledge.create, async (_event, payload: unknown) => {
     const input = KnowledgeCreateInputSchema.parse(payload);
-    return appRepositories.knowledge.create(input);
+    const context = await appRepositories.organizations.assertPermission('knowledge:manage');
+    const guardrail = applyOutputGuardrail({
+      productId: input.productId,
+      text: `${input.trigger}\n${input.response}`,
+      ...(input.riskFlags ? { riskFlags: input.riskFlags } : {}),
+    });
+    if (!guardrail.allowed) {
+      throw new Error('Unsafe knowledge cannot be registered');
+    }
+    const entry = await appRepositories.knowledge.create(input, {
+      scope: knowledgeScope(context),
+      sourceType: 'manual',
+      approvedByUserId: context.user.id,
+    });
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'knowledge.entry_created',
+        targetType: 'knowledge_entry',
+        targetId: entry.id,
+        metadata: { productId: entry.productId, sourceType: entry.sourceType },
+      }),
+    ]);
+    return entry;
   });
   ipcMain.handle(IPC.knowledge.delete, async (_event, payload: unknown) => {
     const id = KnowledgeDeleteInputSchema.parse(payload);
-    await appRepositories.knowledge.delete(id);
+    const context = await appRepositories.organizations.assertPermission('knowledge:manage');
+    await appRepositories.knowledge.delete(id, knowledgeScope(context));
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action: 'knowledge.entry_deleted',
+        targetType: 'knowledge_entry',
+        targetId: id,
+        metadata: {},
+      }),
+    ]);
+  });
+  ipcMain.handle(IPC.knowledge.candidatesList, async (_event, payload: unknown) => {
+    const input = KnowledgeCandidateListInputSchema.parse(payload) ?? {};
+    const context = await appRepositories.organizations.assertPermission('calls:read');
+    try {
+      await syncPendingLocalKnowledgeCandidates(context, input.productId);
+      const candidates = await listCloudflareKnowledgeCandidates(input);
+      await localKnowledgeStore.syncCandidates(candidates);
+      return candidates;
+    } catch (error) {
+      logger.warn({ error }, 'company knowledge candidate list degraded to local cache');
+      return localKnowledgeStore.listCandidates(knowledgeScope(context), {
+        ...(input.productId ? { productId: input.productId } : {}),
+        ...(input.status ? { status: input.status } : {}),
+      });
+    }
+  });
+  ipcMain.handle(IPC.knowledge.extractFromMinute, async (_event, payload: unknown) => {
+    const input = KnowledgeExtractInputSchema.parse(payload);
+    const { call, context } = await assertCallInCurrentOrganization(
+      input.callId,
+      'transcripts:manage',
+    );
+    const transcriptRevisionId =
+      input.transcriptRevisionId !== undefined
+        ? input.transcriptRevisionId
+        : await getActiveTranscriptRevisionId(call.id);
+    const meetingMinute = await getMeetingMinuteForRevision(call.id, transcriptRevisionId);
+    if (!meetingMinute) {
+      throw new Error('Meeting minute was not found');
+    }
+    return extractAndSaveCompanyKnowledgeCandidates(call, context, meetingMinute);
+  });
+  ipcMain.handle(IPC.knowledge.reviewCandidate, async (_event, payload: unknown) => {
+    const input = KnowledgeCandidateReviewInputSchema.parse(payload);
+    const context = await appRepositories.organizations.assertPermission('knowledge:manage');
+    const scope = knowledgeScope(context);
+    const candidate = (await localKnowledgeStore.listCandidates(scope)).find(
+      (item) => item.id === input.id,
+    );
+    if (candidate && input.decision === 'approve') {
+      const guardrail = applyOutputGuardrail({
+        productId: candidate.productId,
+        text: `${input.title ?? candidate.title}\n${input.content ?? candidate.content}`,
+        riskFlags: candidate.riskFlags,
+      });
+      if (!guardrail.allowed || candidate.legalRisk === 'blocked') {
+        throw new Error('Blocked knowledge candidate cannot be approved');
+      }
+    }
+
+    const reviewed = await reviewCloudflareKnowledgeCandidate(input);
+    if (candidate) {
+      await localKnowledgeStore.reviewCandidate(scope, {
+        ...input,
+        reviewerUserId: context.user.id,
+      });
+    }
+    await localKnowledgeStore.syncCandidates([reviewed]);
+    await appRepositories.auditLogs.appendAuditLogs([
+      createUserAuditLogEntry(context, {
+        action:
+          input.decision === 'approve'
+            ? 'knowledge.candidate_approved'
+            : 'knowledge.candidate_rejected',
+        targetType: 'knowledge_candidate',
+        targetId: input.id,
+        metadata: {
+          status: reviewed.status,
+          productId: reviewed.productId,
+          reviewNote: input.reviewNote ?? null,
+        },
+      }),
+    ]);
+    return reviewed;
   });
   ipcMain.handle(IPC.knowledge.seedDefaults, async (_event, payload: unknown) => {
     const input = KnowledgeSeedDefaultsInputSchema.parse(payload);
@@ -1662,6 +1773,11 @@ async function generateMeetingMinuteForCall(input: {
       }),
     ),
   ]);
+  await extractAndSaveCompanyKnowledgeCandidates(call, null, meetingMinute).catch(
+    (error: unknown) => {
+      logger.warn({ error, callId: call.id }, 'company knowledge extraction degraded');
+    },
+  );
   return meetingMinute;
 }
 
@@ -1691,6 +1807,164 @@ async function getMeetingMinuteForRevision(
     return null;
   }
   return appRepositories.minutes.bindLegacyAnalysisToRevision(callId, transcriptRevisionId);
+}
+
+async function extractAndSaveCompanyKnowledgeCandidates(
+  call: CallSession,
+  userContext: CurrentUserContext | null,
+  meetingMinute: MeetingMinute,
+): Promise<KnowledgeCandidate[]> {
+  const segments = await appRepositories.transcripts.listTranscripts(
+    call.id,
+    meetingMinute.transcriptRevisionId ?? undefined,
+  );
+  const finalSegments = segments.filter((segment) => segment.isFinal && segment.text.trim());
+  const sourceEvidenceHash = createHash('sha256')
+    .update(
+      finalSegments
+        .map((segment) =>
+          [
+            segment.id,
+            segment.speaker,
+            segment.startMs,
+            segment.endMs ?? '',
+            maskPiiInText(segment.text).normalize('NFKC').trim(),
+          ].join('\0'),
+        )
+        .join('\n'),
+    )
+    .digest('hex');
+  const severeFindings = meetingMinute.complianceFindings.filter(
+    (finding) => finding.severity === 'critical' || finding.severity === 'high',
+  );
+  const baseValidationFlags = [
+    ...(finalSegments.length === 0 ? ['missing_transcript_evidence'] : []),
+    ...(severeFindings.length > 0 ? ['high_risk_source_meeting'] : []),
+  ];
+  const extracted = extractCompanyKnowledgeCandidates({
+    tenantId: call.tenantId,
+    organizationId: call.organizationId,
+    minute: meetingMinute,
+  });
+  const drafts = extracted.map((candidate) => {
+    const title = knowledgeCandidateTitle(candidate.kind);
+    const guardrail = applyOutputGuardrail({
+      productId: meetingMinute.productId,
+      text: `${title}\n${candidate.text}`,
+      riskFlags: meetingMinute.complianceFindings.map(
+        (finding) => `${finding.severity}:${finding.ruleType}`,
+      ),
+    });
+    const validationFlags = [
+      ...baseValidationFlags,
+      ...guardrail.violations.map((violation) => violation.code),
+    ];
+    return {
+      tenantId: call.tenantId,
+      organizationId: call.organizationId,
+      productId: meetingMinute.productId,
+      kind: candidate.kind,
+      title,
+      content: candidate.text,
+      reasoning: `${knowledgeCandidateTitle(candidate.kind)}として商談議事録から抽出`,
+      riskFlags: guardrail.riskFlags,
+      validationFlags: [...new Set(validationFlags)],
+      legalRisk:
+        validationFlags.length > 0
+          ? ('blocked' as const)
+          : meetingMinute.complianceFindings.length > 0
+            ? ('review' as const)
+            : ('none' as const),
+      sourceCallId: call.id,
+      sourceMeetingMinuteId: meetingMinute.id,
+      sourceTranscriptRevisionId: meetingMinute.transcriptRevisionId,
+      sourceSegmentIds: finalSegments.map((segment) => segment.id),
+      sourceEvidenceHash,
+      fingerprint: candidate.fingerprint,
+    };
+  });
+  const candidates = await localKnowledgeStore.saveCandidates(drafts);
+  if (candidates.length === 0) {
+    return [];
+  }
+  try {
+    await saveCloudflareKnowledgeCandidates(candidates);
+  } catch (error) {
+    logger.warn({ error }, 'company knowledge cloud sync deferred');
+  }
+  await appRepositories.auditLogs.appendAuditLogs([
+    userContext
+      ? createUserAuditLogEntry(userContext, {
+          action: 'knowledge.candidates_extracted',
+          targetType: 'meeting_minute',
+          targetId: meetingMinute.id,
+          metadata: {
+            callId: call.id,
+            candidateCount: candidates.length,
+            transcriptRevisionId: meetingMinute.transcriptRevisionId,
+          },
+        })
+      : createAuditLogEntry({
+          tenantId: call.tenantId,
+          organizationId: call.organizationId,
+          action: 'knowledge.candidates_extracted',
+          targetType: 'meeting_minute',
+          targetId: meetingMinute.id,
+          metadata: {
+            callId: call.id,
+            candidateCount: candidates.length,
+            transcriptRevisionId: meetingMinute.transcriptRevisionId,
+          },
+        }),
+  ]);
+  return candidates;
+}
+
+function knowledgeCandidateTitle(kind: KnowledgeCandidate['kind']): string {
+  switch (kind) {
+    case 'summary':
+      return '商談サマリー';
+    case 'agreed':
+      return '合意事項';
+    case 'decision':
+      return '意思決定';
+    case 'pending':
+      return '継続検討事項';
+    case 'number':
+      return '重要数値';
+  }
+}
+
+function knowledgeScope(context: CurrentUserContext): {
+  tenantId: string;
+  organizationId: string;
+} {
+  return { tenantId: context.tenant.id, organizationId: context.organization.id };
+}
+
+async function syncPendingLocalKnowledgeCandidates(
+  context: CurrentUserContext,
+  productId?: ProductId | undefined,
+): Promise<void> {
+  const pending = await localKnowledgeStore.listCandidates(knowledgeScope(context), {
+    ...(productId ? { productId } : {}),
+    status: 'pending',
+  });
+  const batches = new Map<string, KnowledgeCandidate[]>();
+  for (const candidate of pending) {
+    const key = [
+      candidate.sourceCallId,
+      candidate.sourceMeetingMinuteId,
+      candidate.sourceTranscriptRevisionId ?? 'none',
+    ].join(':');
+    const batch = batches.get(key) ?? [];
+    batch.push(candidate);
+    batches.set(key, batch);
+  }
+  for (const batch of batches.values()) {
+    const synchronized = await saveCloudflareKnowledgeCandidates(batch);
+    await localKnowledgeStore.syncCandidates(synchronized);
+  }
 }
 
 async function listReviewTasksForActiveRevisions(): Promise<ReviewTask[]> {

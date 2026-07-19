@@ -26,6 +26,7 @@ export const OrganizationPermissionSchema = z.enum([
   'recording:start',
   'calls:read',
   'transcripts:manage',
+  'knowledge:manage',
   'checkpoints:manage',
   'reviews:manage',
   'rules:manage',
@@ -287,6 +288,11 @@ export const AuditActionSchema = z.enum([
   'stt_job.cancelled',
   'transcript.revision_created',
   'transcript.revision_activated',
+  'knowledge.candidates_extracted',
+  'knowledge.candidate_approved',
+  'knowledge.candidate_rejected',
+  'knowledge.entry_created',
+  'knowledge.entry_deleted',
   'organization.invitation_created',
   'organization.invitation_accepted',
   'organization.password_reset_issued',
@@ -918,6 +924,53 @@ export const KnowledgeCreateInputSchema = z.object({
   riskFlags: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
 });
 
+export const KnowledgeCandidateStatusSchema = z.enum([
+  'pending',
+  'approved',
+  'rejected',
+  'superseded',
+  'duplicate',
+]);
+
+export const KnowledgeCandidateKindSchema = z.enum([
+  'summary',
+  'agreed',
+  'decision',
+  'pending',
+  'number',
+]);
+
+export const KnowledgeCandidateListInputSchema = z
+  .object({
+    productId: ProductIdSchema.optional(),
+    status: KnowledgeCandidateStatusSchema.optional(),
+  })
+  .optional();
+
+export const KnowledgeExtractInputSchema = z.object({
+  callId: z.string().uuid(),
+  transcriptRevisionId: z.string().uuid().nullable().optional(),
+});
+
+export const KnowledgeCandidateReviewInputSchema = z
+  .object({
+    id: z.string().uuid(),
+    decision: z.enum(['approve', 'reject']),
+    title: z.string().trim().min(1).max(500).optional(),
+    content: z.string().trim().min(1).max(4_000).optional(),
+    objectionType: z.string().trim().min(1).max(80).optional(),
+    reviewNote: z.string().trim().max(1_000).optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.decision === 'reject' && !input.reviewNote) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reviewNote'],
+        message: 'Rejecting a knowledge candidate requires a review note',
+      });
+    }
+  });
+
 export const KnowledgeDeleteInputSchema = z.string().uuid();
 
 export const KnowledgeSeedDefaultsInputSchema = z
@@ -934,13 +987,51 @@ export const KnowledgeSeedResultSchema = z.object({
 
 export const KnowledgeEntrySchema = z.object({
   id: z.string().uuid(),
+  tenantId: z.string().uuid().nullable().default(null),
+  organizationId: z.string().uuid().nullable().default(null),
   productId: ProductIdSchema,
   objectionType: z.string(),
   trigger: z.string(),
   response: z.string(),
   reasoning: z.string(),
   riskFlags: z.array(z.string()),
+  sourceType: z.enum(['builtin', 'manual', 'meeting', 'legacy']).default('legacy'),
+  sourceCallId: z.string().uuid().nullable().default(null),
+  sourceMeetingMinuteId: z.string().uuid().nullable().default(null),
+  sourceTranscriptRevisionId: z.string().uuid().nullable().default(null),
+  status: z.enum(['approved', 'needs_review', 'deprecated']).default('approved'),
+  fingerprint: z.string().length(64).nullable().default(null),
+  approvedByUserId: z.string().uuid().nullable().default(null),
+  approvedAt: z.string().nullable().default(null),
   embedding: z.array(z.number()).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const KnowledgeCandidateSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  productId: ProductIdSchema,
+  kind: KnowledgeCandidateKindSchema,
+  title: z.string().min(1).max(500),
+  content: z.string().min(1).max(4_000),
+  reasoning: z.string().max(1_000),
+  riskFlags: z.array(z.string()),
+  validationFlags: z.array(z.string()).default([]),
+  legalRisk: z.enum(['none', 'review', 'blocked']).default('review'),
+  sourceCallId: z.string().uuid(),
+  sourceMeetingMinuteId: z.string().uuid(),
+  sourceTranscriptRevisionId: z.string().uuid().nullable(),
+  sourceSegmentIds: z.array(z.string().uuid()).default([]),
+  sourceEvidenceHash: z.string().length(64).default('0'.repeat(64)),
+  fingerprint: z.string().length(64),
+  status: KnowledgeCandidateStatusSchema,
+  duplicateOfKnowledgeEntryId: z.string().uuid().nullable(),
+  publishedKnowledgeEntryId: z.string().uuid().nullable(),
+  reviewNote: z.string().nullable(),
+  reviewedByUserId: z.string().uuid().nullable(),
+  reviewedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

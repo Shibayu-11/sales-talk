@@ -8,10 +8,14 @@ import type {
   CloudflareConnectionStatus,
   CloudOrganization,
   CloudOrganizationUser,
+  KnowledgeCandidate,
+  KnowledgeCandidateStatus,
+  KnowledgeEntry,
   MembershipStatus,
   OrganizationRole,
   ProductId,
 } from '@shared/types';
+import { KnowledgeCandidateSchema, KnowledgeEntrySchema } from '@shared/schemas';
 import { secretStore } from './secrets';
 
 const DEFAULT_API_URL = 'https://sales-talk-api.lively-violet-0704.workers.dev';
@@ -292,6 +296,88 @@ export async function setCloudflareMembershipStatus(
     throw new Error('invalid_membership_status_response');
   }
   return user;
+}
+
+export async function listCloudflareKnowledgeCandidates(
+  input: { productId?: ProductId | undefined; status?: KnowledgeCandidateStatus | undefined } = {},
+  options: CloudflareApiOptions = {},
+): Promise<KnowledgeCandidate[]> {
+  const search = new URLSearchParams();
+  if (input.productId) search.set('productId', input.productId);
+  if (input.status) search.set('status', input.status);
+  const suffix = search.size > 0 ? `?${search.toString()}` : '';
+  const response = await authenticatedCloudflareRequest(
+    `/v1/knowledge/candidates${suffix}`,
+    options,
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'knowledge_candidates_fetch_failed'));
+  }
+  return KnowledgeCandidateSchema.array().parse(await response.json());
+}
+
+export async function saveCloudflareKnowledgeCandidates(
+  candidates: KnowledgeCandidate[],
+  options: CloudflareApiOptions = {},
+): Promise<KnowledgeCandidate[]> {
+  const response = await authenticatedCloudflareRequest(
+    '/v1/knowledge/candidates/batch',
+    options,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ candidates }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'knowledge_candidates_save_failed'));
+  }
+  return KnowledgeCandidateSchema.array().parse(await response.json());
+}
+
+export async function reviewCloudflareKnowledgeCandidate(
+  input: {
+    id: string;
+    decision: 'approve' | 'reject';
+    title?: string | undefined;
+    content?: string | undefined;
+    objectionType?: string | undefined;
+    reviewNote?: string | undefined;
+  },
+  options: CloudflareApiOptions = {},
+): Promise<KnowledgeCandidate> {
+  const response = await authenticatedCloudflareRequest(
+    `/v1/knowledge/candidates/${encodeURIComponent(input.id)}/review`,
+    options,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'knowledge_candidate_review_failed'));
+  }
+  return KnowledgeCandidateSchema.parse(await response.json());
+}
+
+export async function searchCloudflareKnowledge(
+  input: { query: string; productId: ProductId; limit: number },
+  options: CloudflareApiOptions = {},
+): Promise<KnowledgeEntry[]> {
+  const search = new URLSearchParams({
+    query: input.query,
+    productId: input.productId,
+    limit: String(input.limit),
+  });
+  const response = await authenticatedCloudflareRequest(
+    `/v1/knowledge/search?${search.toString()}`,
+    options,
+  );
+  if (!response.ok) {
+    throw new Error(await responseError(response, 'knowledge_search_failed'));
+  }
+  return KnowledgeEntrySchema.array().parse(await response.json());
 }
 
 export async function uploadAudioToCloudAndProcess(

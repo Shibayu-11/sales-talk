@@ -1465,6 +1465,37 @@ async function createConditionalLifecycleAuditStatement(
     );
 }
 
+export async function createRequestAuditStatement(
+  database: D1Database,
+  context: RequestContext,
+  input: Omit<AuditInput, 'scope' | 'actor'>,
+): Promise<D1PreparedStatement> {
+  return createLifecycleAuditStatement(database, {
+    ...input,
+    scope: { tenantId: context.tenantId, organizationId: context.organizationId },
+    actor: userAuditActor(context),
+  });
+}
+
+export async function createConditionalRequestAuditStatement(
+  database: D1Database,
+  context: RequestContext,
+  input: Omit<AuditInput, 'scope' | 'actor'>,
+  existsSql: string,
+  existsBindings: Array<string | number | null>,
+): Promise<D1PreparedStatement> {
+  return createConditionalLifecycleAuditStatement(
+    database,
+    {
+      ...input,
+      scope: { tenantId: context.tenantId, organizationId: context.organizationId },
+      actor: userAuditActor(context),
+    },
+    existsSql,
+    existsBindings,
+  );
+}
+
 async function latestAuditChainHead(
   database: D1Database,
   tenantId: string,

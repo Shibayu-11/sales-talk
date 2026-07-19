@@ -95,12 +95,22 @@ function rowToCandidate(row: KnowledgeSearchRow): RankedKnowledgeCandidate {
 function rowToKnowledgeEntry(row: KnowledgeSearchRow): KnowledgeEntry {
   return {
     id: row.id,
+    tenantId: null,
+    organizationId: null,
     productId: row.product_id,
     objectionType: row.objection_type,
     trigger: row.trigger,
     response: row.response,
     reasoning: row.reasoning ?? '',
     riskFlags: row.risk_flags ?? [],
+    sourceType: 'legacy',
+    sourceCallId: null,
+    sourceMeetingMinuteId: null,
+    sourceTranscriptRevisionId: null,
+    status: 'approved',
+    fingerprint: null,
+    approvedByUserId: null,
+    approvedAt: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

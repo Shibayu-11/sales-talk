@@ -1,7 +1,7 @@
 # SalesTalk / セルログ 2軸開発計画
 
 作成日: 2026-05-25
-更新日: 2026-07-15
+更新日: 2026-07-19
 目的: 既存の Mac 商談支援に加えて、保険営業向けのスマホ録音 + コンプラ議事録を同じ業務API基盤で進める。
 
 中核方針は [セルログ AI-Native 業務API 計画](./selllog-ai-native-plan.md) を正とする。
@@ -12,7 +12,7 @@ Track A の週次実行計画は [MVP リリースロードマップ](./mvp-rele
 
 方向転換後も軸はぶれていない。入口の優先順位を変えただけで、中核は `transcript → rule engine → minutes → review → audit` の共通業務APIである。
 
-2026-07-15 時点の実装状況:
+2026-07-19 時点の実装状況:
 
 | 領域 | 状態 | メモ |
 |---|---|---|
@@ -25,6 +25,7 @@ Track A の週次実行計画は [MVP リリースロードマップ](./mvp-rele
 | UI診断 | 実装済み | Go / Warning / Blocked、原因、復旧案、2音源stale、部分起動cleanupをunit / E2Eで固定 |
 | Mobile recorder | PWA実装済み | 録音同意gate + MediaRecorder + 署名upload、fake audio E2E済み。native iOSは保留 |
 | Cloudflare β | deploy可能 | Workers / D1 / R2 / Queues / auth実装済み。残りは本番アカウント設定と運用確認 |
+| 会社別学習RAG | 実装済み | 議事録候補抽出→人の承認→D1共有→Macカンペ検索。revision・監査・PII/法務gateあり |
 
 直近は **Track A の実Zoom品質・配布可否を実測しつつ、Track B は実代理店ルールとβ運用で価値検証する**。
 
@@ -48,7 +49,8 @@ flowchart LR
   D --> F["Compliance Review"]
   F --> G["Minutes / Review Tasks / Audit Trail"]
   G --> H["Manager Review"]
-  H --> I["Presentation JSON"]
+  H --> I["Company Knowledge RAG"]
+  I --> J["Realtime Assist / Presentation JSON"]
 ```
 
 ## 2. プロダクト定義

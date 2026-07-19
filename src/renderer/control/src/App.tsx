@@ -20,6 +20,7 @@ import type {
   ComplianceRuleSet,
   CurrentUserContext,
   DetectedObjection,
+  KnowledgeCandidate,
   KnowledgeEntry,
   ObjectionResponse,
   Organization,
@@ -508,7 +509,9 @@ export function App(): JSX.Element {
               productId={productId}
             />
           )}
-          {activeNav === 'ナレッジ' && <KnowledgePanel productId={productId} />}
+          {activeNav === 'ナレッジ' && (
+            <KnowledgePanel productId={productId} currentUserContext={currentUserContext} />
+          )}
           {activeNav === 'タスク' && <TasksPanel />}
           {activeNav === '設定' && (
             <SettingsPanel
@@ -2818,17 +2821,37 @@ function TasksPanel(): JSX.Element {
   );
 }
 
-function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
+function KnowledgePanel(props: {
+  productId: ProductId;
+  currentUserContext: CurrentUserContext | null;
+}): JSX.Element {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<KnowledgeEntry[]>([]);
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [candidates, setCandidates] = useState<KnowledgeCandidate[]>([]);
   const [objectionType, setObjectionType] = useState('price');
   const [trigger, setTrigger] = useState('');
   const [response, setResponse] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const canManage = props.currentUserContext?.permissions.includes('knowledge:manage') ?? false;
+
+  const reload = useCallback(async (): Promise<void> => {
+    try {
+      const [nextEntries, nextCandidates] = await Promise.all([
+        window.api.knowledge.list(props.productId),
+        window.api.knowledge.listCandidates({ productId: props.productId }),
+      ]);
+      setEntries(nextEntries);
+      setCandidates(nextCandidates);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'ナレッジを読み込めませんでした');
+    }
+  }, [props.productId]);
 
   useEffect(() => {
-    void window.api.knowledge.list(props.productId).then(setEntries);
-  }, [props.productId]);
+    void reload();
+  }, [reload]);
 
   const search = async (): Promise<void> => {
     if (!query.trim()) return;
@@ -2839,23 +2862,92 @@ function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
     if (!trigger.trim() || !response.trim()) {
       return;
     }
-    const entry = await window.api.knowledge.create({
-      productId: props.productId,
-      objectionType,
-      trigger,
-      response,
-      reasoning: 'ローカル登録',
-      riskFlags: [],
-    });
-    setEntries((current) => [entry, ...current]);
-    setTrigger('');
-    setResponse('');
+    try {
+      const entry = await window.api.knowledge.create({
+        productId: props.productId,
+        objectionType,
+        trigger,
+        response,
+        reasoning: '管理者による直接登録',
+        riskFlags: [],
+      });
+      setEntries((current) => [entry, ...current]);
+      setTrigger('');
+      setResponse('');
+      setError(null);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : '登録できませんでした');
+    }
   };
+
+  const reviewCandidate = async (
+    candidate: KnowledgeCandidate,
+    input: {
+      decision: 'approve' | 'reject';
+      title: string;
+      content: string;
+      objectionType: string;
+      reviewNote?: string | undefined;
+    },
+  ): Promise<void> => {
+    try {
+      await window.api.knowledge.reviewCandidate({ id: candidate.id, ...input });
+      await reload();
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : '候補を更新できませんでした');
+    }
+  };
+
+  const pendingCandidates = candidates.filter((candidate) => candidate.status === 'pending');
 
   return (
     <div className="space-y-6">
+      <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-zinc-200">会社ナレッジ承認キュー</h2>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              商談議事録から自動抽出します。承認済みだけがリアルタイムカンペの検索対象です。
+            </p>
+            <p className="mt-2 text-xs text-zinc-400">
+              {props.currentUserContext?.organization.name ?? '現在の会社'} / 未確認{' '}
+              {pendingCandidates.length}件
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void reload()}
+            className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-500"
+          >
+            更新
+          </button>
+        </div>
+        {error && (
+          <p role="alert" className="mt-3 rounded border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+            {error}
+          </p>
+        )}
+        <div className="mt-4 space-y-3">
+          {pendingCandidates.length === 0 ? (
+            <p className="rounded border border-zinc-800 p-3 text-sm text-zinc-600">
+              未確認の候補はありません
+            </p>
+          ) : (
+            pendingCandidates.map((candidate) => (
+              <KnowledgeCandidateReviewCard
+                key={candidate.id}
+                candidate={candidate}
+                canManage={canManage}
+                onReview={reviewCandidate}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
       <div className="rounded-lg border border-zinc-800 p-5">
-        <h2 className="mb-3 text-sm font-medium text-zinc-400">ナレッジ登録</h2>
+        <h2 className="mb-1 text-sm font-medium text-zinc-400">このMacの承認済みナレッジ</h2>
+        <p className="mb-3 text-xs text-zinc-600">端末内ですぐ使う、確認済みの切り返しだけを登録してください。</p>
         <div className="grid gap-2 md:grid-cols-[140px_1fr]">
           <input
             aria-label="反論タイプ"
@@ -2882,9 +2974,9 @@ function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
           type="button"
           onClick={() => void createEntry()}
           className="mt-2 rounded bg-zinc-100 px-4 py-2 text-sm text-zinc-900 disabled:opacity-40"
-          disabled={!trigger.trim() || !response.trim()}
+          disabled={!canManage || !trigger.trim() || !response.trim()}
         >
-          登録
+          承認済みとして登録
         </button>
       </div>
 
@@ -2910,12 +3002,119 @@ function KnowledgePanel(props: { productId: ProductId }): JSX.Element {
       </div>
 
       <div className="rounded-lg border border-zinc-800 p-5">
-        <h2 className="mb-3 text-sm font-medium text-zinc-400">ローカルナレッジ</h2>
+        <h2 className="mb-3 text-sm font-medium text-zinc-400">利用中の会社ナレッジ</h2>
         {entries.length === 0 ? (
           <p className="text-sm text-zinc-600">未登録</p>
         ) : (
           <KnowledgeEntryList entries={entries} title="登録済み" />
         )}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeCandidateReviewCard(props: {
+  candidate: KnowledgeCandidate;
+  canManage: boolean;
+  onReview: (
+    candidate: KnowledgeCandidate,
+    input: {
+      decision: 'approve' | 'reject';
+      title: string;
+      content: string;
+      objectionType: string;
+      reviewNote?: string | undefined;
+    },
+  ) => Promise<void>;
+}): JSX.Element {
+  const [title, setTitle] = useState(props.candidate.title);
+  const [content, setContent] = useState(props.candidate.content);
+  const [objectionType, setObjectionType] = useState(`meeting_${props.candidate.kind}`);
+  const [reviewNote, setReviewNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const blocked = props.candidate.legalRisk === 'blocked';
+
+  const submit = async (decision: 'approve' | 'reject'): Promise<void> => {
+    setBusy(true);
+    try {
+      await props.onReview(props.candidate, {
+        decision,
+        title,
+        content,
+        objectionType,
+        ...(reviewNote.trim() ? { reviewNote: reviewNote.trim() } : {}),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-950/50 p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">{props.candidate.kind}</span>
+        <span className={blocked ? 'text-red-300' : 'text-amber-300'}>
+          {blocked ? '承認ブロック' : '人による確認が必要'}
+        </span>
+        <span className="text-zinc-600">{props.candidate.sourceMeetingMinuteId.slice(0, 8)}</span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[160px_1fr]">
+        <input
+          aria-label="候補分類"
+          value={objectionType}
+          onChange={(event) => setObjectionType(event.currentTarget.value)}
+          disabled={!props.canManage || busy}
+          className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-50"
+        />
+        <input
+          aria-label="候補タイトル"
+          value={title}
+          onChange={(event) => setTitle(event.currentTarget.value)}
+          disabled={!props.canManage || busy}
+          className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-50"
+        />
+      </div>
+      <textarea
+        aria-label="候補内容"
+        value={content}
+        onChange={(event) => setContent(event.currentTarget.value)}
+        disabled={!props.canManage || busy}
+        className="mt-2 min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-50"
+      />
+      {(props.candidate.validationFlags.length > 0 || props.candidate.riskFlags.length > 0) && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {[...props.candidate.validationFlags, ...props.candidate.riskFlags].map((flag) => (
+            <span key={flag} className="rounded bg-red-950/60 px-2 py-0.5 text-xs text-red-300">
+              {flag}
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        aria-label="レビュー理由"
+        value={reviewNote}
+        onChange={(event) => setReviewNote(event.currentTarget.value)}
+        disabled={!props.canManage || busy}
+        placeholder="却下時は理由を入力"
+        className="mt-3 w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs disabled:opacity-50"
+      />
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => void submit('approve')}
+          disabled={!props.canManage || busy || blocked || !title.trim() || !content.trim()}
+          className="rounded bg-emerald-500 px-3 py-1.5 text-xs font-medium text-emerald-950 disabled:opacity-40"
+        >
+          承認してRAGへ公開
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit('reject')}
+          disabled={!props.canManage || busy || !reviewNote.trim()}
+          className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-40"
+        >
+          却下
+        </button>
       </div>
     </div>
   );

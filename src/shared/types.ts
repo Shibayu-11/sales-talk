@@ -19,6 +19,7 @@ export type OrganizationPermission =
   | 'recording:start'
   | 'calls:read'
   | 'transcripts:manage'
+  | 'knowledge:manage'
   | 'checkpoints:manage'
   | 'reviews:manage'
   | 'rules:manage'
@@ -472,14 +473,62 @@ export interface AudioSttJob {
 
 export interface KnowledgeEntry {
   id: string;
+  tenantId: string | null;
+  organizationId: string | null;
   productId: ProductId;
   objectionType: ObjectionType;
   trigger: string;
   response: string;
   reasoning: string;
   riskFlags: string[];
+  sourceType: KnowledgeSourceType;
+  sourceCallId: string | null;
+  sourceMeetingMinuteId: string | null;
+  sourceTranscriptRevisionId: string | null;
+  status: KnowledgeEntryStatus;
+  fingerprint: string | null;
+  approvedByUserId: string | null;
+  approvedAt: string | null;
   /** Per PRD §17: chunked as one objection-response pair */
-  embedding?: number[];
+  embedding?: number[] | undefined;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type KnowledgeSourceType = 'builtin' | 'manual' | 'meeting' | 'legacy';
+export type KnowledgeEntryStatus = 'approved' | 'needs_review' | 'deprecated';
+export type KnowledgeCandidateKind = 'summary' | 'agreed' | 'decision' | 'pending' | 'number';
+export type KnowledgeCandidateStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'superseded'
+  | 'duplicate';
+
+export interface KnowledgeCandidate {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  productId: ProductId;
+  kind: KnowledgeCandidateKind;
+  title: string;
+  content: string;
+  reasoning: string;
+  riskFlags: string[];
+  validationFlags: string[];
+  legalRisk: 'none' | 'review' | 'blocked';
+  sourceCallId: string;
+  sourceMeetingMinuteId: string;
+  sourceTranscriptRevisionId: string | null;
+  sourceSegmentIds: string[];
+  sourceEvidenceHash: string;
+  fingerprint: string;
+  status: KnowledgeCandidateStatus;
+  duplicateOfKnowledgeEntryId: string | null;
+  publishedKnowledgeEntryId: string | null;
+  reviewNote: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -542,6 +591,11 @@ export type AuditAction =
   | 'stt_job.cancelled'
   | 'transcript.revision_created'
   | 'transcript.revision_activated'
+  | 'knowledge.candidates_extracted'
+  | 'knowledge.candidate_approved'
+  | 'knowledge.candidate_rejected'
+  | 'knowledge.entry_created'
+  | 'knowledge.entry_deleted'
   | 'organization.invitation_created'
   | 'organization.invitation_accepted'
   | 'organization.password_reset_issued'
@@ -860,6 +914,22 @@ export interface RendererApi {
       riskFlags?: string[];
     }): Promise<KnowledgeEntry>;
     delete(id: string): Promise<void>;
+    listCandidates(input?: {
+      productId?: ProductId | undefined;
+      status?: KnowledgeCandidateStatus | undefined;
+    }): Promise<KnowledgeCandidate[]>;
+    extractFromMinute(
+      callId: string,
+      transcriptRevisionId?: string | null | undefined,
+    ): Promise<KnowledgeCandidate[]>;
+    reviewCandidate(input: {
+      id: string;
+      decision: 'approve' | 'reject';
+      title?: string | undefined;
+      content?: string | undefined;
+      objectionType?: string | undefined;
+      reviewNote?: string | undefined;
+    }): Promise<KnowledgeCandidate>;
     seedDefaults(opts?: {
       productId?: ProductId;
       force?: boolean;

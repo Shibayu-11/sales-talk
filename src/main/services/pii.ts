@@ -9,7 +9,10 @@ export function maskPiiInText(value: string): string {
   return value
     .replace(PII_PATTERNS.phoneJp, '[redacted-phone]')
     .replace(PII_PATTERNS.email, '[redacted-email]')
-    .replace(PII_PATTERNS.creditCard, '[redacted-card]');
+    .replace(PII_PATTERNS.creditCard, '[redacted-card]')
+    .replace(PII_PATTERNS.postalCodeJp, '[redacted-postal-code]')
+    .replace(PII_PATTERNS.japaneseNameWithHonorific, '[redacted-name]')
+    .replace(PII_PATTERNS.japaneseAddress, '[redacted-address]');
 }
 
 export function maskPiiInObject(value: unknown): unknown {

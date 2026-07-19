@@ -4,7 +4,7 @@
 目的: Mac 商談支援(Track A)を実商談で使える品質に仕上げ、β配布まで到達する週次実行計画。
 戦略の上位文書は [2軸開発計画](./two-track-development-plan.md)。本書はその Phase 5(Mac リアルタイム高度化)〜配布を実行レベルに分解したもの。
 
-## 0. 現在地(2026-07-18 実態調査)
+## 0. 現在地(2026-07-19 実態調査)
 
 Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の不確実性は、実Zoomでの品質検証(M1)と署名・公証を含むβ配布(M5)。
 
@@ -18,11 +18,11 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 | Renderer(Overlay + Kanary 流三分割 Call Library) | 完成 |
 | 議事録(LLM 生成 + [mm:ss] ジャンプリンク + ヒューリスティック縮退) | 完成 |
 | 再文字起こし(CAS job / Abort / provider切替 / revision履歴 / 議事録・レビュー再解析) | 完成。原本復帰・組織分離・画面E2E済み |
-| ナレッジ / RAG(ハイブリッド検索 + 3商材37件シード + 応答接地) | 完成(クラウド側は β へ) |
+| ナレッジ / RAG | 会社別の自動蓄積・承認・D1共有・リアルタイム応答接地まで完成。ベクトル公開Workerは次段階 |
 | salestalk CLI(record/transcribe/minutes、JSON 出力) | 完成 |
 | Shortcuts / Spotlight 連携(salestalk:// URL スキーム) | 完成(実機での状態共有は要検証) |
 | 提案カードのナレッジ出典表示(根拠ナレッジ N件 + 関連度%) | 完成 |
-| テスト(unit 353 + E2E 8) | 全グリーン |
+| テスト(unit 365 + E2E 8) | 全グリーン |
 | 商談前音声 preflight | 完成。Go / Warning / Blocked、原因、復旧案、部分起動cleanup、型付きIPCを自動検証済み |
 | 実 Zoom 商談での通し検証 | **未実施(最大リスク)** |
 | W5: オンボーディング + electron-updater | 完成、unit / E2E済み。実配布環境での更新確認は未実施 |
@@ -124,11 +124,17 @@ Mac アプリのコード側はMVP機能をほぼ実装済み。残る最大の�
 
 - [x] ナレッジ検索 → Sonnet プロンプトへの接地(knowledge_entries を一次情報源として優先、score passthrough)
 - [x] 3商材のナレッジ初期投入(real_estate 13 / kenko_keiei 12 / hojokin 12 = 計37件、seedLocalKnowledge)
-- [x] RAG の保存先確定(MVP は local-first 維持、Cloudflare 接続は β フェーズへ)
+- [x] RAG の保存先確定(Cloudflare D1を会社共有の正本、端末ローカルをoffline cache、承認済みだけ検索対象)
+- [x] 議事録から summary / agreed / decision / pending / number を候補抽出し、根拠transcript revisionとevidence hashを保持
+- [x] 管理者承認キュー(編集・承認・理由付き却下・高リスク候補の承認ブロック)
+- [x] tenant / organizationスコープ、旧revision候補のsupersede、公開済み旧revisionの再検証化
+- [x] D1承認トランザクション(immutable revision + publication outbox +改ざん検知監査ログ)
+- [x] リアルタイム反論pipelineを会社別の承認済みD1＋local knowledge検索へ接続
 - [x] 提案カードにナレッジ出典表示(overlay に「根拠ナレッジ N件」+ 関連度% 、`ObjectionResponse.sources` 経由)
 - [x] プロンプト強化: 検知 few-shot 例 + confidence 基準、商材別 proactive ガードレール(補助金=最高リスク)、ナレッジ捏造禁止、議事録の創作禁止(prompts.test.ts)
 - [ ] ガードレールの実発話テスト(禁止キーワード発話 → 差し替え/トーンダウン確認)※実機検証で
 - [ ] 実商談想定の反論 10 パターンで接地提案を確認(実機 / プロンプト評価)
+- [ ] Outbox consumerでCohere/Vectorize embeddingを生成し、semantic + text RRFへ拡張
 
 完了条件: 実商談を想定した反論 10 パターンで、ナレッジ接地した提案が出る。
 

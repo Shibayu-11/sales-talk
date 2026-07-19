@@ -33,6 +33,10 @@ export const PII_PATTERNS = {
   phoneJp: /(\+81|0)\d{1,4}-?\d{1,4}-?\d{4}/g,
   email: /[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}/g,
   creditCard: /\b(?:\d[ -]*?){13,16}\b/g,
+  postalCodeJp: /〒?\d{3}-?\d{4}/g,
+  japaneseNameWithHonorific: /[一-龥々]{2,6}(?:さん|様|氏)/g,
+  japaneseAddress:
+    /(?:東京都|北海道|(?:京都|大阪)府|[一-龥]{2,3}県)[^\s、。]{2,30}(?:市|区|町|村|郡|丁目|番地|号)[^\s、。]{0,20}/g,
 } as const;
 
 export const SUPABASE_REGION = 'ap-northeast-1';

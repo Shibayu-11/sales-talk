@@ -31,6 +31,16 @@ import {
   sendAuthActionEmail,
 } from './auth-email';
 import { transcribeWithDeepgram, type SttQueueMessage, type TranscriptSegmentInput } from './stt';
+import {
+  listKnowledgeCandidates,
+  parseKnowledgeCandidateBatch,
+  parseKnowledgeCandidateFilter,
+  parseKnowledgeCandidateReview,
+  parseKnowledgeSearch,
+  reviewKnowledgeCandidate,
+  saveKnowledgeCandidates,
+  searchPublishedKnowledge,
+} from './company-knowledge';
 
 interface AudioUploadResult {
   callId: string;
@@ -211,6 +221,41 @@ export default {
       }
       if (request.method === 'GET' && url.pathname === '/v1/audit-logs') {
         return json(await listAuditLogs(env.DB, context));
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/knowledge/candidates') {
+        return json(
+          await listKnowledgeCandidates(
+            env.DB,
+            context,
+            parseKnowledgeCandidateFilter(url),
+          ),
+        );
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/knowledge/candidates/batch') {
+        return json(
+          await saveKnowledgeCandidates(
+            env.DB,
+            context,
+            parseKnowledgeCandidateBatch(await request.json()),
+          ),
+          201,
+        );
+      }
+      const knowledgeReviewMatch = /^\/v1\/knowledge\/candidates\/([^/]+)\/review$/.exec(
+        url.pathname,
+      );
+      if (request.method === 'POST' && knowledgeReviewMatch?.[1]) {
+        return json(
+          await reviewKnowledgeCandidate(
+            env.DB,
+            context,
+            decodeURIComponent(knowledgeReviewMatch[1]),
+            parseKnowledgeCandidateReview(await request.json()),
+          ),
+        );
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/knowledge/search') {
+        return json(await searchPublishedKnowledge(env.DB, context, parseKnowledgeSearch(url)));
       }
       if (request.method === 'POST' && url.pathname === '/v1/audio-assets') {
         return json(await uploadAudioAsset(request, env, context), 201);
