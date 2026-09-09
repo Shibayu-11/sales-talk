@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1040" viewBox="0 0 1400 1040" role="img" aria-labelledby="title description">
+  <title id="title">SalesTalk・セルログの基本フロー</title>
+  <desc id="description">Mac商談支援またはスマホ訪問録音から、文字起こし、リアルタイム支援、コンプライアンス判定、議事録、管理者レビュー、会社別RAGへの蓄積を経て、次の商談へ知識を還元する流れ。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#C8CDD3"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#5B7CFA"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.05"/>
+    </filter>
+    <style>
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #16181B; }
+      .subtitle { font: 400 18px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #525860; }
+      .lane { font: 700 16px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; letter-spacing: .08em; }
+      .box-title { font: 700 21px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #33373C; text-anchor: middle; }
+      .box-sub { font: 400 14px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #737980; text-anchor: middle; }
+      .small { font: 600 15px -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #555B63; text-anchor: middle; }
+      .flow { fill: none; stroke: #D8DCE1; stroke-width: 2; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #5B7CFA; stroke-width: 2.5; stroke-dasharray: 7 6; marker-end: url(#arrow-accent); }
+    </style>
+  </defs>
+
+  <rect width="1400" height="1040" fill="#FFFFFF"/>
+  <text x="70" y="70" class="title">SalesTalk・セルログの基本フロー</text>
+  <text x="70" y="108" class="subtitle">商談を記録するだけで終わらせず、コンプラ管理と会社固有の営業知識へ変える。</text>
+
+  <rect x="250" y="155" width="310" height="88" rx="22" fill="#F5F6F7" stroke="#D9DDE2" filter="url(#shadow)"/>
+  <text x="405" y="192" class="box-title">Mac商談支援</text>
+  <text x="405" y="219" class="box-sub">Zoom・オンライン商談</text>
+
+  <rect x="840" y="155" width="310" height="88" rx="22" fill="#F5F6F7" stroke="#D9DDE2" filter="url(#shadow)"/>
+  <text x="995" y="192" class="box-title">スマホ・訪問録音</text>
+  <text x="995" y="219" class="box-sub">対面の保険営業</text>
+
+  <path d="M405 243 L405 278 L625 278 L625 315" class="flow"/>
+  <path d="M995 243 L995 278 L775 278 L775 315" class="flow"/>
+
+  <rect x="485" y="315" width="430" height="94" rx="22" fill="#F5F6F7" stroke="#D9DDE2" filter="url(#shadow)"/>
+  <text x="700" y="352" class="box-title">録音同意・音声取得</text>
+  <text x="700" y="380" class="box-sub">同意を記録し、自分と相手の音声を分離</text>
+
+  <path d="M700 409 L700 452" class="flow"/>
+  <rect x="485" y="452" width="430" height="94" rx="22" fill="#F5F6F7" stroke="#D9DDE2" filter="url(#shadow)"/>
+  <text x="700" y="489" class="box-title">文字起こし</text>
+  <text x="700" y="517" class="box-sub">Apple SpeechAnalyzer ／ Deepgram fallback</text>
+
+  <path d="M700 546 L700 580 L355 580 L355 625" class="flow"/>
+  <path d="M700 546 L700 580 L1045 580 L1045 625" class="flow"/>
+
+  <text x="355" y="610" class="lane" fill="#5B7CFA" text-anchor="middle">商談中</text>
+  <text x="1045" y="610" class="lane" fill="#24866B" text-anchor="middle">商談後</text>
+
+  <rect x="150" y="625" width="410" height="82" rx="20" fill="#F5F7FF" stroke="#C9D3FF" filter="url(#shadow)"/>
+  <text x="355" y="658" class="box-title">反論・懸念を検知</text>
+  <text x="355" y="683" class="box-sub">価格・時期・信頼・競合などを判定</text>
+
+  <path d="M355 707 L355 745" class="flow"/>
+  <rect x="150" y="745" width="410" height="82" rx="20" fill="#F5F7FF" stroke="#C9D3FF" filter="url(#shadow)"/>
+  <text x="355" y="778" class="box-title">承認済み会社ナレッジを検索</text>
+  <text x="355" y="803" class="box-sub">会社別RAGから根拠のある切り返しを取得</text>
+
+  <path d="M355 827 L355 865" class="flow"/>
+  <rect x="150" y="865" width="410" height="82" rx="20" fill="#EEF2FF" stroke="#AFC0FF" filter="url(#shadow)"/>
+  <text x="355" y="898" class="box-title">安全なAIカンペを表示</text>
+  <text x="355" y="923" class="box-sub">ガードレール通過後だけOverlayへ表示</text>
+
+  <rect x="840" y="625" width="410" height="82" rx="20" fill="#F3FAF7" stroke="#BFDCCF" filter="url(#shadow)"/>
+  <text x="1045" y="658" class="box-title">会社・商品別コンプラ判定</text>
+  <text x="1045" y="683" class="box-sub">NG表現・注意表現・必須説明を照合</text>
+
+  <path d="M1045 707 L1045 745" class="flow"/>
+  <rect x="840" y="745" width="410" height="82" rx="20" fill="#F3FAF7" stroke="#BFDCCF" filter="url(#shadow)"/>
+  <text x="1045" y="778" class="box-title">議事録・タスクを自動生成</text>
+  <text x="1045" y="803" class="box-sub">合意事項・保留事項・重要数値を整理</text>
+
+  <path d="M1045 827 L1045 865" class="flow"/>
+  <rect x="840" y="865" width="410" height="82" rx="20" fill="#EAF7F1" stroke="#9ECFB9" filter="url(#shadow)"/>
+  <text x="1045" y="898" class="box-title">管理者レビュー・監査証跡</text>
+  <text x="1045" y="923" class="box-sub">承認・差戻し・教育対応を記録</text>
+
+  <path d="M1045 947 L1045 978 L700 978" class="flow"/>
+  <rect x="500" y="955" width="400" height="70" rx="20" fill="#EEF2FF" stroke="#9FB2FF" filter="url(#shadow)"/>
+  <text x="700" y="985" class="box-title">会社別RAGへ知識を蓄積</text>
+  <text x="700" y="1008" class="box-sub">人が承認した成功パターンだけを共有</text>
+
+  <path d="M500 990 C430 990 610 790 560 786" class="loop"/>
+  <text x="590" y="944" class="small" fill="#5B7CFA">次の商談へ還元</text>
+</svg>
